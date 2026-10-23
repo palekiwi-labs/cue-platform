@@ -8,6 +8,7 @@
       url = "github:numtide/llm-agents.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nvf.url = "github:NotAShelf/nvf";
   };
 
   outputs =
@@ -15,13 +16,14 @@
       nixpkgs,
       flake-utils,
       llm-agents,
+      nvf,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        platform = import ./nix/packages.nix { inherit pkgs llm-agents; };
+        platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf; };
       in
       {
         packages = platform // {
