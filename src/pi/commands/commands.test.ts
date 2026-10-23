@@ -124,6 +124,8 @@ describe("command registration", () => {
     const { pi, commands } = makeCommandPi()
     cuePlugins(pi)
     expect(Object.keys(commands).sort()).toEqual([
+      "cue:artifacts",
+      "cue:browse",
       "cue:context:current",
       "cue:context:inject",
       "cue:context:pins",

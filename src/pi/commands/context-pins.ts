@@ -151,22 +151,15 @@ async function handler(
   await injectContext(pi, ctx.cwd, choice.value)
 }
 
-/** Keybinding that opens the pins picker, same as `/cue:context:pins`. */
-export const CONTEXT_PINS_SHORTCUT = "alt+c"
-
 /**
- * Register `/cue:context:pins` and its keybinding: pick a pinned context
- * and inject it (enter) or only link it to the session (alt+enter).
+ * Register `/cue:context:pins`: pick a pinned context and inject it
+ * (enter) or only link it to the session (alt+enter). Its former alt+c
+ * shortcut now opens the full-screen browser (./cue-browser.ts).
  */
 export function registerContextPinsCommand(pi: ExtensionAPI): void {
   pi.registerCommand("cue:context:pins", {
     description:
       "Pick a pinned cue context: enter injects it, alt+enter only links it",
     handler: async (_args, ctx) => handler(pi, ctx),
-  })
-  pi.registerShortcut(CONTEXT_PINS_SHORTCUT, {
-    description:
-      "Pick a pinned cue context: enter injects it, alt+enter only links it",
-    handler: async (ctx) => handler(pi, ctx),
   })
 }
