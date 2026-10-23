@@ -22,7 +22,7 @@ In the cast flake (`~/.config/cast/nix/flake.nix`):
 
 ```nix
 inputs.cue-platform = {
-  url = "github:palekiwi-labs/cue-platform/<tag>";
+  url = "github:palekiwi-labs/cue-platform";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
@@ -45,15 +45,21 @@ inputs.llm-agents.follows = "cue-platform/llm-agents";
 ### 2. Pi package
 
 ```sh
-pi install git:github.com/palekiwi-labs/cue-platform@<tag>
+pi install git:github.com/palekiwi-labs/cue-platform
 ```
 
-Use the same `<tag>` as the flake, so the extensions match the pinned pi.
+Update both parts together, so the extensions match the pi the flake
+pins:
+
+```sh
+nix flake update cue-platform
+pi update --extension git:github.com/palekiwi-labs/cue-platform
+```
 `~/.pi` is shared by every cast sandbox, so this is done once.
 
 ## Developing cue-platform
 
-Point both parts at the checkout instead of a tag. The checkout must be
+Point both parts at the checkout instead of GitHub. The checkout must be
 mounted at the same path in every container.
 
 Flake input, in the cast flake:
