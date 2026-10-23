@@ -25,7 +25,11 @@
 
       devShells = {
         default = nixpkgs.legacyPackages.${system}.mkShell {
-          packages = [ llm-agents.packages.${system}.pi ];
+          packages = [
+            llm-agents.packages.${system}.pi
+            nixpkgs.legacyPackages.${system}.python3
+            nixpkgs.legacyPackages.${system}.tmux
+          ];
         };
       };
 
