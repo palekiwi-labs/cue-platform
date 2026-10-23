@@ -1,5 +1,5 @@
 {
-  description = "Cue platform development environment";
+  description = "Cue platform: pi, cue and the tools around them";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -17,30 +17,32 @@
       llm-agents,
       ...
     }:
-    flake-utils.lib.eachDefaultSystem (system: {
-      packages = {
-        pi = llm-agents.packages.${system}.pi;
-        default = llm-agents.packages.${system}.pi;
-      };
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        platform = import ./nix/packages.nix { inherit pkgs llm-agents; };
+      in
+      {
+        packages = platform // {
+          default = platform.pi;
+        };
 
-      devShells = {
-        default = nixpkgs.legacyPackages.${system}.mkShell {
+        devShells.default = pkgs.mkShell {
           packages = [
-            llm-agents.packages.${system}.pi
-            nixpkgs.legacyPackages.${system}.bun
-            nixpkgs.legacyPackages.${system}.nodejs
-            nixpkgs.legacyPackages.${system}.python3
-            nixpkgs.legacyPackages.${system}.tmux
+            platform.pi
+            pkgs.bun
+            pkgs.nodejs
+            pkgs.python3
+            pkgs.tmux
           ];
         };
-      };
 
-      apps = {
-        default = {
+        apps.default = {
           type = "app";
-          program = "${llm-agents.packages.${system}.pi}/bin/pi";
+          program = "${platform.pi}/bin/pi";
           meta.description = "Launch pi with the existing user configuration";
         };
-      };
-    });
+      }
+    );
 }
