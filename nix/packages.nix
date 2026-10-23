@@ -13,6 +13,9 @@ let
 in
 {
   inherit (llm-agents.packages.${system}) pi;
+  # Called from PATH by shipped tools: gh by cue-review, jq by the
+  # cue-log-compact skill script.
+  inherit (pkgs) gh jq;
   cue-review = import ./cue-review { inherit pkgs; };
   inherit (cue.packages.${system}) cue cue-agent;
   inherit (cast.packages.${system}) cast-mcp-client;
