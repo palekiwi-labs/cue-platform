@@ -9,6 +9,14 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nvf.url = "github:NotAShelf/nvf";
+    cue = {
+      url = "github:palekiwi-labs/cue/cue-agent-prototype";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    cast = {
+      url = "github:palekiwi-labs/cast/spike/herdr-service-pivot";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -17,13 +25,15 @@
       flake-utils,
       llm-agents,
       nvf,
+      cue,
+      cast,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf; };
+        platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf cue cast; };
       in
       {
         packages = platform // {
