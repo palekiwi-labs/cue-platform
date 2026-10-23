@@ -4,7 +4,7 @@
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./src/pi/index.ts", "./extensions/footer.ts", "./extensions/tmux-state.ts"],
+    "extensions": ["./src/pi/index.ts", "./extensions/footer.ts", "./extensions/tmux-state.ts", "./extensions/tmux-resume.ts"],
     "skills": ["./skills/"],
     "prompts": ["./prompts/pi/"]
   },
