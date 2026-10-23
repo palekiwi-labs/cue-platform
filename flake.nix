@@ -37,7 +37,13 @@
       in
       {
         packages = platform // {
-          default = platform.pi;
+          # Everything above in one package, so consumers add a single
+          # entry and pick up new tools without editing their flake.
+          default = pkgs.buildEnv {
+            name = "cue-platform";
+            # The picker stays off PATH: tmux binds it by store path.
+            paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]);
+          };
         };
 
         devShells.default = pkgs.mkShell {
