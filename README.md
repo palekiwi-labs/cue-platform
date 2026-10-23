@@ -8,7 +8,7 @@ The initial flake exports pi from `numtide/llm-agents.nix`, using the same
 locked dependencies as the existing cast environment. It does not yet
 bundle cue, skills, configured tmux, or Neovim. Pi continues to load the
 existing writable user configuration. The repository is also a native pi
-package, currently providing the footer extension.
+package, currently providing the footer and tmux-state extensions.
 
 ```sh
 nix run . -- --version
@@ -58,18 +58,11 @@ configuration, or settings reset is needed for extension edits: `/reload`
 picks them up, as do new pi processes using the same agent directory.
 The flake alone does not yet install this package automatically.
 
-During migration, disable the previous footer using its package filter:
-
-```json
-{
-  "source": "/home/pl/.agents/plugins/palekiwi/pi-extensions",
-  "extensions": ["!extensions/footer.ts"]
-}
-```
-
-Keep that entry alongside the cue-platform package. It leaves `tmux-state`
-enabled while preventing two footers from registering. The original footer
-source is retained for rollback; further footer development belongs here.
+Remove the old `/home/pl/.agents/plugins/palekiwi/pi-extensions` package
+entry from settings when enabling this package: both its footer and
+`tmux-state` now live here. Loading both packages would register duplicate
+footers and tmux event handlers. The original source is retained for
+rollback; further development belongs here.
 
 ## Validation
 
@@ -82,7 +75,8 @@ nix develop --command python3 tests/live-footer.py
 
 The smoke test uses an isolated tmux server, temporary settings, and a copy
 of the package. It changes a visible footer marker, checks `/reload`, opens
-a second window, and verifies settings remain writable. It does not call
+a second window, checks tmux idle/blocked transitions before and after
+reload, and verifies settings remain writable. It does not call
 a model, read user credentials, or modify the working checkout.
 
 The bootstrap is verified on `x86_64-linux`. Other system outputs are

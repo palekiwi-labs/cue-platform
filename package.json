@@ -3,7 +3,7 @@
   "private": true,
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions/footer.ts"]
+    "extensions": ["./extensions/footer.ts", "./extensions/tmux-state.ts"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
