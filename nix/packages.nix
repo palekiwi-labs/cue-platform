@@ -5,3 +5,4 @@
 {
   inherit (llm-agents.packages.${pkgs.stdenv.hostPlatform.system}) pi;
 }
+// import ./tmux { inherit pkgs; }
