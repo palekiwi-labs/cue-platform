@@ -4,5 +4,6 @@
 { pkgs, llm-agents }:
 {
   inherit (llm-agents.packages.${pkgs.stdenv.hostPlatform.system}) pi;
+  cue-review = import ./cue-review { inherit pkgs; };
 }
 // import ./tmux { inherit pkgs; }
