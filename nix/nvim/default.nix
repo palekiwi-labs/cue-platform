@@ -160,6 +160,10 @@ let
           languages.typescript.treesitter.enable = true;
           languages.markdown.enable = true;
           languages.markdown.treesitter.enable = true;
+          # Markdown injects yaml into frontmatter; without this grammar the
+          # whole frontmatter block renders as a single highlight group.
+          languages.yaml.enable = true;
+          languages.yaml.treesitter.enable = true;
           # Structural markdown formatter run on demand via <leader>md (see
           # runtime/ftplugin/markdown/init.lua). nvf's "mdformat" selector
           # bundles mdformat + gfm/frontmatter/footnote plugins. mdformat
