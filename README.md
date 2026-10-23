@@ -6,9 +6,9 @@ The cue-centered agent environment for cast containers.
 
 The initial flake exports pi from `numtide/llm-agents.nix`, using the same
 locked dependencies as the existing cast environment. It does not yet
-bundle cue, skills, configured tmux, or Neovim. Pi continues to load the
+bundle the cue CLI, configured tmux, or Neovim. Pi continues to load the
 existing writable user configuration. The repository is also a native pi
-package, currently providing the footer and tmux-state extensions.
+package providing cue integration, skills, prompts, the footer, and tmux state.
 
 ```sh
 nix run . -- --version
@@ -25,7 +25,7 @@ flake uses:
 
 ```nix
 inputs.cue-platform = {
-  url = "path:/home/pl/code/palekiwi-labs/cue-platform";
+  url = "git+file:///home/pl/code/palekiwi-labs/cue-platform";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 inputs.llm-agents.follows = "cue-platform/llm-agents";
@@ -42,7 +42,8 @@ nix flake update cue-platform --flake ~/.config/cast/nix
 
 A local flake input is still copied into the Nix store. It is not a live
 extension source. For live extension development, register the checkout
-separately as described below.
+separately as described below. The Git URL excludes ignored development
+files such as `node_modules`; stage new files before evaluating the flake.
 
 ## Live pi package
 
@@ -58,11 +59,30 @@ configuration, or settings reset is needed for extension edits: `/reload`
 picks them up, as do new pi processes using the same agent directory.
 The flake alone does not yet install this package automatically.
 
-Remove the old `/home/pl/.agents/plugins/palekiwi/pi-extensions` package
-entry from settings when enabling this package: both its footer and
-`tmux-state` now live here. Loading both packages would register duplicate
-footers and tmux event handlers. The original source is retained for
-rollback; further development belongs here.
+Remove the old `cue-plugins` and `pi-extensions` package entries when
+enabling this package. Loading both versions would register duplicate tools,
+commands, footers, and event handlers. The original repositories remain
+available for rollback; further development belongs here.
+
+If `~/.agents/skills/cue*` symlinks point to cue-plugins, repoint those links
+to the corresponding directories under this checkout's `skills/`. Otherwise
+user-level skill discovery can keep using the old copies.
+
+## Cue integration
+
+`src/pi/index.ts` registers the cue artifact tools, `delegate`, context
+orientation commands (`/cue:context:current`, `/cue:context:inject`,
+`/cue:context:pins`), `/cue:idea`, and `/review:run`. It also supplies cue skill
+injection, session naming, Acuity idle reporting, and the cast MCP adapter.
+`prompts/pi/` supplies `/cue:init`; `skills/` contains the nine cue skills.
+
+The cue CLI and cue-agent must remain on PATH (currently provided by cast).
+`ACUITY_HOST` selects the observability endpoint. The MCP adapter discovers
+cast through `cast-mcp-client`; outside cast it remains inactive.
+
+Opencode adapters, dependencies, command templates, and prompt-parity tests
+are not part of this repository. Pi imports are supplied by the running
+harness; development dependencies pin its types to the packaged version.
 
 ## Validation
 
@@ -70,6 +90,9 @@ rollback; further development belongs here.
 nix flake check
 nix build .#pi --no-link
 nix run . -- --version
+nix develop --command bun install --frozen-lockfile
+nix develop --command bun run typecheck
+nix develop --command bun test ./src
 nix develop --command python3 tests/live-footer.py
 ```
 

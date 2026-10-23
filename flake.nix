@@ -27,6 +27,8 @@
         default = nixpkgs.legacyPackages.${system}.mkShell {
           packages = [
             llm-agents.packages.${system}.pi
+            nixpkgs.legacyPackages.${system}.bun
+            nixpkgs.legacyPackages.${system}.nodejs
             nixpkgs.legacyPackages.${system}.python3
             nixpkgs.legacyPackages.${system}.tmux
           ];

@@ -12,7 +12,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-// Mirrors cue-plugins src/pi/lib/context-usage.ts DEFAULT_THRESHOLDS.
+// Mirrors src/pi/lib/context-usage.ts DEFAULT_THRESHOLDS.
 const THRESHOLDS = { caution: 80_000, soft: 100_000, hard: 140_000 };
 const RIGHT_STATUS_KEY = "plan-usage";
 

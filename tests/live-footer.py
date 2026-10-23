@@ -19,7 +19,8 @@ def main():
         package = work / "package"
         package.mkdir()
         shutil.copy(ROOT / "package.json", package)
-        shutil.copytree(ROOT / "extensions", package / "extensions")
+        for resource in ("extensions", "src", "skills", "prompts"):
+            shutil.copytree(ROOT / resource, package / resource)
         footer = package / "extensions/footer.ts"
         source = footer.read_text()
         marker = 'const tokenParts: string[] = [];'
