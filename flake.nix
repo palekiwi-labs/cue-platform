@@ -37,12 +37,6 @@
             pkgs.tmux
           ];
         };
-
-        apps.default = {
-          type = "app";
-          program = "${platform.pi}/bin/pi";
-          meta.description = "Launch pi with the existing user configuration";
-        };
       }
     );
 }

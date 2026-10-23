@@ -11,12 +11,11 @@ existing writable user configuration. The repository is also a native pi
 package providing cue integration, skills, prompts, the footer, and tmux state.
 
 ```sh
-nix run . -- --version
 nix develop
 ```
 
-Outputs: `packages.<system>.pi`, `packages.<system>.default`,
-`apps.<system>.default`, and `devShells.<system>.default`.
+Outputs: `packages.<system>.pi`, `packages.<system>.default`, and
+`devShells.<system>.default`.
 
 ## Cast development integration
 
@@ -89,7 +88,6 @@ harness; development dependencies pin its types to the packaged version.
 ```sh
 nix flake check
 nix build .#pi --no-link
-nix run . -- --version
 nix develop --command bun install --frozen-lockfile
 nix develop --command bun run typecheck
 nix develop --command bun test ./src
