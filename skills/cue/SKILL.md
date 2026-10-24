@@ -393,6 +393,12 @@ To inspect recent history:
 cue log list --context <slug> --format md --limit 5
 ```
 
+Recorded activity (associated sessions, commits, created artifacts) is
+available with `cue activity list --context <slug> --json`.
+
+When resuming work in a context, read its latest hand-off trace before
+acting.
+
 ## Operational Discipline
 
 - **Executive Plan Adherence**: Implement current steps in the active executive
