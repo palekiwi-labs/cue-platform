@@ -19,14 +19,18 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
+  type BatchTotals,
   batchTotals,
   fmtCost,
   fmtDuration,
   fmtTokens,
-  groupBatches,
+  groupJobs,
+  inputTokens,
+  jobState,
+  jobTotals,
+  stageLabel,
   haystack,
   isLive,
-  type RunManifest,
   type RunRow,
   runState,
   stateTone,
@@ -37,8 +41,6 @@ export const POLL_MS = 5000
 export interface MonitorDeps {
   /** Every run cue-agent knows, newest batch first; error text on failure. */
   load(): Promise<{ rows: RunRow[] } | { error: string }>
-  /** Label and context of a run; manifests never change, so callers cache. */
-  manifest(runPath: string): RunManifest | undefined
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
   /** File holding the document shown in a pane; undefined if none. */
@@ -124,7 +126,7 @@ export class AgentMonitor implements Component {
     }
     const q = this.input.getValue().trim()
     if (!q) return base
-    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath))).map((r) => r.runId))
+    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r)).map((r) => r.runId))
     return base.filter((r) => hit.has(r.runId))
   }
 
@@ -319,36 +321,58 @@ export class AgentMonitor implements Component {
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 4)
+    // The label column fits its content so figures sit next to it.
+    const fixedW = 4 + stateW + agentW + modelW + rightW + 4
+    const longest = Math.max(6, ...rows.map((r) => (r.label ?? r.batchLabel ?? r.batchId).length))
+    const labelW = Math.max(6, Math.min(width - fixedW, longest))
+    const rowW = fixedW + labelW
 
     const lines: string[] = []
     let selLine = 0
-    for (const g of groupBatches(rows)) {
-      const tot = batchTotals(g)
-      const head = `${g.label ?? g.batchId}  ${t.fg("muted", `${tot.done}/${tot.total} done`)}`
-      const stateTxt = t.fg(toneColor[stateTone(g.state)], g.state)
-      const leftW = width - rightW - 1
-      lines.push(
-        pad(t.bold(pad(head, Math.max(6, leftW - visibleWidth(g.state) - 1))) + " " + stateTxt, leftW) +
-          " " + t.fg("muted", nums(tot.elapsedSecs, tot.tokensInput, tot.costUsd)),
+    const leftW = rowW - rightW - 1
+    // A heading: label, done count, state; totals in the shared columns.
+    const heading = (indent: string, label: string, done: string, state: string, n: BatchTotals) => {
+      const head = `${indent}${t.bold(label)}  ${t.fg("muted", done)}`
+      return pad(pad(head, Math.max(6, leftW - visibleWidth(state) - 1)) + " " +
+        t.fg(toneColor[stateTone(state)], state), leftW) +
+        " " + t.fg("muted", nums(n.elapsedSecs, n.tokensInput, n.costUsd))
+    }
+    const runLine = (indent: string, r: RunRow, label: string) => {
+      const state = runState(r)
+      const lw = labelW + 4 - indent.length
+      const line = pad(
+        indent + [
+          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+          pad(r.agent, agentW),
+          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
+          pad(label, Math.max(6, lw)),
+          t.fg("muted", nums(r.elapsedSecs, inputTokens(r), r.costUsd)),
+        ].join(" "),
+        rowW,
       )
-      for (const r of g.runs) {
-        const state = runState(r)
-        const line = pad(
-          "  " +
-            [
-              t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-              pad(r.agent, agentW),
-              t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-              pad(this.deps.manifest(r.runPath)?.label ?? "", labelW),
-              t.fg("muted", nums(r.elapsedSecs, r.tokensInput, r.costUsd)),
-            ].join(" "),
-          width,
-        )
-        if (r.runId === this.selectedId) {
-          selLine = lines.length
-          lines.push(t.bg("selectedBg", line))
-        } else lines.push(line)
+      if (r.runId === this.selectedId) {
+        selLine = lines.length
+        lines.push(t.bg("selectedBg", line))
+      } else lines.push(line)
+    }
+    // A level with one child folds into its parent line.
+    for (const j of groupJobs(rows)) {
+      const isJob = j.batches.length > 1 || j.batches[0]!.runs[0]!.jobId !== null
+      const stageIndent = isJob ? "  " : ""
+      if (isJob) {
+        const tot = jobTotals(j)
+        lines.push(heading("", j.label ?? j.key, `${tot.done}/${tot.total} done`, jobState(j), tot))
+      }
+      for (const b of j.batches) {
+        const label = isJob ? stageLabel(b, j.key) : (b.label ?? b.batchId)
+        if (b.runs.length === 1) {
+          const r = b.runs[0]!
+          runLine(stageIndent, r, r.label ?? label)
+          continue
+        }
+        const tot = batchTotals(b)
+        lines.push(heading(stageIndent, label, `${tot.done}/${tot.total} done`, b.state, tot))
+        for (const r of b.runs) runLine(`${stageIndent}  `, r, r.label ?? "")
       }
     }
     const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))

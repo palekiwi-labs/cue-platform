@@ -4,13 +4,16 @@ import {
   fmtCost,
   fmtDuration,
   groupBatches,
+  groupJobs,
   haystack,
+  inputTokens,
   isLive,
-  parseManifest,
+  jobState,
+  jobTotals,
   parsePs,
   type RunRow,
-  rowLabel,
   runState,
+  stageLabel,
   stateTone,
 } from "./model"
 
@@ -92,17 +95,15 @@ describe("state", () => {
   })
 })
 
-describe("manifest and labels", () => {
-  test("task label wins over the batch label", () => {
-    const [r] = parsePs(ps([{ batch_id: "B", label: "batch", state: "running", runs: [run("a", 1)] }]))
-    expect(rowLabel(r!, undefined)).toBe("batch")
-    expect(rowLabel(r!, { label: "task", context: null })).toBe("task")
-    expect(haystack(r!, { label: "task", context: "ctx" })).toBe("task batch a m ctx B")
-  })
-
-  test("parseManifest", () => {
-    expect(parseManifest(JSON.stringify({ label: "l", context: "c" }))).toEqual({ label: "l", context: "c" })
-    expect(parseManifest("x")).toEqual({ label: null, context: null })
+describe("labels and tokens", () => {
+  test("reads run label, context, job and cache tokens from ps", () => {
+    const [r] = parsePs(ps([{
+      batch_id: "B", label: "batch", state: "running", job: { id: "J", label: "job" },
+      runs: [run("a", 1, { label: "task", context: "ctx", tokens_cache_read: 800, tokens_cache_write: 0 })],
+    }]))
+    expect([r!.label, r!.context, r!.jobId, r!.jobLabel]).toEqual(["task", "ctx", "J", "job"])
+    expect(inputTokens(r!)).toBe(2000)
+    expect(haystack(r!)).toBe("task batch job a m ctx B J")
   })
 })
 
@@ -116,9 +117,9 @@ test("formatting", () => {
 
 describe("groupBatches", () => {
   const row = (batchId: string, position: number, extra: Partial<RunRow> = {}): RunRow => ({
-    batchId, batchLabel: `L-${batchId}`, batchState: "running", startedAt: 0,
-    runId: `${batchId}-${position}`, agent: "a", model: "m", position, phase: "running",
-    runPath: "", elapsedSecs: null, tokensInput: null, tokensOutput: null, costUsd: null,
+    batchId, batchLabel: `L-${batchId}`, batchState: "running", startedAt: 0, jobId: null, jobLabel: null,
+    runId: `${batchId}-${position}`, label: null, context: null, agent: "a", model: "m", position, phase: "running",
+    runPath: "", elapsedSecs: null, tokensInput: null, tokensOutput: null, tokensCacheRead: null, tokensCacheWrite: null, costUsd: null,
     outcome: null, response: null, error: null, ...extra,
   })
 
@@ -134,5 +135,37 @@ describe("groupBatches", () => {
       row("b", 2, { elapsedSecs: 30, costUsd: 0.25 }),
     ])
     expect(batchTotals(g!)).toEqual({ done: 1, total: 2, elapsedSecs: 30, tokensInput: null, costUsd: 0.75 })
+  })
+})
+
+describe("groupJobs", () => {
+  const row = (batchId: string, startedAt: number, jobId: string | null, extra: Partial<RunRow> = {}): RunRow => ({
+    batchId, batchLabel: jobId ? `x-${jobId}-${batchId}` : batchId, batchState: "finished", startedAt,
+    jobId, jobLabel: jobId ? `job ${jobId}` : null, runId: `${batchId}-1`, label: null, context: null,
+    agent: "a", model: "m", position: 1, phase: "finished", runPath: "", elapsedSecs: 10, tokensInput: 1,
+    tokensOutput: null, tokensCacheRead: null, tokensCacheWrite: null, costUsd: 0.5, outcome: "completed",
+    response: null, error: null, ...extra,
+  })
+
+  test("stages of concurrent jobs never interleave; jobs keep their place", () => {
+    // ps order: newest batch first, stages of jobs A and B alternating.
+    const jobs = groupJobs([
+      row("b3", 30, "B"), row("a3", 29, "A"), row("solo", 25, null), row("b1", 11, "B"), row("a1", 10, "A"),
+    ])
+    expect(jobs.map((j) => j.key)).toEqual(["solo", "B", "A"])
+    expect(jobs[1]!.batches.map((b) => b.batchId)).toEqual(["b1", "b3"])
+    expect(jobs[0]!.label).toBe("solo")
+    expect(jobs[1]!.label).toBe("job B")
+  })
+
+  test("job totals span first start to last end; state is live if any stage is", () => {
+    const [j] = groupJobs([row("a3", 29, "A", { batchState: "running" }), row("a1", 10, "A")])
+    expect(jobTotals(j!)).toEqual({ done: 2, total: 2, elapsedSecs: 29, tokensInput: 2, costUsd: 1 })
+    expect(jobState(j!)).toBe("running")
+  })
+
+  test("stage label drops the job id prefix", () => {
+    const [j] = groupJobs([row("merge", 1, "J1")])
+    expect(stageLabel(j!.batches[0]!, "J1")).toBe("merge")
   })
 })
