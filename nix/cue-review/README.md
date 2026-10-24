@@ -5,6 +5,10 @@ artifacts, it is atomically replaced after each phase. Existing runs are
 not migrated. `schema_version: 1` has:
 
 - `target`, `base`, `head`, `context`, `run_id`, `diff`: reviewed lineage.
+  `target` is `{kind, subject, refs, pr?}` (kind `pr`, `branch`,
+  `commit`, `range`), or `{kind: run}` for a bare `cue-review run`; it is
+  the same for detached and foreground runs. The cue-agent job label is
+  `<subject> · <context> · <manifest>`.
 - `manifest`: resolved path and filename stem (name).
 - `state`: `running`, `completed`, `incomplete`, `failed`, or `aborted`.
 - `phases`: specification-order records with `phase`, `state` (`pending`,

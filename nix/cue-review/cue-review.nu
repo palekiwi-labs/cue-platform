@@ -315,7 +315,7 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
     # One job per review run, so monitors group its phase batches.
     job: {
       id: $ctx.run_id
-      label: $"review ($ctx.head | str substring 0..6) \(($ctx.manifest_name)\)"
+      label: $ctx.label
     }
     defaults: {
       cwd: $ctx.repo
@@ -446,7 +446,7 @@ def run-review [
     phases: ($PHASES | each {|phase|
       { phase: $phase, state: "pending", entries: [] }
     })
-    target: $target
+    target: (target-record $target)
     base: $base_sha
     head: $head_sha
     context: $st.address
@@ -469,6 +469,12 @@ def run-review [
     head: $head_sha
     diff: $diff_path
     manifest_name: ($manifest | path parse | get stem)
+    # What the monitor shows for this run's job: target, context, manifest.
+    label: ([
+      ($target.subject? | default $"($base_sha | str substring 0..6)..($head_sha | str substring 0..6)")
+      $context
+      ($manifest | path parse | get stem)
+    ] | str join " \u{b7} ")
   }
   tag-window { review_context: $context, review_run: $run_id }
   log $"run ($run_id): ($base_sha | str substring 0..9)..($head_sha | str substring 0..9) in ($st.address)"
@@ -518,6 +524,21 @@ def run-review [
   return (if $missing > 0 or $receipt_missing { 1 } else { 0 })
 }
 
+# The lineage a run records: what was asked for, not how it was dispatched.
+def target-record [t: record] {
+  $t | select -o kind subject refs pr | compact-record
+}
+
+def compact-record [] {
+  let r = $in
+  $r | columns | reduce -f {} {|k, acc| if ($r | get $k) == null { $acc } else { $acc | insert $k ($r | get $k) } }
+}
+
+# Single-quote a string for sh.
+def sh-quote [s: string] {
+  $"'($s | str replace -a "'" "'\\''")'"
+}
+
 # Take a fully normalized target and either run it here (--foreground) or
 # fire a review tmux window. Detached success means accepted, not reviewed.
 # t: { kind, base_sha, head_sha, refs, context, title, window, pr? }
@@ -532,7 +553,8 @@ def dispatch [repo: path, manifest: path, t: record, --foreground, --force] {
   if ((do { ^tmux has-session -t review } | complete).exit_code != 0) {
     ^tmux new-session -d -s review
   }
-  let cmd = $"cue-review run --manifest ($manifest) --context ($t.context) --base ($t.base_sha) --head ($t.head_sha) -C ($repo); exec bash"
+  let target = (sh-quote (target-record $t | to json -r))
+  let cmd = $"cue-review run --manifest ($manifest) --context ($t.context) --base ($t.base_sha) --head ($t.head_sha) --target ($target) -C ($repo); exec bash"
   let win = (^tmux new-window -t review -n $t.window -P -F '#{window_id}' $cmd | str trim)
   mut tags = {
     review_target: $t.kind
@@ -580,7 +602,7 @@ def "main pr" [
   mut rc = 0
   for pr in $prs {
     # gh -R wants OWNER/REPO, not a path: run gh from the checkout instead.
-    let view = (do { cd $repo; ^gh pr view $pr --json headRefName,baseRefName,title } | complete)
+    let view = (do { cd $repo; ^gh pr view $pr --json number,headRefName,baseRefName,title } | complete)
     if $view.exit_code != 0 {
       log $"pr ($pr): gh pr view failed: ($view.stderr | str trim)"
       $rc = 1
@@ -597,6 +619,7 @@ def "main pr" [
       kind: pr
       parent: $resolved_parent
       pr: $pr
+      subject: $"PR #($info.number)"
       base_sha: $base_sha
       head_sha: $head_sha
       refs: $"($info.baseRefName)..($info.headRefName)"
@@ -644,6 +667,7 @@ def "main branch" [
     let tail = ($name | split row '/' | last | str substring 0..15)
     dispatch $repo $manifest {
       kind: branch
+      subject: $"branch ($name)"
       parent: $resolved_parent
       base_sha: $base_sha
       head_sha: $head_sha
@@ -698,6 +722,7 @@ def "main commit" [
     if $br == null { die "commit ($s10) is on no branch; pass --context to name one" }
     dispatch $repo $manifest {
       kind: commit
+      subject: $"commit ($s10)"
       parent: $resolved_parent
       base_sha: $base_sha
       head_sha: $head_sha
@@ -740,6 +765,7 @@ def "main range" [
     if $br == null { die "head ($h10) is on no branch; pass --context to name one" }
     dispatch $repo $manifest {
       kind: range
+      subject: $"range ($b10)..($h10)"
       parent: $resolved_parent
       base_sha: $base_sha
       head_sha: $head_sha
@@ -758,6 +784,7 @@ def "main run" [
   --context: string  # Existing cue context slug in the repo's scope
   --base: string     # Base ref; the diff is merge-base(<base>,<head>)..<head>
   --head: string = "HEAD"  # Head ref to review
+  --target: string   # Target lineage as JSON (set by the target subcommands)
   -C: path           # Repository directory (default: current)
 ] {
   if $manifest == null { die "--manifest is required" }
@@ -766,7 +793,10 @@ def "main run" [
   let repo = (repo-of ($C | default $env.PWD | path expand))
   let head_sha = (rev-parse $repo $head)
   let base_sha = (merge-base-of $repo $base $head_sha)
-  exit (run-review (resolve-manifest $manifest) $context $base_sha $head_sha $repo { kind: run })
+  let t = if $target == null { { kind: run } } else {
+    try { $target | from json } catch { die $"--target is not JSON: ($target)" }
+  }
+  exit (run-review (resolve-manifest $manifest) $context $base_sha $head_sha $repo $t)
 }
 
 # State of review windows in the review tmux session.
