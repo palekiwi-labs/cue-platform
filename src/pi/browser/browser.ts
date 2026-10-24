@@ -255,6 +255,7 @@ export class CueBrowser implements Component {
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
   private sessionsFlat = true
+  private contextsFlat = false
 
   constructor(
     private tui: TUI,
@@ -448,7 +449,7 @@ export class CueBrowser implements Component {
 
   private shownContexts(v: ContextsView): ContextRow[] {
     // A query searches the whole tree, collapsed, old or not.
-    return shownContexts(v.rows, v.query, this.treeRows(v), this.collapsed)
+    return shownContexts(v.rows, v.query, this.treeRows(v), this.collapsed, this.contextsFlat)
   }
 
   private now(): number {
@@ -650,7 +651,14 @@ export class CueBrowser implements Component {
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
       if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
-      if (matchesKey(data, "alt+z")) return this.onToggleCollapse(v)
+      if (matchesKey(data, "alt+t")) {
+        const keep = this.selectedContext()?.address
+        this.contextsFlat = !this.contextsFlat
+        v.selected = 0
+        if (keep) this.selectContext(v, keep)
+        return this.refresh()
+      }
+      if (matchesKey(data, "alt+z") && !this.contextsFlat) return this.onToggleCollapse(v)
       if (matchesKey(data, "ctrl+r")) {
         const c = this.selectedContext()
         if (c) this.pushSessions({ address: c.address, slug: c.slug })
@@ -1045,7 +1053,7 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}`
       : v.kind === "sessions"
         ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
@@ -1070,7 +1078,7 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
+        "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
@@ -1108,7 +1116,7 @@ export class CueBrowser implements Component {
       return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no contexts")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
-    const tree = v.query.trim() === ""
+    const tree = !this.contextsFlat && v.query.trim() === ""
     const here = this.deps.sessionAddress()
     const mixed = new Set(rows.map((r) => r.scope)).size > 1
     const hidden = tree ? collapseTree(this.treeRows(v), this.collapsed).hidden : new Map<string, number>()

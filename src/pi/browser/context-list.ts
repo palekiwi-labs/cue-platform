@@ -31,8 +31,11 @@ export function shownContexts(
   query: string,
   tree: ContextRow[],
   collapsed: ReadonlySet<string>,
+  flat = false,
 ): ContextRow[] {
-  if (query.trim() === "") return collapseTree(tree, collapsed).rows
+  if (query.trim() === "") {
+    return flat ? tree.filter((r) => !r.ancestorOnly) : collapseTree(tree, collapsed).rows
+  }
   return fuzzyFilter(rows, query, (r) => `${r.slug} ${r.title} ${r.scope}`)
 }
 
