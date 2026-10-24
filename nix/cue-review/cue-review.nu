@@ -587,7 +587,9 @@ def "main pr" [
       continue
     }
     let info = ($view.stdout | from json)
-    let fetch = (do { ^git -C $repo fetch origin $info.headRefName } | complete)
+    # Fetch the base too: a stale origin/<base> yields an older merge-base,
+    # and the diff then includes commits already on the base branch.
+    let fetch = (do { ^git -C $repo fetch origin $info.headRefName $info.baseRefName } | complete)
     if $fetch.exit_code != 0 { log $"pr ($pr): fetch failed: ($fetch.stderr | str trim)"; $rc = 1; continue }
     let head_sha = (rev-parse $repo $"origin/($info.headRefName)")
     let base_sha = (merge-base-of $repo $"origin/($info.baseRefName)" $head_sha)
