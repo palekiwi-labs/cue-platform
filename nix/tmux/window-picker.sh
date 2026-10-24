@@ -2,7 +2,7 @@
 #
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
-#   @pi_desc                         extensions/tmux-resume.ts (/describe)
+#   @pi_desc                         extensions/session-describe.ts
 #   @review_state, @review_context,
 #   @review_title, @review_run       cue-review
 # tmux.conf colours the status-bar tabs from the same options.
