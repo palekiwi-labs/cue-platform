@@ -519,15 +519,15 @@ export class PrBrowser implements Component {
     const indent = " ".repeat(indentBase) + (depth > 0 ? "  ".repeat(depth - 1) + t.fg("dim", "└ ") : "")
     const state = pr.isDraft ? t.fg("muted", "◌") : t.fg("success", "●")
     const num = t.fg(pr.isDraft ? "muted" : "success", pad(`#${pr.number}`, w.numW))
+    const age = t.fg("muted", pad(fmtAge(pr.createdAt), w.ageW))
+    const author = t.fg("muted", pad(pr.author, w.authorW))
     const checks = t.fg(checksTone(pr.checks), checksGlyph(pr.checks))
     const me = reviewRequested(pr, viewer) ? t.fg("warning", "◆") : " "
-    const age = t.fg("muted", fmtAge(pr.createdAt).padStart(w.ageW))
-    const author = t.fg("muted", pad(pr.author, w.authorW))
     const title = pr.isDraft ? t.fg("muted", pr.title) : pr.title
     const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
     const branch = t.fg("dim", `(${pr.headRef})`)
     return pad(
-      [indent + state, num, checks, me, age, author, title, branch + labels].join(" "),
+      [indent + state, num, age, author, checks, me, title, branch + labels].join(" "),
       width,
     )
   }
