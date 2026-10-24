@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { cueFailureMessage } from "./cue-exec"
 import { provenanceFlags } from "./cue-args"
+import { currentContext } from "./current-context"
 
 /**
  * Harness-side producers for cue context activity (`cue activity add`).
@@ -149,4 +150,24 @@ function segmentIsCommit(words: string[]): boolean {
  */
 export function isGitCommit(command: string): boolean {
   return segments(command).some(segmentIsCommit)
+}
+
+/**
+ * Record git_commit_attempt for every successful bash tool call (nested
+ * codemode calls included) whose command runs `git commit`, into the
+ * session's context. One event per call; no commit hash, since the call
+ * succeeding does not prove a commit was made. Merges and user `!` bash
+ * are not observed.
+ */
+export function registerActivityRecording(pi: ExtensionAPI): void {
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName !== "bash" || event.isError) return
+    const command = event.input.command
+    if (typeof command !== "string" || !isGitCommit(command)) return
+    const address = currentContext(ctx.sessionManager.getBranch())
+    await recordActivity(pi, ctx, address, "git_commit_attempt", {
+      command,
+      cwd: ctx.cwd,
+    })
+  })
 }
