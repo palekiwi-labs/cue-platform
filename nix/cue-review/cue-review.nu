@@ -164,7 +164,7 @@ def slugify [name: string] {
   | str trim -c '-'
 }
 
-# Create the review context if missing, then pin it (idempotent marker).
+# Create the review context if missing.
 def ensure-context [repo: path, slug: string, title: string, parent: any] {
   if ((do { ^cue status -C $repo --context $slug } | complete).exit_code != 0) {
     let args = if $parent == null { [] } else { [--parent $parent] }
@@ -172,8 +172,6 @@ def ensure-context [repo: path, slug: string, title: string, parent: any] {
     if $created.exit_code != 0 { die $created.stderr }
     log $"created context ($slug)"
   }
-  let pin = (do { ^cue context pin $slug -C $repo } | complete)
-  if $pin.exit_code != 0 { log $"warning: pin failed: ($pin.stderr | str trim)" }
 }
 
 # Set @<key> window options on a tmux window: the given target, else the
