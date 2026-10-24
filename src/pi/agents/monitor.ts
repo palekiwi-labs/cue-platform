@@ -319,7 +319,7 @@ export class AgentMonitor implements Component {
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 5)
+    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 4)
 
     const lines: string[] = []
     let selLine = 0
