@@ -13,6 +13,7 @@ import {
 import type { TUI } from "@earendil-works/pi-tui"
 import { type BrowserDeps, type BrowserStart, CueBrowser, type Target } from "../browser/browser"
 import { parseActivity, sortActivity } from "../browser/activity"
+import { parseLog, sortLog } from "../browser/log"
 import { parseArtifacts, parseContextTree } from "../browser/model"
 import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browser/sessions"
 import { currentContext, slugOf } from "../lib/current-context"
@@ -325,6 +326,8 @@ export async function openBrowser(
               await cueBestEffort(pi, ctx.cwd, ["activity", "list", "--context", address, "--json"]),
             ),
           ),
+        loadLog: async (address) =>
+          sortLog(parseLog(await cueBestEffort(pi, ctx.cwd, ["log", "list", "--context", address]))),
         gitShow,
         storeRoot: () => storeRoot(ctx.cwd),
         sessionFile,

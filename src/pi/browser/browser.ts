@@ -30,6 +30,7 @@ import {
   fmtWhen,
   kindLabel,
 } from "./activity"
+import { type LogEntry, logMarkers, logPreview, tracePath } from "./log"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -105,6 +106,8 @@ export interface BrowserDeps {
   clearLabels(path: string): void
   /** Activity events of a context, newest first. */
   loadActivity(address: string): Promise<ActivityEvent[]>
+  /** Log entries of a context, newest first. */
+  loadLog(address: string): Promise<LogEntry[]>
   /** `git show` output for a commit, or null when unavailable. */
   gitShow(root: string, hash: string): string | null
   /** Root of the cue store. */
@@ -131,6 +134,7 @@ export type BrowserStart =
   | { view: "artifacts"; context: ContextRef }
   | { view: "sessions" }
   | { view: "activity"; context: ContextRef }
+  | { view: "log"; context: ContextRef }
 
 interface ContextsView {
   kind: "contexts"
@@ -177,7 +181,18 @@ interface ActivityView {
   loading: boolean
 }
 
-type View = ContextsView | ArtifactsView | SessionsView | ActivityView
+interface LogView {
+  kind: "log"
+  context: ContextRef
+  /** Entries within the recency window, or all of them. */
+  recent: boolean
+  rows: LogEntry[]
+  query: string
+  selected: number
+  loading: boolean
+}
+
+type View = ContextsView | ArtifactsView | SessionsView | ActivityView | LogView
 
 const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
   recent: "labeled",
@@ -246,6 +261,7 @@ export class CueBrowser implements Component {
     if (start.view === "contexts") this.pushContexts(true)
     else if (start.view === "sessions") this.pushSessions()
     else if (start.view === "activity") this.pushActivity(start.context)
+    else if (start.view === "log") this.pushLog(start.context)
     else this.pushArtifacts(start.context)
   }
 
@@ -307,7 +323,7 @@ export class CueBrowser implements Component {
     } else if (v.kind === "sessions") {
       if (v.subset !== "recent") v.subset = "recent"
       v.selected = 0
-    } else if (v.kind === "activity") {
+    } else if (v.kind === "activity" || v.kind === "log") {
       if (!v.recent) v.recent = true
       v.selected = 0
     }
@@ -381,6 +397,24 @@ export class CueBrowser implements Component {
     this.views.push(v)
     this.input.setValue("")
     void this.loadActivity(v)
+  }
+
+  private pushLog(context: ContextRef): void {
+    const v: LogView = {
+      kind: "log", context, recent: true, rows: [], query: "", selected: 0,
+      loading: true,
+    }
+    this.views.push(v)
+    this.input.setValue("")
+    this.status = ""
+    void this.loadLog(v)
+  }
+
+  private async loadLog(v: LogView): Promise<void> {
+    v.loading = true
+    v.rows = await this.deps.loadLog(v.context.address)
+    v.loading = false
+    this.refresh()
   }
 
   private async loadActivity(v: ActivityView): Promise<void> {
@@ -470,6 +504,19 @@ export class CueBrowser implements Component {
     return q === "" ? rows : fuzzyFilter(rows, q, (e) => `${e.kind} ${eventSummary(e)}`)
   }
 
+  private shownLog(v: LogView): LogEntry[] {
+    const rows = v.recent
+      ? v.rows.filter((e) => e.timestamp >= Date.now() - this.recencyDays * 86400_000)
+      : v.rows
+    const q = v.query.trim()
+    return q === "" ? rows : fuzzyFilter(rows, q, (e) => e.title)
+  }
+
+  private selectedLog(): LogEntry | undefined {
+    const v = this.view
+    return v.kind === "log" ? this.shownLog(v)[v.selected] : undefined
+  }
+
   private selectedActivity(): ActivityEvent | undefined {
     const v = this.view
     return v.kind === "activity" ? this.shownActivity(v)[v.selected] : undefined
@@ -494,6 +541,7 @@ export class CueBrowser implements Component {
     const v = this.view
     if (v.kind === "sessions") return this.shownSessions(v).length
     if (v.kind === "activity") return this.shownActivity(v).length
+    if (v.kind === "log") return this.shownLog(v).length
     return v.kind === "contexts"
       ? this.shownContexts(v).length
       : this.shownArtifacts(v).length
@@ -510,6 +558,8 @@ export class CueBrowser implements Component {
   }
 
   private selectedPath(): string | undefined {
+    const e = this.selectedLog()
+    if (e) return tracePath(e, this.deps.storeRoot()) ?? undefined
     return this.selectedContext()?.path ?? this.selectedArtifact()?.path
   }
 
@@ -519,7 +569,7 @@ export class CueBrowser implements Component {
     const s = this.selectedSessionRow()
     if (s) return s.context.address || undefined
     const v = this.view
-    if (v.kind === "activity") return v.context.address
+    if (v.kind === "activity" || v.kind === "log") return v.context.address
     const a = this.selectedArtifact()
     return a && v.kind === "artifacts" ? artifactAddress(v.context.address, a.path) : undefined
   }
@@ -603,7 +653,12 @@ export class CueBrowser implements Component {
         if (c) this.pushActivity({ address: c.address, slug: c.slug })
         return
       }
-    } else if (v.kind === "activity") {
+      if (matchesKey(data, "ctrl+g")) {
+        const c = this.selectedContext()
+        if (c) this.pushLog({ address: c.address, slug: c.slug })
+        return
+      }
+    } else if (v.kind === "activity" || v.kind === "log") {
       if (matchesKey(data, "tab")) {
         v.recent = !v.recent
         v.selected = 0
@@ -630,6 +685,7 @@ export class CueBrowser implements Component {
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
       }
+      if (v.kind === "artifacts" && matchesKey(data, "ctrl+g")) return this.pushLog(v.context)
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
         return this.refresh()
@@ -928,7 +984,9 @@ export class CueBrowser implements Component {
         ? this.sessionLines(v, w, h)
         : v.kind === "activity"
           ? this.activityLines(v, w, h)
-          : this.artifactLines(v, w, h)
+          : v.kind === "log"
+            ? this.logLines(v, w, h)
+            : this.artifactLines(v, w, h)
     const out: string[] = []
     if (!this.previewShown()) {
       const list = listFor(width, body)
@@ -984,6 +1042,8 @@ export class CueBrowser implements Component {
         ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
+          : v.kind === "log"
+          ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
@@ -1001,7 +1061,7 @@ export class CueBrowser implements Component {
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
@@ -1011,8 +1071,11 @@ export class CueBrowser implements Component {
     } else if (v.kind === "activity") {
       hints = ["tab recent/all", "ctrl+up/down recency", "ctrl+h address",
         ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+    } else if (v.kind === "log") {
+      hints = ["enter/ctrl+e open trace", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
+        "ctrl+h address", "ctrl+y trace path", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
-      hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter open", "ctrl+e open", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
         ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     }
@@ -1145,6 +1208,40 @@ export class CueBrowser implements Component {
     return out
   }
 
+  private logLines(v: LogView, width: number, height: number): string[] {
+    const t = this.theme
+    if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
+    const rows = this.shownLog(v)
+    if (rows.length === 0) {
+      return [t.fg("warning", v.recent ? `no log entries in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no log entries")]
+    }
+    v.selected = Math.min(v.selected, rows.length - 1)
+    const now = Date.now()
+    const [a, b] = this.window(rows.length, v.selected, height)
+    const out: string[] = []
+    for (let i = a; i < b; i++) {
+      const e = rows[i]!
+      const when = pad(fmtWhen(e.timestamp, now), 11)
+      const marks = logMarkers(e)
+        .map((m) => (m.on ? t.fg("accent", m.text) : t.fg("dim", m.text)))
+        .join(" ")
+      const line = pad(`${when} ${marks}  ${e.title}`, width)
+      out.push(i === v.selected ? t.bg("selectedBg", line) : line)
+    }
+    return out
+  }
+
+  /** Log preview markdown: the entry, then its linked trace. */
+  private logPreviewFor(e: LogEntry): string {
+    const p = tracePath(e, this.deps.storeRoot())
+    if (!p) return logPreview(e)
+    try {
+      return logPreview(e, readFileSync(p, "utf8"))
+    } catch {
+      return logPreview(e, null)
+    }
+  }
+
   /** Markdown for the preview: an artifact file or a session transcript. */
   private previewSource(path: string): string {
     let text: string
@@ -1190,6 +1287,16 @@ export class CueBrowser implements Component {
 
   private previewLines(width: number, height: number): string[] {
     const v = this.view
+    if (v.kind === "log") {
+      const e = this.selectedLog()
+      if (!e) return []
+      const key = `log:${e.id}:${width}`
+      if (this.previewCache?.key !== key) {
+        const lines = new Markdown(this.logPreviewFor(e), 0, 0, getMarkdownTheme()).render(width)
+        this.previewCache = { key, lines }
+      }
+      return this.sliceAndClamp(this.previewCache.lines, height)
+    }
     const selectedEvent = v.kind === "activity" ? this.selectedActivity() : undefined
     const path = v.kind === "sessions" ? this.selectedSession()?.path : this.selectedPath()
     const key = v.kind === "activity"
@@ -1203,7 +1310,10 @@ export class CueBrowser implements Component {
       const lines = new Markdown(md, 0, 0, getMarkdownTheme()).render(width)
       this.previewCache = { key, lines }
     }
-    const lines = this.previewCache.lines
+    return this.sliceAndClamp(this.previewCache.lines, height)
+  }
+
+  private sliceAndClamp(lines: string[], height: number): string[] {
     const max = Math.max(0, lines.length - height)
     this.previewScroll = Math.min(this.previewScroll, max)
     return lines.slice(this.previewScroll, this.previewScroll + height)
