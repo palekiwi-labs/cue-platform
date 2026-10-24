@@ -19,14 +19,15 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
+  batchTotals,
   fmtCost,
   fmtDuration,
   fmtTokens,
+  groupBatches,
   haystack,
   isLive,
   type RunManifest,
   type RunRow,
-  rowLabel,
   runState,
   stateTone,
 } from "./model"
@@ -40,7 +41,15 @@ export interface MonitorDeps {
   manifest(runPath: string): RunManifest | undefined
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
+  /** File holding the document shown in a pane; undefined if none. */
+  documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined
+  /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
+  editFile(path: string): Promise<void>
+  /** Open a file in a new tmux window; error text on failure. */
+  openInTmux(path: string): string | undefined
 }
+
+export type Target = "here" | "tmux"
 
 type Subset = "running" | "all"
 type Pane = "prompt" | "response"
@@ -56,11 +65,14 @@ export class AgentMonitor implements Component {
   private subset: Subset = "running"
   private pane: Pane = "prompt"
   private stacked = false
+  private preview = true
   private selectedId: string | undefined
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
-  private lastLoad = 0
+  private target: Target = "tmux"
+  private status = ""
+  private busy = false
 
   constructor(
     private tui: TUI,
@@ -94,17 +106,26 @@ export class AgentMonitor implements Component {
       if (first && !r.rows.some(isLive)) this.subset = "all"
     }
     this.loaded = true
-    this.lastLoad = Date.now()
     // The selected run's response may have just arrived.
     this.previewCache = undefined
     this.tui.requestRender()
   }
 
+  /**
+   * Runs to list, always in ps order (newest batch first, runs by
+   * position) so batches never interleave. The running subset keeps whole
+   * batches that still have a live run; the query keeps matching runs.
+   */
   private shown(): RunRow[] {
-    const base = this.subset === "running" ? this.rows.filter(isLive) : this.rows
+    let base = this.rows
+    if (this.subset === "running") {
+      const live = new Set(this.rows.filter(isLive).map((r) => r.batchId))
+      base = base.filter((r) => live.has(r.batchId))
+    }
     const q = this.input.getValue().trim()
     if (!q) return base
-    return fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath)))
+    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath))).map((r) => r.runId))
+    return base.filter((r) => hit.has(r.runId))
   }
 
   /** Index of the selected run in `rows`, following it across refreshes. */
@@ -121,6 +142,7 @@ export class AgentMonitor implements Component {
   // ---- input -----------------------------------------------------------
 
   handleInput(data: string): void {
+    if (this.busy) return
     const rows = this.shown()
     const move = (delta: number) => {
       if (rows.length === 0) return
@@ -142,9 +164,18 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "ctrl+r")) return void this.reload(false)
+    if (matchesKey(data, "enter")) return void this.onOpen()
+    if (matchesKey(data, "ctrl+t")) {
+      this.target = this.target === "here" ? "tmux" : "here"
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "alt+r")) {
       this.pane = this.pane === "prompt" ? "response" : "prompt"
       this.previewScroll = 0
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "alt+p")) {
+      this.preview = !this.preview
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+l")) {
@@ -161,6 +192,27 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       this.tui.requestRender()
     }
+  }
+
+  private async onOpen(): Promise<void> {
+    const r = this.selected()
+    if (!r) return
+    const path = this.deps.documentPath(r, this.pane)
+    if (!path) {
+      this.status = `no ${this.pane} to open`
+      return this.tui.requestRender()
+    }
+    if (this.target === "tmux") {
+      this.status = this.deps.openInTmux(path) ?? `opened ${this.pane} of ${r.runId} in tmux`
+      return this.tui.requestRender()
+    }
+    this.busy = true
+    try {
+      await this.deps.editFile(path)
+    } finally {
+      this.busy = false
+    }
+    this.tui.requestRender()
   }
 
   private scrollPreview(delta: number): void {
@@ -195,26 +247,27 @@ export class AgentMonitor implements Component {
       ...this.bodyLines(width, body),
     ]
     while (lines.length < height - 1) lines.push("")
-    lines.push(this.error ? t.fg("error", `cue-agent: ${this.error}`) : "")
+    lines.push(this.error ? t.fg("error", `cue-agent: ${this.error}`) : t.fg("muted", this.status))
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
   }
 
   private headerLine(width: number): string {
     const t = this.theme
     const live = this.rows.filter(isLive).length
-    const title = t.fg("accent", t.bold("cue-agent runs")) + " " +
+    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
       t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`)
-    const age = this.lastLoad ? `${Math.round((Date.now() - this.lastLoad) / 1000)}s ago` : "loading"
-    const right = t.fg("dim", `${this.loading ? "refreshing" : `updated ${age}`} • every ${POLL_MS / 1000}s`)
-    const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(right))
-    return title + " ".repeat(gap) + right
+    return truncateToWidth(title, width)
   }
 
   private helpLine(width: number): string {
     const hints = [
       "tab running/all",
+      `enter open ${this.pane}`,
+      "ctrl+t target",
       `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
       "ctrl+r refresh",
+      `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+l layout",
       "ctrl+d/u scroll",
       "esc close",
@@ -225,6 +278,11 @@ export class AgentMonitor implements Component {
   private bodyLines(width: number, body: number): string[] {
     const t = this.theme
     const out: string[] = []
+    if (!this.preview) {
+      const list = this.listLines(width, body)
+      for (let i = 0; i < body; i++) out.push(pad(list[i] ?? "", width))
+      return out
+    }
     if (this.stacked) {
       const listH = Math.max(3, Math.floor((body - 1) * 0.4))
       const list = this.listLines(width, listH)
@@ -253,35 +311,48 @@ export class AgentMonitor implements Component {
     }
     const sel = this.selectedIndex(rows)
     this.selectedId = rows[sel]!.runId
-    const start = Math.max(0, Math.min(sel - Math.floor(height / 2), rows.length - height))
-    const end = Math.min(rows.length, start + height)
     const toneColor = { live: "accent", ok: "success", bad: "error", dim: "dim" } as const
-    // Fixed columns on the right; agent, model and label share the rest.
-    const right = (r: RunRow) => t.fg("muted",
-      `${fmtDuration(r.elapsedSecs).padStart(6)} ${fmtTokens(r.tokensInput).padStart(6)} ${fmtCost(r.costUsd).padStart(7)}`)
+    // Fixed columns on the right, shared by batch and run lines.
+    const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
+      `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
     const rightW = 6 + 1 + 6 + 1 + 7
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const labelW = Math.max(6, width - stateW - agentW - modelW - rightW - 5)
-    const out: string[] = []
-    for (let i = start; i < end; i++) {
-      const r = rows[i]!
-      const state = runState(r)
-      const m = this.deps.manifest(r.runPath)
-      const line = pad(
-        [
-          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-          pad(r.agent, agentW),
-          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-          pad(rowLabel(r, m), labelW),
-          right(r),
-        ].join(" "),
-        width,
+    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 4)
+
+    const lines: string[] = []
+    let selLine = 0
+    for (const g of groupBatches(rows)) {
+      const tot = batchTotals(g)
+      const head = `${g.label ?? g.batchId}  ${t.fg("muted", `${tot.done}/${tot.total} done`)}`
+      const stateTxt = t.fg(toneColor[stateTone(g.state)], g.state)
+      const leftW = width - rightW - 1
+      lines.push(
+        pad(t.bold(pad(head, Math.max(6, leftW - visibleWidth(g.state) - 1))) + " " + stateTxt, leftW) +
+          " " + t.fg("muted", nums(tot.elapsedSecs, tot.tokensInput, tot.costUsd)),
       )
-      out.push(i === sel ? t.bg("selectedBg", line) : line)
+      for (const r of g.runs) {
+        const state = runState(r)
+        const line = pad(
+          "  " +
+            [
+              t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+              pad(r.agent, agentW),
+              t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
+              pad(this.deps.manifest(r.runPath)?.label ?? "", labelW),
+              t.fg("muted", nums(r.elapsedSecs, r.tokensInput, r.costUsd)),
+            ].join(" "),
+          width,
+        )
+        if (r.runId === this.selectedId) {
+          selLine = lines.length
+          lines.push(t.bg("selectedBg", line))
+        } else lines.push(line)
+      }
     }
-    return out
+    const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))
+    return lines.slice(start, start + height)
   }
 
   private previewSource(r: RunRow): string {

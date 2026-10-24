@@ -306,6 +306,11 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
   })
   let spec = {
     label: $"review-($ctx.run_id)-($phase)"
+    # One job per review run, so monitors group its phase batches.
+    job: {
+      id: $ctx.run_id
+      label: $"review ($ctx.head | str substring 0..6) \(($ctx.manifest_name)\)"
+    }
     defaults: {
       cwd: $ctx.repo
       worktree: { base: $ctx.head, ephemeral: true }
@@ -457,6 +462,7 @@ def run-review [
     base: $base_sha
     head: $head_sha
     diff: $diff_path
+    manifest_name: ($manifest | path parse | get stem)
   }
   tag-window { review_context: $context, review_run: $run_id }
   log $"run ($run_id): ($base_sha | str substring 0..9)..($head_sha | str substring 0..9) in ($st.address)"

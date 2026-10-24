@@ -28,7 +28,7 @@ const editorCommand = (): string =>
   process.env.VISUAL || process.env.EDITOR || "nvim"
 
 /** Hand the terminal to $EDITOR, as pi's own external-editor action does. */
-async function editInTerminal(tui: TUI, path: string): Promise<void> {
+export async function editInTerminal(tui: TUI, path: string): Promise<void> {
   tui.stop()
   try {
     await new Promise<void>((resolve) => {
@@ -56,7 +56,7 @@ function tmuxWindow(name: string, cwd: string, command: string): string | undefi
 }
 
 /** Open a file in a new tmux window next to pi; error text on failure. */
-function openInTmux(path: string): string | undefined {
+export function openInTmux(path: string): string | undefined {
   const name = path.split("/").pop() ?? "cue"
   return tmuxWindow(name, dirname(path), `${editorCommand()} ${shellQuote(path)}`)
 }

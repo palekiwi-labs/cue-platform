@@ -154,3 +154,52 @@ export function haystack(r: RunRow, m: RunManifest | undefined): string {
     .filter(Boolean)
     .join(" ")
 }
+
+/** One batch and its runs in position order, as the monitor groups them. */
+export interface BatchGroup {
+  batchId: string
+  label: string | null
+  state: BatchState
+  runs: RunRow[]
+}
+
+/**
+ * Group rows by batch, keeping the order of first appearance. Feed it rows
+ * in parsePs order so groups stay newest first and runs stay in position
+ * order no matter what filtering happened in between.
+ */
+export function groupBatches(rows: RunRow[]): BatchGroup[] {
+  const groups = new Map<string, BatchGroup>()
+  for (const r of rows) {
+    let g = groups.get(r.batchId)
+    if (!g) {
+      g = { batchId: r.batchId, label: r.batchLabel, state: r.batchState, runs: [] }
+      groups.set(r.batchId, g)
+    }
+    g.runs.push(r)
+  }
+  return [...groups.values()]
+}
+
+export interface BatchTotals {
+  done: number
+  total: number
+  /** Longest run: runs in a batch go in parallel, so it bounds wall time. */
+  elapsedSecs: number | null
+  tokensInput: number | null
+  costUsd: number | null
+}
+
+const sum = (xs: (number | null)[]): number | null =>
+  xs.some((x) => x !== null) ? xs.reduce<number>((a, x) => a + (x ?? 0), 0) : null
+
+export function batchTotals(g: BatchGroup): BatchTotals {
+  const elapsed = g.runs.map((r) => r.elapsedSecs).filter((x): x is number => x !== null)
+  return {
+    done: g.runs.filter((r) => r.outcome !== null).length,
+    total: g.runs.length,
+    elapsedSecs: elapsed.length ? Math.max(...elapsed) : null,
+    tokensInput: sum(g.runs.map((r) => r.tokensInput)),
+    costUsd: sum(g.runs.map((r) => r.costUsd)),
+  }
+}
