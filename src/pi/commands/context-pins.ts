@@ -3,7 +3,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { recordActivity, type ActivityCtx } from "../lib/activity"
-import { contextChildren } from "../lib/context-children"
+import { contextRecency } from "../lib/context-recency"
 import {
   CUE_CONTEXT_TYPE,
   type CueContextDetails,
@@ -16,9 +16,11 @@ import { formatGitContext, gitContext } from "../lib/git-context"
 import { composeMessage, cueBestEffort } from "./common"
 
 /**
- * Gather the orientation block for a context: pwd, git, status, direct
- * children, log and master plan. Data only; no instructions, so the
- * operator's next prompt decides what to do with it. Queries pass the
+ * Gather the orientation block for a context: pwd, git, status, last
+ * activity with a children table, log, recent artifacts and master plan.
+ * Data only, except one hint line when children have been active since
+ * this context's last log entry; the operator's next prompt decides what
+ * to do with it. Queries pass the
  * full canonical address, so contexts outside the cwd's scope resolve.
  */
 export async function contextOrientation(
@@ -30,7 +32,7 @@ export async function contextOrientation(
   const git = formatGitContext(await gitContext(pi, cwd))
   const ctxArgs = ["--context", address]
   const status = await cueBestEffort(pi, cwd, ["status", ...ctxArgs])
-  const children = await contextChildren(pi, cwd, address)
+  const { recency, artifacts } = await contextRecency(pi, cwd, address)
   const log = await cueBestEffort(pi, cwd, [
     "log",
     "list",
@@ -48,8 +50,9 @@ export async function contextOrientation(
     `PWD: ${cwd}`,
     git,
     `<status>\n${status}\n</status>`,
-    children,
+    recency,
     `<log>\n${log}\n</log>`,
+    artifacts,
     rendered,
   ])
 }

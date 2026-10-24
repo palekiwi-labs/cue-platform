@@ -73,7 +73,7 @@ describe("/cue:context:inject", () => {
     )
     expect(s.names).toEqual(["other"])
     expect(s.calls).toContainEqual(["status", "--context", "x/y/other"])
-    const rec = s.calls.find((a) => a[0] === "activity")
+    const rec = s.calls.find((a) => a[0] === "activity" && a[1] === "add")
     expect(rec).toContain("x/y/other")
     expect(rec).toContain('{"method":"inject"}')
   })

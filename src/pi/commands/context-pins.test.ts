@@ -117,7 +117,7 @@ function setup(opts: {
       if (cmd === "cue" && args.join(" ") === LIST_PINNED) {
         return { stdout: opts.pins, stderr: "", code: 0, killed: false }
       }
-      if (cmd === "cue" && args[0] === "activity") {
+      if (cmd === "cue" && args[0] === "activity" && args[1] === "add") {
         activity.push(args)
         return failActivity
           ? { stdout: "", stderr: "Error: boom", code: 1, killed: false }

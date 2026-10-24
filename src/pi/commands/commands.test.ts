@@ -4,7 +4,6 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent"
 import cuePlugins from "../index"
-import { contextChildren } from "../lib/context-children"
 
 interface ExecCall {
   command: string
@@ -137,69 +136,6 @@ describe("command registration", () => {
       "resume-open",
       "review:run",
     ])
-  })
-})
-
-describe("contextChildren helper", () => {
-  async function runChildren(
-    handler: ExecHandler,
-    slug?: string,
-  ): Promise<{ block: string; execCalls: ExecCall[] }> {
-    const { pi, execCalls } = makeCommandPi(handler)
-    const block = await contextChildren(pi, "/work", slug)
-    return { block, execCalls }
-  }
-
-  test("wraps direct children in <children> tags", async () => {
-    const { block, execCalls } = await runChildren(orientationPi())
-    expect(block).toBe("<children>\nscope/repo/child-a\nscope/repo/child-b\n</children>")
-    const list = execCalls.find((c) => c.args[0] === "context")!
-    expect(list.args).toEqual([
-      "context",
-      "list",
-      "--scope",
-      "store",
-      "--filter",
-      "parent=scope/repo/ctx",
-    ])
-  })
-
-  test("passes the slug to cue status --json", async () => {
-    const { execCalls } = await runChildren(orientationPi(), "auth")
-    expect(execCalls[0].args).toEqual(["status", "--context", "auth", "--json"])
-  })
-
-  test("returns empty when status has no address (unset context)", async () => {
-    const { block, execCalls } = await runChildren(
-      orientationPi({ "status --json": ok("{}") }),
-    )
-    expect(block).toBe("")
-    expect(execCalls).toHaveLength(1)
-  })
-
-  test("returns empty when cue status fails", async () => {
-    const { block } = await runChildren(
-      orientationPi({ "status --json": fail() }),
-    )
-    expect(block).toBe("")
-  })
-
-  test("returns empty when context list fails", async () => {
-    const { block } = await runChildren(
-      orientationPi({
-        "context list --scope store --filter parent=scope/repo/ctx": fail(),
-      }),
-    )
-    expect(block).toBe("")
-  })
-
-  test("returns empty when the list is empty", async () => {
-    const { block } = await runChildren(
-      orientationPi({
-        "context list --scope store --filter parent=scope/repo/ctx": ok(""),
-      }),
-    )
-    expect(block).toBe("")
   })
 })
 
