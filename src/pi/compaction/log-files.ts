@@ -81,7 +81,7 @@ export function fileStamp(file: string): string {
 
 /**
  * Absolute archive dir of a summary. Summaries written by the legacy
- * cue-log-compact skill hold a context-relative `log/.archive/...` path.
+ * (now retired) cue-log-compact skill hold a context-relative `log/.archive/...` path.
  */
 export function archiveDir(store: string, address: string, c: CompactedBlock): string {
   return c.archive.startsWith(`${address}/`) ? join(store, c.archive) : join(store, address, c.archive)

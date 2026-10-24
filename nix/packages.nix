@@ -13,8 +13,8 @@ let
 in
 {
   inherit (llm-agents.packages.${system}) pi;
-  # Called from PATH by shipped tools: gh by cue-review, jq by the
-  # cue-log-compact skill script.
+  # gh is called from PATH by cue-review. jq has no shipped caller since
+  # the cue-log-compact skill was retired; kept for agent shells.
   inherit (pkgs) gh jq;
   cue-review = import ./cue-review { inherit pkgs; };
   inherit (cue.packages.${system}) cue cue-agent;
