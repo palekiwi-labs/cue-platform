@@ -388,7 +388,7 @@ export class PrBrowser implements Component {
       label("parent") + (f.parent.render(inputW)[0] ?? ""),
       label("manifest") + manifests,
       "",
-      f.error ? t.fg("error", f.error) : t.fg("dim", "parent is optional; it applies when the context is new"),
+      f.error ? t.fg("error", f.error) : "",
     ]
   }
 
