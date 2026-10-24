@@ -239,7 +239,8 @@ export class CueBrowser implements Component {
   private busy = false
   private target: Target = "tmux"
   private showPreview = true
-  private stacked = false
+  /** View kinds whose preview sits below the list; alt+l toggles the current one. */
+  private stacked = new Set<string>(["activity", "log"])
   private wizard: Wizard | undefined
   /** Contexts whose children are hidden; survives tab toggles. */
   private collapsed = new Set<string>()
@@ -698,7 +699,7 @@ export class CueBrowser implements Component {
         return this.refresh()
       }
       if (matchesKey(data, "alt+l")) {
-        this.stacked = !this.stacked
+        if (!this.stacked.delete(v.kind)) this.stacked.add(v.kind)
         return this.refresh()
       }
       if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
@@ -998,7 +999,7 @@ export class CueBrowser implements Component {
     if (!this.previewShown()) {
       const list = listFor(width, body)
       for (let i = 0; i < body; i++) out.push(pad(list[i] ?? "", width))
-    } else if (this.stacked) {
+    } else if (this.stacked.has(this.view.kind)) {
       const listH = Math.max(3, Math.floor((body - 1) * 0.4))
       const previewH = body - listH - 1
       const list = listFor(width, listH)
@@ -1234,7 +1235,7 @@ export class CueBrowser implements Component {
     for (let i = a; i < b; i++) {
       const e = rows[i]!
       const when = pad(fmtWhen(e.timestamp, now), 11)
-      const trace = e.trace ? t.fg("accent", "trace") : "     "
+      const trace = e.trace ? t.fg("warning", "◆") : " "
       const line = pad(`${when} ${trace} ${e.title}`, width)
       out.push(i === v.selected ? t.bg("selectedBg", line) : line)
     }
