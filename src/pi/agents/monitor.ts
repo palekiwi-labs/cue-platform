@@ -142,7 +142,7 @@ export class AgentMonitor implements Component {
 
   /** Selectable lines in display order, so moving walks the list top to bottom. */
   private shown(): Entry[] {
-    return this.groups().flatMap((group) =>
+    return this.groups().flatMap((group): Entry[] =>
       group.heading && this.folded.has(group.key)
         ? [{ id: `group:${group.key}`, group, row: group.runs[0]!.row, folded: true }]
         : group.runs.map((r) => ({ id: r.row.runId, group, row: r.row, folded: false })),
@@ -359,7 +359,8 @@ export class AgentMonitor implements Component {
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const indentW = 2
+    // Top-level lines share a two-column marker gutter; runs of a group nest one step further.
+    const indentW = 4
     // The label column fits its content so figures sit next to it.
     const fixedW = indentW + stateW + agentW + modelW + rightW + 4
     const groups = this.groups()
@@ -383,7 +384,7 @@ export class AgentMonitor implements Component {
       const head = [
         t.fg("dim", folded ? "▸" : "▾"),
         t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-        t.fg("mdHeading", t.bold(g.label)),
+        t.fg("accent", t.bold(g.label)),
         t.fg("muted", `${n.done}/${n.total}`),
       ].join(" ")
       return pad(head, leftW) + " " + t.fg("muted", nums(n.elapsedSecs, n.tokensInput, n.costUsd))
@@ -404,13 +405,13 @@ export class AgentMonitor implements Component {
     for (const g of groups) {
       if (!g.heading) {
         const r = g.runs[0]!
-        push(r.row.runId, runLine("", r.row, r.label))
+        push(r.row.runId, runLine("  ", r.row, r.label))
         continue
       }
       const folded = this.folded.has(g.key)
       push(`group:${g.key}`, heading(g, folded))
       if (folded) continue
-      for (const r of g.runs) push(r.row.runId, runLine("  ", r.row, r.label))
+      for (const r of g.runs) push(r.row.runId, runLine("    ", r.row, r.label))
     }
     const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))
     return lines.slice(start, start + height)
