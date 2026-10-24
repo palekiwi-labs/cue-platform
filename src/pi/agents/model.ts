@@ -9,15 +9,9 @@ export interface RunRow {
   batchId: string
   batchLabel: string | null
   batchState: BatchState
-  /** Groups batches of one unit of work; null for a standalone batch. */
-  jobId: string | null
-  jobLabel: string | null
   /** Unix seconds. */
   startedAt: number
   runId: string
-  /** Task label, else batch label, as cue-agent reports it. */
-  label: string | null
-  context: string | null
   agent: string
   model: string
   position: number
@@ -27,13 +21,17 @@ export interface RunRow {
   elapsedSecs: number | null
   tokensInput: number | null
   tokensOutput: number | null
-  tokensCacheRead: number | null
-  tokensCacheWrite: number | null
   costUsd: number | null
   /** completed | failed | timeout | aborted, once the run has a receipt. */
   outcome: string | null
   response: string | null
   error: string | null
+}
+
+/** Per-run fields ps does not report; read from the run's manifest.json. */
+export interface RunManifest {
+  label: string | null
+  context: string | null
 }
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
@@ -53,7 +51,6 @@ export function parsePs(json: string): RunRow[] {
   for (const b of batches as Record<string, unknown>[]) {
     const batchId = str(b.batch_id)
     if (!batchId || !Array.isArray(b.runs)) continue
-    const job = (b.job ?? null) as Record<string, unknown> | null
     const runs = (b.runs as Record<string, unknown>[])
       .slice()
       .sort((x, y) => (num(x.position) ?? 0) - (num(y.position) ?? 0))
@@ -65,12 +62,8 @@ export function parsePs(json: string): RunRow[] {
         batchId,
         batchLabel: str(b.label),
         batchState: (str(b.state) ?? "finished") as BatchState,
-        jobId: job ? str(job.id) : null,
-        jobLabel: job ? str(job.label) : null,
         startedAt: num(b.started_at) ?? 0,
         runId,
-        label: str(r.label),
-        context: str(r.context),
         agent: str(r.agent) ?? "?",
         model: str(r.model) ?? "",
         position: num(r.position) ?? 0,
@@ -79,8 +72,6 @@ export function parsePs(json: string): RunRow[] {
         elapsedSecs: num(r.elapsed_secs),
         tokensInput: num(r.tokens_input),
         tokensOutput: num(r.tokens_output),
-        tokensCacheRead: num(r.tokens_cache_read),
-        tokensCacheWrite: num(r.tokens_cache_write),
         costUsd: num(r.cost_usd),
         outcome: result ? str(result.outcome) : null,
         response: result ? str(result.response) : null,
@@ -90,6 +81,16 @@ export function parsePs(json: string): RunRow[] {
   }
   rows.sort((a, b) => (a.batchId === b.batchId ? a.position - b.position : a.batchId < b.batchId ? 1 : -1))
   return rows
+}
+
+/** Label and context from a run's manifest.json; nulls when unreadable. */
+export function parseManifest(json: string): RunManifest {
+  try {
+    const m = JSON.parse(json) as Record<string, unknown>
+    return { label: str(m.label), context: str(m.context) }
+  } catch {
+    return { label: null, context: null }
+  }
 }
 
 /** What the row shows as its state: the outcome once known, else the phase. */
@@ -142,15 +143,14 @@ export function fmtCost(usd: number | null): string {
   return `$${usd.toFixed(usd < 1 ? 3 : 2)}`
 }
 
-/** Input tokens including cache reads and writes, comparable across models. */
-export function inputTokens(r: RunRow): number | null {
-  if (r.tokensInput === null) return null
-  return r.tokensInput + (r.tokensCacheRead ?? 0) + (r.tokensCacheWrite ?? 0)
+/** The label a row shows: the task label, else the batch label. */
+export function rowLabel(r: RunRow, m: RunManifest | undefined): string {
+  return m?.label ?? r.batchLabel ?? ""
 }
 
 /** Text the fuzzy query matches against. */
-export function haystack(r: RunRow): string {
-  return [r.label, r.batchLabel, r.jobLabel, r.agent, r.model, r.context, r.batchId, r.jobId]
+export function haystack(r: RunRow, m: RunManifest | undefined): string {
+  return [m?.label, r.batchLabel, r.agent, r.model, m?.context, r.batchId]
     .filter(Boolean)
     .join(" ")
 }
@@ -160,8 +160,6 @@ export interface BatchGroup {
   batchId: string
   label: string | null
   state: BatchState
-  /** Unix seconds. */
-  startedAt: number
   runs: RunRow[]
 }
 
@@ -175,7 +173,7 @@ export function groupBatches(rows: RunRow[]): BatchGroup[] {
   for (const r of rows) {
     let g = groups.get(r.batchId)
     if (!g) {
-      g = { batchId: r.batchId, label: r.batchLabel, state: r.batchState, startedAt: r.startedAt, runs: [] }
+      g = { batchId: r.batchId, label: r.batchLabel, state: r.batchState, runs: [] }
       groups.set(r.batchId, g)
     }
     g.runs.push(r)
@@ -201,108 +199,7 @@ export function batchTotals(g: BatchGroup): BatchTotals {
     done: g.runs.filter((r) => r.outcome !== null).length,
     total: g.runs.length,
     elapsedSecs: elapsed.length ? Math.max(...elapsed) : null,
-    tokensInput: sum(g.runs.map(inputTokens)),
+    tokensInput: sum(g.runs.map((r) => r.tokensInput)),
     costUsd: sum(g.runs.map((r) => r.costUsd)),
   }
-}
-
-/** Batches of one job, or a lone batch when it has no job. */
-export interface JobGroup {
-  /** The job id, else the batch id. */
-  key: string
-  label: string | null
-  /** Stages in start order. */
-  batches: BatchGroup[]
-}
-
-const byStart = (a: BatchGroup, b: BatchGroup): number =>
-  a.startedAt - b.startedAt || (a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0)
-
-/**
- * Group batches into jobs. Jobs are ordered newest first by when their
- * first batch started, so a job keeps its place as later stages start;
- * stages within a job run in start order.
- */
-export function groupJobs(rows: RunRow[]): JobGroup[] {
-  const jobs = new Map<string, JobGroup>()
-  for (const g of groupBatches(rows)) {
-    const r = g.runs[0]!
-    const key = r.jobId ?? g.batchId
-    let j = jobs.get(key)
-    if (!j) {
-      j = { key, label: r.jobId ? (r.jobLabel ?? r.jobId) : g.label, batches: [] }
-      jobs.set(key, j)
-    }
-    j.batches.push(g)
-  }
-  const out = [...jobs.values()]
-  for (const j of out) j.batches.sort(byStart)
-  return out.sort((a, b) => byStart(b.batches[0]!, a.batches[0]!))
-}
-
-/** State of a job: live while any stage is, crashed if any stage crashed. */
-export function jobState(j: JobGroup): BatchState {
-  const states = j.batches.map((b) => b.state)
-  for (const s of ["running", "finalizing", "crashed"] as const) if (states.includes(s)) return s
-  return "finished"
-}
-
-/** Totals of a job; time spans first stage start to last stage end. */
-export function jobTotals(j: JobGroup): BatchTotals {
-  const ts = j.batches.map(batchTotals)
-  const ends = j.batches.map((b, i) => b.startedAt + (ts[i]!.elapsedSecs ?? 0))
-  return {
-    done: ts.reduce((a, t) => a + t.done, 0),
-    total: ts.reduce((a, t) => a + t.total, 0),
-    elapsedSecs: ts.some((t) => t.elapsedSecs !== null) ? Math.max(...ends) - j.batches[0]!.startedAt : null,
-    tokensInput: sum(ts.map((t) => t.tokensInput)),
-    costUsd: sum(ts.map((t) => t.costUsd)),
-  }
-}
-
-/**
- * How a stage reads under its job: the part of the batch label after the
- * job id when the label embeds it, else the label, else the batch id.
- */
-export function stageLabel(b: BatchGroup, jobId: string): string {
-  const l = b.label ?? b.batchId
-  const i = l.indexOf(jobId)
-  if (i < 0) return l
-  const rest = l.slice(i + jobId.length).replace(/^[-_.\s]+/, "")
-  return rest || l
-}
-
-/** One run as the monitor lists it, with the label its line shows. */
-export interface DisplayRun {
-  row: RunRow
-  label: string
-}
-
-/**
- * A block of the monitor list: a job, or a standalone batch, shown as a
- * foldable heading over a flat list of its runs in stage order.
- */
-export interface DisplayGroup {
-  key: string
-  label: string
-  state: BatchState
-  totals: BatchTotals
-  runs: DisplayRun[]
-}
-
-export function displayGroups(rows: RunRow[]): DisplayGroup[] {
-  return groupJobs(rows).map((j) => {
-    const isJob = j.batches[0]!.runs[0]!.jobId !== null
-    const runs = j.batches.flatMap((b) => {
-      const stage = isJob ? stageLabel(b, j.key) : (b.label ?? b.batchId)
-      return b.runs.map((row) => ({ row, label: row.label ?? stage }))
-    })
-    return {
-      key: j.key,
-      label: j.label ?? j.key,
-      state: jobState(j),
-      totals: jobTotals(j),
-      runs,
-    }
-  })
 }
