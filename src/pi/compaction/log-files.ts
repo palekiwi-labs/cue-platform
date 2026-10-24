@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { readdirSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 
 /**
  * Direct access to a context's log directory. cue reads only immediate
@@ -17,9 +17,10 @@ import { join } from "node:path"
  */
 export interface CompactedBlock {
   /** Stamp of the oldest original entry the summary replaces. */
-  from: string
+  /** A rounded JSON number in legacy summaries; see entryFrom. */
+  from: string | number
   /** Stamp of the newest original entry; also the summary's own. */
-  to: string
+  to: string | number
   /** Number of original entries, nested summaries expanded. */
   count: number
   /** Canonical address of the archive directory. */
@@ -78,9 +79,25 @@ export function fileStamp(file: string): string {
   return BigInt(file.replace(/\.json$/, "")).toString()
 }
 
-/** Oldest original stamp an entry stands for. */
+/**
+ * Absolute archive dir of a summary. Summaries written by the legacy
+ * cue-log-compact skill hold a context-relative `log/.archive/...` path.
+ */
+export function archiveDir(store: string, address: string, c: CompactedBlock): string {
+  return c.archive.startsWith(`${address}/`) ? join(store, c.archive) : join(store, address, c.archive)
+}
+
+/**
+ * Oldest original stamp an entry stands for. Legacy summaries hold
+ * `from` as a rounded JSON number; their archive dir name
+ * `<from>-<to>` carries the exact digits.
+ */
 export function entryFrom(live: LiveEntry): string {
-  return live.entry.compacted?.from ?? fileStamp(live.file)
+  const c = live.entry.compacted
+  if (!c) return fileStamp(live.file)
+  if (typeof c.from === "string") return c.from
+  const m = basename(c.archive).match(/^(\d+)-\d+$/)
+  return m ? BigInt(m[1]!).toString() : fileStamp(live.file)
 }
 
 /** Number of original entries an entry stands for. */

@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
+  archiveDir,
   type LiveEntry,
   type LogEntryJson,
   readLive,
@@ -70,15 +71,15 @@ function bundleEntry(file: string, entry: LogEntryJson): BundleEntry {
 }
 
 /** Original entries behind a summary, nested summaries expanded. */
-export function archivedOriginals(store: string, entry: LogEntryJson): BundleEntry[] {
+export function archivedOriginals(store: string, address: string, entry: LogEntryJson): BundleEntry[] {
   if (!entry.compacted) return []
-  const dir = join(store, entry.compacted.archive)
+  const dir = archiveDir(store, address, entry.compacted)
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".json") && f !== "manifest.json")
     .sort()
   return files.flatMap((file) => {
     const inner = JSON.parse(readFileSync(join(dir, file), "utf8")) as LogEntryJson
-    return inner.compacted ? archivedOriginals(store, inner) : [bundleEntry(file, inner)]
+    return inner.compacted ? archivedOriginals(store, address, inner) : [bundleEntry(file, inner)]
   })
 }
 
@@ -90,7 +91,7 @@ export function prepare(paths: RunPaths, limits: CompactionLimits): Bundle | nul
   const byFile = new Map(live.map((e) => [e.file, e.entry]))
   const mergeOriginals: Record<string, BundleEntry[]> = {}
   for (const file of split.merge) {
-    mergeOriginals[file] = archivedOriginals(paths.store, byFile.get(file)!)
+    mergeOriginals[file] = archivedOriginals(paths.store, paths.address, byFile.get(file)!)
   }
   const bundle: Bundle = {
     address: paths.address,

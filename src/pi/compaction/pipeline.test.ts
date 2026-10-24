@@ -189,3 +189,21 @@ describe("registerCompactionTrigger", () => {
     expect(h.warnings[0]).toContain("no context")
   })
 })
+
+describe("legacy summaries", () => {
+  test("resolve a context-relative archive and exact stamps from its name", async () => {
+    const { archivedOriginals } = await import("./prepare")
+    const { entryFrom, readLive } = await import("./log-files")
+    const name = `${file(1).slice(0, 20)}-${file(2).slice(0, 20)}`
+    const archive = join(dir, ".archive", name)
+    mkdirSync(archive, { recursive: true })
+    for (const i of [1, 2]) writeFileSync(join(archive, file(i)), `{"timestamp":1,"title":"orig ${i}","trace":null,"found":[],"decided":[],"open":[]}`)
+    writeFileSync(join(archive, "manifest.json"), "{}")
+    rmSync(join(dir, file(1)))
+    const legacy = { from: Number(BASE + 1n), to: Number(BASE + 2n), count: 2, archive: `log/.archive/${name}` }
+    writeFileSync(join(dir, file(2)), JSON.stringify({ timestamp: 1, title: "legacy", trace: null, found: [], decided: [], open: [], compacted: legacy }))
+    const live = readLive(dir).find((e) => e.file === file(2))!
+    expect(entryFrom(live)).toBe((BASE + 1n).toString())
+    expect(archivedOriginals(store, ADDRESS, live.entry).map((e) => e.title)).toEqual(["orig 1", "orig 2"])
+  })
+})

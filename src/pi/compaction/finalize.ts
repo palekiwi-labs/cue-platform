@@ -20,6 +20,7 @@ import {
   type LogEntryJson,
   PENDING_SUFFIX,
   readLive,
+  archiveDir as archiveDirOf,
 } from "./log-files"
 import { type Bundle, logDir } from "./prepare"
 import type { Proposal, ProposedSummary } from "./proposal"
@@ -81,7 +82,7 @@ export function summaryJson(s: ProposedSummary, compacted: CompactedBlock): stri
     null,
     2,
   )
-  return body.replace('"__TS__"', compacted.to)
+  return body.replace('"__TS__"', String(compacted.to))
 }
 
 /** Files whose hashes no longer match the snapshot. */
@@ -195,7 +196,7 @@ export function uncompact(paths: Paths, summaryFile: string): void {
   const dir = logDir(paths)
   const entry = JSON.parse(readFileSync(join(dir, summaryFile), "utf8")) as LogEntryJson
   if (!entry.compacted) throw new Error(`${summaryFile} is not a summary entry`)
-  const archiveDir = join(paths.store, entry.compacted.archive)
+  const archiveDir = archiveDirOf(paths.store, paths.address, entry.compacted)
   const originals = readdirSync(archiveDir).filter((f) => f.endsWith(".json") && f !== MANIFEST_FILE)
   for (const file of originals.filter((f) => f !== summaryFile)) {
     copyFileSync(join(archiveDir, file), join(dir, file))

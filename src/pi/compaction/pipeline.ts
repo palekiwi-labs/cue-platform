@@ -164,6 +164,9 @@ function cueRecorder(store: string, address: string) {
 }
 
 if (import.meta.main) {
+  // Set by the trigger so pi's binary runs this file as bun; children
+  // (cue-agent spawning pi) must not inherit it.
+  delete process.env.BUN_BE_BUN
   const [store, address, runDir] = process.argv.slice(2)
   if (!store || !address || !runDir) {
     console.error("usage: pipeline.ts <store> <address> <run-dir>")
