@@ -7,7 +7,6 @@ import {
   fmtWhen,
   kindLabel,
   parseActivity,
-  provenanceLine,
   sortActivity,
 } from "./activity"
 
@@ -100,30 +99,18 @@ describe("commitDetails", () => {
   })
 })
 
-describe("provenanceLine", () => {
-  test("joins harness@host and short session", () => {
-    expect(provenanceLine(event as any)).toBe("pi@pale, session 01a16e35")
-  })
-  test("unknown when nothing is known", () => {
-    const e = { ...event, host: null, harness: null, sessionId: null } as any
-    expect(provenanceLine(e)).toBe("unknown")
-  })
-})
-
 describe("eventPreview", () => {
   test("commit with diff", () => {
     const md = eventPreview(event as any, { gitShow: "diff --git a/x\n+b" })
-    expect(md).toContain("test: non-quiet dummy commit")
-    expect(md).toContain("```diff")
-    expect(md).toContain("master")
+    expect(md).toBe("```diff\ndiff --git a/x\n+b\n```")
   })
   test("commit without a diff notes it", () => {
     const md = eventPreview(event as any, {})
-    expect(md).toContain("_commit not found in this checkout_")
+    expect(md).toContain("_commit not found on this host_")
   })
   test("legacy commit without hash shows the command", () => {
     const e = { ...event, details: { command: "git commit -m x", cwd: "/x" } } as any
-    expect(eventPreview(e)).toContain("```sh")
+    expect(eventPreview(e)).toContain("git commit -m x")
   })
   test("artifact shows frontmatter and body", () => {
     const e = {
@@ -131,8 +118,7 @@ describe("eventPreview", () => {
       details: { address: "a/b/c/note/x.md", type: "note" },
     } as any
     const md = eventPreview(e, { artifact: "---\nstatus: open\n---\n\nBody text." })
-    expect(md).toContain("```yaml")
-    expect(md).toContain("Body text.")
+    expect(md).toBe("```yaml\nstatus: open\n```\n\nBody text.")
   })
   test("artifact missing from the store notes it", () => {
     const e = { ...event, kind: "artifact_created", details: { address: "a" } } as any
@@ -140,7 +126,7 @@ describe("eventPreview", () => {
   })
   test("session preview or fallback", () => {
     const e = { ...event, kind: "session_associated", details: { method: "link" } } as any
-    expect(eventPreview(e, { sessionPreview: "# the talk" })).toContain("# the talk")
+    expect(eventPreview(e, { sessionPreview: "# the talk" })).toBe("# the talk")
     expect(eventPreview(e)).toContain("_session file not found on this host_")
   })
   test("unknown kind shows details JSON", () => {

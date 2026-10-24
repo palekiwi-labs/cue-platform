@@ -103,13 +103,6 @@ export function eventSummary(e: ActivityEvent): string {
   return JSON.stringify(d)
 }
 
-/** Provenance line under the preview heading. */
-export function provenanceLine(e: ActivityEvent): string {
-  const who = [e.harness, e.host].filter(Boolean).join("@") || "unknown"
-  const session = e.sessionId ? `, session ${e.sessionId.slice(0, 8)}` : ""
-  return `${who}${session}`
-}
-
 export interface CommitDetails {
   hash: string
   branch: string
@@ -139,10 +132,11 @@ const capLines = (text: string, max: number): string => {
 }
 
 /**
- * Markdown preview of an event. `gitShow` is the `git show` output for
- * a commit (already truncated by the caller if desired); `artifact` is
- * the created artifact's file content; `sessionPreview` is the
- * rendered session description/transcript.
+ * Markdown preview of an event: the thing the event points at, and
+ * nothing else. `gitShow` is `git show --stat --patch` output for a
+ * commit; `artifact` is the created artifact's file content;
+ * `sessionPreview` is the rendered session transcript. When the target
+ * cannot be found, the event record is shown instead.
  */
 export function eventPreview(
   e: ActivityEvent,
@@ -152,45 +146,22 @@ export function eventPreview(
     sessionPreview?: string | null
   } = {},
 ): string {
-  const parts = [
-    `# ${kindLabel(e.kind).label.toLowerCase()} ${new Date(e.timestamp).toLocaleString()}`,
-    provenanceLine(e),
-  ]
-  const d = e.details
+  const record = "```json\n" + JSON.stringify(e.details, null, 2) + "\n```"
+  const missing = (what: string) => `_${what}_\n\n${record}`
   if (e.kind === "git_commit") {
-    const c = commitDetails(e)
-    if (c) {
-      const repo = c.repo ?? c.root ?? ""
-      parts.push(`**${c.title}**\n\n\`${c.hash.slice(0, 10)}\` on \`${c.branch}\`${repo ? ` in ${repo}` : ""}`)
-      if (extras.gitShow) {
-        parts.push("```diff\n" + capLines(extras.gitShow, 1000) + "\n```")
-      } else {
-        parts.push("_commit not found in this checkout_")
-      }
-    } else {
-      parts.push("```sh\n" + String(d.command ?? JSON.stringify(d, null, 2)) + "\n```")
-    }
-    return parts.join("\n\n")
+    if (extras.gitShow) return "```diff\n" + capLines(extras.gitShow, 1000) + "\n```"
+    return commitDetails(e) ? missing("commit not found on this host") : record
   }
-  if (e.kind === "artifact_created" && str(d.address)) {
-    parts.push(`\`${d.address}\``)
-    if (extras.artifact !== undefined && extras.artifact !== null) {
-      const m = /^---\n([\s\S]*?)\n---\n?/.exec(extras.artifact)
-      const body = m ? extras.artifact.slice(m[0].length) : extras.artifact
-      parts.push(m ? "```yaml\n" + m[1] + "\n```" : "")
-      if (body.trim() !== "") parts.push(body.trim())
-    } else {
-      parts.push("_artifact not found in this store_")
-    }
-    return parts.filter((p) => p !== "").join("\n\n")
+  if (e.kind === "artifact_created" && str(e.details.address)) {
+    const text = extras.artifact
+    if (text === undefined || text === null) return missing("artifact not found in this store")
+    const m = /^---\n([\s\S]*?)\n---\n?/.exec(text)
+    return m ? "```yaml\n" + m[1] + "\n```\n" + text.slice(m[0].length) : text
   }
   if (e.kind === "session_associated") {
-    if (extras.sessionPreview) parts.push(extras.sessionPreview)
-    else parts.push("_session file not found on this host_")
-    return parts.join("\n\n---\n\n")
+    return extras.sessionPreview || missing("session file not found on this host")
   }
-  parts.push("```json\n" + JSON.stringify(e.details, null, 2) + "\n```")
-  return parts.join("\n\n")
+  return record
 }
 
 /** Name of an artifact event's file below a store root, when known. */

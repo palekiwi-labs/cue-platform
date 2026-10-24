@@ -7,6 +7,7 @@ import {
   copyToClipboard,
   type ExtensionAPI,
   type ExtensionContext,
+  getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent"
 import type { TUI } from "@earendil-works/pi-tui"
@@ -194,16 +195,16 @@ function storeRoot(cwd: string): string {
 /** `git show` for an activity commit; null when it fails. */
 function gitShow(root: string, hash: string): string | null {
   if (!existsSync(root)) return null
-  const r = spawnSync("git", ["-C", root, "show", hash], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
+  const r = spawnSync("git", ["-C", root, "show", "--stat", "--patch", hash], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
   return r.status === 0 ? r.stdout : null
 }
 
-/** pi session file by session id, from one cached scan of ~/.pi/sessions. */
+/** pi session file by session id, from one cached scan of pi's sessions dir. */
 let sessionIds: Map<string, string> | undefined
 function sessionFile(sessionId: string): string | undefined {
   sessionIds ??= (() => {
     const map = new Map<string, string>()
-    const root = join(homedir(), ".pi", "sessions")
+    const root = join(getAgentDir(), "sessions")
     try {
       for (const dir of readdirSync(root, { withFileTypes: true })) {
         if (!dir.isDirectory()) continue
