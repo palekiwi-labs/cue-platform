@@ -40,7 +40,7 @@ const NONE = new Set<string>()
 export class ReviewPicker {
   private query = new Input()
   private name = new Input()
-  /** Name before alt+e, restored by esc. */
+  /** Name before ctrl+e, restored by esc. */
   private saved = ""
   private editing = false
   private manifest: number
