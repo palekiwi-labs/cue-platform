@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { registerAcuityListener } from "./acuity"
 import { registerActivityRecording } from "./lib/activity"
+import { registerCompactionTrigger } from "./compaction/trigger"
 import { registerAgentMonitor } from "./commands/agent-monitor"
 import { registerContextCurrentCommand } from "./commands/context-current"
 import { registerCueBrowser } from "./commands/cue-browser"
@@ -53,6 +54,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerReviewRunCommand(pi)
   registerAcuityListener(pi)
   registerActivityRecording(pi)
+  registerCompactionTrigger(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)
   registerSessionNaming(pi)
