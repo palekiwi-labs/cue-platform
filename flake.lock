@@ -66,18 +66,18 @@
         ]
       },
       "locked": {
-        "lastModified": 1792836779,
-        "narHash": "sha256-TISD5OXoo9fCTc/mY1q33KUb0MEGgJltQq88ZewGkJk=",
-        "ref": "cue-agent-prototype",
-        "rev": "bbb51bd5a63a24db6609fe2e06a24b50a2127258",
-        "revCount": 536,
-        "type": "git",
-        "url": "file:///home/pl/code/palekiwi-labs/cue"
+        "lastModified": 1792841662,
+        "narHash": "sha256-72bTg1b4SlJ07vqA4VGCslIeCNH6r8wQq2zGDLgBmxg=",
+        "owner": "palekiwi-labs",
+        "repo": "cue",
+        "rev": "6572f787cab5f6ecd1144fef727abcec84965038",
+        "type": "github"
       },
       "original": {
+        "owner": "palekiwi-labs",
         "ref": "cue-agent-prototype",
-        "type": "git",
-        "url": "file:///home/pl/code/palekiwi-labs/cue"
+        "repo": "cue",
+        "type": "github"
       }
     },
     "fenix": {
