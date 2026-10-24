@@ -271,3 +271,41 @@ export function stageLabel(b: BatchGroup, jobId: string): string {
   const rest = l.slice(i + jobId.length).replace(/^[-_.\s]+/, "")
   return rest || l
 }
+
+/** One run as the monitor lists it, with the label its line shows. */
+export interface DisplayRun {
+  row: RunRow
+  label: string
+}
+
+/**
+ * A block of the monitor list. A job, or a batch of several runs, gets a
+ * heading over a flat list of its runs in stage order; a lone run of a
+ * standalone batch is just its line (heading false, one run).
+ */
+export interface DisplayGroup {
+  key: string
+  label: string
+  heading: boolean
+  state: BatchState
+  totals: BatchTotals
+  runs: DisplayRun[]
+}
+
+export function displayGroups(rows: RunRow[]): DisplayGroup[] {
+  return groupJobs(rows).map((j) => {
+    const isJob = j.batches[0]!.runs[0]!.jobId !== null
+    const runs = j.batches.flatMap((b) => {
+      const stage = isJob ? stageLabel(b, j.key) : (b.label ?? b.batchId)
+      return b.runs.map((row) => ({ row, label: row.label ?? stage }))
+    })
+    return {
+      key: j.key,
+      label: j.label ?? j.key,
+      heading: isJob || runs.length > 1,
+      state: jobState(j),
+      totals: jobTotals(j),
+      runs,
+    }
+  })
+}

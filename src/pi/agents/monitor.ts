@@ -19,16 +19,12 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
-  type BatchTotals,
-  batchTotals,
+  type DisplayGroup,
+  displayGroups,
   fmtCost,
   fmtDuration,
   fmtTokens,
-  groupJobs,
   inputTokens,
-  jobState,
-  jobTotals,
-  stageLabel,
   haystack,
   isLive,
   type RunRow,
@@ -56,6 +52,15 @@ export type Target = "here" | "tmux"
 type Subset = "running" | "all"
 type Pane = "prompt" | "response"
 
+/** A selectable list line: a run, or the heading of a folded group. */
+interface Entry {
+  id: string
+  group: DisplayGroup
+  /** The run shown in the preview: the run itself, or a folded group's first. */
+  row: RunRow
+  folded: boolean
+}
+
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
 
 export class AgentMonitor implements Component {
@@ -75,6 +80,8 @@ export class AgentMonitor implements Component {
   private target: Target = "tmux"
   private status = ""
   private busy = false
+  /** Keys of folded groups. */
+  private folded = new Set<string>()
 
   constructor(
     private tui: TUI,
@@ -118,7 +125,7 @@ export class AgentMonitor implements Component {
    * keeps whole jobs that still have a live run; the query keeps matching
    * runs.
    */
-  private shown(): RunRow[] {
+  private groups(): DisplayGroup[] {
     const jobOf = (r: RunRow) => r.jobId ?? r.batchId
     let base = this.rows
     if (this.subset === "running") {
@@ -130,19 +137,45 @@ export class AgentMonitor implements Component {
       const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r)).map((r) => r.runId))
       base = base.filter((r) => hit.has(r.runId))
     }
-    // Display order, so moving the selection walks the list top to bottom.
-    return groupJobs(base).flatMap((j) => j.batches.flatMap((b) => b.runs))
+    return displayGroups(base)
   }
 
-  /** Index of the selected run in `rows`, following it across refreshes. */
-  private selectedIndex(rows: RunRow[]): number {
-    const i = rows.findIndex((r) => r.runId === this.selectedId)
+  /** Selectable lines in display order, so moving walks the list top to bottom. */
+  private shown(): Entry[] {
+    return this.groups().flatMap((group) =>
+      group.heading && this.folded.has(group.key)
+        ? [{ id: `group:${group.key}`, group, row: group.runs[0]!.row, folded: true }]
+        : group.runs.map((r) => ({ id: r.row.runId, group, row: r.row, folded: false })),
+    )
+  }
+
+  /** Index of the selected entry, following it across refreshes and folds. */
+  private selectedIndex(entries: Entry[]): number {
+    let i = entries.findIndex((e) => e.id === this.selectedId)
+    if (i < 0) i = entries.findIndex((e) => e.folded && e.group.runs.some((r) => r.row.runId === this.selectedId))
+    if (i < 0) i = entries.findIndex((e) => this.selectedId === `group:${e.group.key}`)
     return i >= 0 ? i : 0
   }
 
+  private selectedEntry(): Entry | undefined {
+    const entries = this.shown()
+    return entries[this.selectedIndex(entries)]
+  }
+
   private selected(): RunRow | undefined {
-    const rows = this.shown()
-    return rows[this.selectedIndex(rows)]
+    return this.selectedEntry()?.row
+  }
+
+  private toggleFold(): void {
+    const e = this.selectedEntry()
+    if (!e || !e.group.heading) return
+    if (this.folded.delete(e.group.key)) this.selectedId = e.group.runs[0]!.row.runId
+    else {
+      this.folded.add(e.group.key)
+      this.selectedId = `group:${e.group.key}`
+    }
+    this.previewScroll = 0
+    this.tui.requestRender()
   }
 
   // ---- input -----------------------------------------------------------
@@ -153,7 +186,7 @@ export class AgentMonitor implements Component {
     const move = (delta: number) => {
       if (rows.length === 0) return
       const i = Math.max(0, Math.min(rows.length - 1, this.selectedIndex(rows) + delta))
-      this.selectedId = rows[i]!.runId
+      this.selectedId = rows[i]!.id
       this.previewScroll = 0
       this.tui.requestRender()
     }
@@ -180,6 +213,7 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "alt+z")) return this.toggleFold()
     if (matchesKey(data, "alt+p")) {
       this.preview = !this.preview
       return this.tui.requestRender()
@@ -274,6 +308,7 @@ export class AgentMonitor implements Component {
       `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
       "ctrl+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
+      "alt+z fold",
       "alt+l layout",
       "ctrl+d/u scroll",
       "esc close",
@@ -311,73 +346,71 @@ export class AgentMonitor implements Component {
   private listLines(width: number, height: number): string[] {
     const t = this.theme
     if (!this.loaded) return [t.fg("dim", "loading…")]
-    const rows = this.shown()
-    if (rows.length === 0) {
+    const entries = this.shown()
+    if (entries.length === 0) {
       return [t.fg("warning", this.subset === "running" ? "no live runs (tab: all)" : "no runs")]
     }
-    const sel = this.selectedIndex(rows)
-    this.selectedId = rows[sel]!.runId
+    this.selectedId = entries[this.selectedIndex(entries)]!.id
     const toneColor = { live: "accent", ok: "success", bad: "error", dim: "dim" } as const
-    // Fixed columns on the right, shared by batch and run lines.
+    // Fixed columns on the right, shared by headings and run lines.
     const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
       `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
     const rightW = 6 + 1 + 6 + 1 + 7
     const stateW = 10
     const agentW = 10
     const modelW = 22
+    const indentW = 2
     // The label column fits its content so figures sit next to it.
-    const fixedW = 4 + stateW + agentW + modelW + rightW + 4
-    const longest = Math.max(6, ...rows.map((r) => (r.label ?? r.batchLabel ?? r.batchId).length))
+    const fixedW = indentW + stateW + agentW + modelW + rightW + 4
+    const groups = this.groups()
+    const longest = Math.max(6, ...groups.flatMap((g) => g.runs.map((r) => r.label.length)))
     const labelW = Math.max(6, Math.min(width - fixedW, longest))
     const rowW = fixedW + labelW
+    const leftW = rowW - rightW - 1
 
     const lines: string[] = []
     let selLine = 0
-    const leftW = rowW - rightW - 1
-    // A heading: label, done count, state; totals in the shared columns.
-    const heading = (indent: string, label: string, done: string, state: string, n: BatchTotals) => {
-      const head = `${indent}${t.bold(label)}  ${t.fg("muted", done)}`
-      return pad(pad(head, Math.max(6, leftW - visibleWidth(state) - 1)) + " " +
-        t.fg(toneColor[stateTone(state)], state), leftW) +
-        " " + t.fg("muted", nums(n.elapsedSecs, n.tokensInput, n.costUsd))
-    }
-    const runLine = (indent: string, r: RunRow, label: string) => {
-      const state = runState(r)
-      const lw = labelW + 4 - indent.length
-      const line = pad(
-        indent + [
-          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-          pad(r.agent, agentW),
-          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-          pad(label, Math.max(6, lw)),
-          t.fg("muted", nums(r.elapsedSecs, inputTokens(r), r.costUsd)),
-        ].join(" "),
-        rowW,
-      )
-      if (r.runId === this.selectedId) {
+    const push = (id: string, line: string) => {
+      if (id === this.selectedId) {
         selLine = lines.length
         lines.push(t.bg("selectedBg", line))
       } else lines.push(line)
     }
-    // A level with one child folds into its parent line.
-    for (const j of groupJobs(rows)) {
-      const isJob = j.batches.length > 1 || j.batches[0]!.runs[0]!.jobId !== null
-      const stageIndent = isJob ? "  " : ""
-      if (isJob) {
-        const tot = jobTotals(j)
-        lines.push(heading("", j.label ?? j.key, `${tot.done}/${tot.total} done`, jobState(j), tot))
+    // Heading: fold marker, state, label, done count; totals in the shared columns.
+    const heading = (g: DisplayGroup, folded: boolean) => {
+      const n = g.totals
+      const state = g.state
+      const head = [
+        t.fg("dim", folded ? "▸" : "▾"),
+        t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+        t.fg("mdHeading", t.bold(g.label)),
+        t.fg("muted", `${n.done}/${n.total}`),
+      ].join(" ")
+      return pad(head, leftW) + " " + t.fg("muted", nums(n.elapsedSecs, n.tokensInput, n.costUsd))
+    }
+    const runLine = (indent: string, r: RunRow, label: string) => {
+      const state = runState(r)
+      return pad(
+        indent + [
+          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+          pad(r.agent, agentW),
+          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
+          pad(label, labelW + indentW - indent.length),
+          t.fg("muted", nums(r.elapsedSecs, inputTokens(r), r.costUsd)),
+        ].join(" "),
+        rowW,
+      )
+    }
+    for (const g of groups) {
+      if (!g.heading) {
+        const r = g.runs[0]!
+        push(r.row.runId, runLine("", r.row, r.label))
+        continue
       }
-      for (const b of j.batches) {
-        const label = isJob ? stageLabel(b, j.key) : (b.label ?? b.batchId)
-        if (b.runs.length === 1) {
-          const r = b.runs[0]!
-          runLine(stageIndent, r, r.label ?? label)
-          continue
-        }
-        const tot = batchTotals(b)
-        lines.push(heading(stageIndent, label, `${tot.done}/${tot.total} done`, b.state, tot))
-        for (const r of b.runs) runLine(`${stageIndent}  `, r, r.label ?? "")
-      }
+      const folded = this.folded.has(g.key)
+      push(`group:${g.key}`, heading(g, folded))
+      if (folded) continue
+      for (const r of g.runs) push(r.row.runId, runLine("  ", r.row, r.label))
     }
     const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))
     return lines.slice(start, start + height)

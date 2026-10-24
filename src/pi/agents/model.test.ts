@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   batchTotals,
+  displayGroups,
   fmtCost,
   fmtDuration,
   groupBatches,
@@ -167,5 +168,18 @@ describe("groupJobs", () => {
   test("stage label drops the job id prefix", () => {
     const [j] = groupJobs([row("merge", 1, "J1")])
     expect(stageLabel(j!.batches[0]!, "J1")).toBe("merge")
+  })
+
+  test("display groups list job runs flat in stage order under a heading", () => {
+    const two = (id: string) => [
+      row(id, 5, null, { runId: `${id}-1` }),
+      row(id, 5, null, { runId: `${id}-2`, position: 2 }),
+    ]
+    const groups = displayGroups([
+      row("a3", 29, "A", { label: "verify" }), row("solo", 25, null), ...two("pair"), row("a1", 10, "A"),
+    ])
+    expect(groups.map((g) => [g.key, g.heading])).toEqual([["solo", false], ["A", true], ["pair", true]])
+    expect(groups[1]!.runs.map((r) => r.label)).toEqual(["a1", "verify"])
+    expect(groups[2]!.runs.map((r) => r.row.runId)).toEqual(["pair-1", "pair-2"])
   })
 })
