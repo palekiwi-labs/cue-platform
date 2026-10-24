@@ -148,6 +148,8 @@ export class PrBrowser implements Component {
     if ("error" in r) this.error = r.error
     else {
       this.error = ""
+      // Org view starts with every repo collapsed; refreshes keep the folds.
+      if (view === "org" && !this.data.org) for (const p of r.prs) this.folded.add(p.repo)
       this.data[view] = r
     }
     this.tui.requestRender()
@@ -200,6 +202,17 @@ export class PrBrowser implements Component {
     this.tui.requestRender()
   }
 
+  /** Move to the previous/next repo heading (org view). */
+  protected hopRepo(rows: Row[], dir: -1 | 1): void {
+    if (this.view !== "org") return
+    for (let i = this.selectedIndex(rows) + dir; i >= 0 && i < rows.length; i += dir) {
+      if (rows[i]!.kind === "repo") {
+        this.selectedId = rowId(rows[i]!)
+        return this.tui.requestRender()
+      }
+    }
+  }
+
   handleInput(data: string): void {
     if (this.form) return this.handleForm(data, this.form)
     const rows = this.rows()
@@ -228,6 +241,8 @@ export class PrBrowser implements Component {
       if (!this.data[this.view]) void this.reload()
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "ctrl+up")) return this.hopRepo(rows, -1)
+    if (matchesKey(data, "ctrl+down")) return this.hopRepo(rows, 1)
     if (matchesKey(data, "alt+z")) return this.toggleFold()
     if (matchesKey(data, "ctrl+r")) return void this.reload()
     if (this.handleAction(data)) return
@@ -404,6 +419,7 @@ export class PrBrowser implements Component {
       "tab preset",
       "alt+v view",
       "alt+z fold",
+      "ctrl+up/down repo",
       "enter worktree",
       "alt+o root",
       "alt+r review",
