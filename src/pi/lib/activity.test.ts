@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent"
 import {
   activityArgv,
   isGitCommit,
   recordActivity,
+  registerActivityRecording,
   type ActivityCtx,
 } from "./activity"
+import { CUE_CONTEXT_TYPE } from "./current-context"
 
 describe("isGitCommit", () => {
   const positives = [
@@ -121,5 +126,73 @@ describe("recordActivity", () => {
     const f = fakes(new Error("spawn failed"))
     await recordActivity(f.pi, f.ctx, "a/b/c", "git_commit_attempt", {})
     expect(f.notes[0]![0]).toContain("spawn failed")
+  })
+})
+
+describe("registerActivityRecording", () => {
+  type Handler = (e: unknown, ctx: ExtensionContext) => Promise<void>
+  function setup(linked?: string) {
+    const handlers: Record<string, Handler> = {}
+    const calls: string[][] = []
+    const pi = {
+      on: (event: string, h: Handler) => {
+        handlers[event] = h
+      },
+      exec: async (_cmd: string, args: string[]) => {
+        calls.push(args)
+        return { stdout: "", stderr: "", code: 0, killed: false }
+      },
+    } as unknown as ExtensionAPI
+    const ctx = {
+      cwd: "/w",
+      sessionManager: {
+        getSessionId: () => "s1",
+        getBranch: () =>
+          linked
+            ? [{ type: "custom", customType: CUE_CONTEXT_TYPE, data: { address: linked } }]
+            : [],
+      },
+    } as unknown as ExtensionContext
+    registerActivityRecording(pi)
+    const fire = (e: object) =>
+      handlers["tool_result"]!(
+        { type: "tool_result", toolCallId: "t", content: [], isError: false, ...e },
+        ctx,
+      )
+    return { fire, calls }
+  }
+
+  test("records a git commit into the session context", async () => {
+    const s = setup("a/b/c")
+    await s.fire({ toolName: "bash", input: { command: "git add . && git commit -m x && git commit -m y" } })
+    expect(s.calls).toEqual([
+      activityArgv(
+        "a/b/c",
+        "git_commit_attempt",
+        { command: "git add . && git commit -m x && git commit -m y", cwd: "/w" },
+        "s1",
+      ),
+    ])
+  })
+
+  test("nested calls are recorded too", async () => {
+    const s = setup("a/b/c")
+    await s.fire({ toolName: "bash", parentToolCallId: "p", input: { command: "git commit" } })
+    expect(s.calls).toHaveLength(1)
+  })
+
+  test("skips without cue when the session has no context", async () => {
+    const s = setup()
+    await s.fire({ toolName: "bash", input: { command: "git commit" } })
+    expect(s.calls).toHaveLength(0)
+  })
+
+  test("ignores failed calls, other tools and non-commits", async () => {
+    const s = setup("a/b/c")
+    await s.fire({ toolName: "bash", isError: true, input: { command: "git commit" } })
+    await s.fire({ toolName: "read", input: { command: "git commit" } })
+    await s.fire({ toolName: "bash", input: { command: "git status" } })
+    await s.fire({ toolName: "bash", input: {} })
+    expect(s.calls).toHaveLength(0)
   })
 })

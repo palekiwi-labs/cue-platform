@@ -52,6 +52,7 @@ function makeMockPi(handler: ExecHandler = () => ok()) {
 function fakeCtx(usage?: { tokens: number | null } | null): ExtensionToolContext {
   return {
     cwd: "/work",
+    sessionManager: { getSessionId: () => "test-session" },
     ...(usage === null
       ? {}
       : { getContextUsage: () => usage }),

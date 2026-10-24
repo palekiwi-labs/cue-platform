@@ -522,12 +522,16 @@ export class PrBrowser implements Component {
     const age = t.fg("muted", pad(fmtAge(pr.createdAt), w.ageW))
     const author = t.fg("muted", pad(pr.author, w.authorW))
     const checks = t.fg(checksTone(pr.checks), checksGlyph(pr.checks))
-    const me = reviewRequested(pr, viewer) ? t.fg("warning", "◆") : " "
-    const title = pr.isDraft ? t.fg("muted", pr.title) : pr.title
+    const forMe = reviewRequested(pr, viewer)
+    const title = pr.isDraft
+      ? t.fg("muted", pr.title)
+      : forMe
+        ? t.fg("warning", pr.title)
+        : pr.title
     const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
     const branch = t.fg("dim", `(${pr.headRef})`)
     return pad(
-      [indent + state, num, age, author, checks, me, title, branch + labels].join(" "),
+      [indent + state, num, age, author, checks, title, branch + labels].join(" "),
       width,
     )
   }
