@@ -47,7 +47,10 @@ function setup(
     cwd: "/w",
     isIdle: () => opts.idle ?? true,
     ui: { notify: (m: string) => notes.push(m) },
-    sessionManager: { getBranch: () => opts.branch ?? [] },
+    sessionManager: {
+      getBranch: () => opts.branch ?? [],
+      getSessionId: () => "s1",
+    },
   } as unknown as ExtensionCommandContext
   registerContextCurrentCommand(pi)
   return { run: () => handler("", ctx), sent, notes, calls }

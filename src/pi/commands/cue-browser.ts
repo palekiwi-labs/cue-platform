@@ -259,7 +259,7 @@ export async function openBrowser(
           })
           return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${pinned ? "pin" : "unpin"} failed`
         },
-        link: (address) => linkContext(pi, address),
+        link: (address) => linkContext(pi, ctx, address),
         editFile: (path) => editInTerminal(tui, path),
         openInTmux,
         copy: copyToClipboard,

@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
+import { recordActivity, type ActivityCtx } from "../lib/activity"
 import { contextChildren } from "../lib/context-children"
 import {
   CUE_CONTEXT_TYPE,
@@ -61,15 +62,18 @@ export async function contextOrientation(
  */
 export async function injectContext(
   pi: ExtensionAPI,
-  cwd: string,
+  ctx: ActivityCtx,
   address: string,
 ): Promise<void> {
   const details: CueContextDetails = { address }
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
-    content: await contextOrientation(pi, cwd, address),
+    content: await contextOrientation(pi, ctx.cwd, address),
     display: true,
     details,
+  })
+  await recordActivity(pi, ctx, address, "session_associated", {
+    method: "inject",
   })
   await applyContextName(pi, address)
 }
@@ -77,15 +81,21 @@ export async function injectContext(
 /**
  * Associate a context with the session without telling the model: a
  * `custom` session entry (never in the LLM context) records it for
- * currentContext, and the session and tmux window take its slug. Safe
+ * currentContext, and the session and tmux window take its slug.
+ * Every association, re-selecting the current context included, is
+ * recorded as session_associated in the selected context. Safe
  * while the agent is busy since the conversation is untouched.
  */
 export async function linkContext(
   pi: ExtensionAPI,
+  ctx: ActivityCtx,
   address: string,
 ): Promise<void> {
   const data: CueContextDetails = { address }
   pi.appendEntry(CUE_CONTEXT_TYPE, data)
+  await recordActivity(pi, ctx, address, "session_associated", {
+    method: "link",
+  })
   await applyContextName(pi, address)
 }
 
@@ -138,7 +148,7 @@ async function handler(
   })
   if (!choice) return
   if (choice.action === "alt") {
-    await linkContext(pi, choice.value)
+    await linkContext(pi, ctx, choice.value)
     return
   }
   if (!ctx.isIdle()) {
@@ -148,7 +158,7 @@ async function handler(
     )
     return
   }
-  await injectContext(pi, ctx.cwd, choice.value)
+  await injectContext(pi, ctx, choice.value)
 }
 
 /**

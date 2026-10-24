@@ -45,6 +45,7 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
     cwd: "/w",
     isIdle: () => opts.idle ?? true,
     ui: { notify: (m: string) => notes.push(m) },
+    sessionManager: { getSessionId: () => "s1" },
   } as unknown as ExtensionCommandContext
   registerContextInjectCommand(pi)
   return { run: (a: string) => handler(a, ctx), sent, notes, names, calls }
@@ -64,6 +65,9 @@ describe("/cue:context:inject", () => {
     )
     expect(s.names).toEqual(["other"])
     expect(s.calls).toContainEqual(["status", "--context", "x/y/other"])
+    const rec = s.calls.find((a) => a[0] === "activity")
+    expect(rec).toContain("x/y/other")
+    expect(rec).toContain('{"method":"inject"}')
   })
 
   test("bad argument: usage notice, nothing sent", async () => {

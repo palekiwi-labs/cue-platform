@@ -57,7 +57,7 @@ async function handler(
     ctx.ui.notify("cue: wait for the agent to finish to inject", "warning")
     return
   }
-  await injectContext(pi, ctx.cwd, address)
+  await injectContext(pi, ctx, address)
 }
 
 /**

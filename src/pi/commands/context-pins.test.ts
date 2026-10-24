@@ -99,6 +99,8 @@ function setup(opts: {
   const notes: string[] = []
   const names: string[] = []
   const entries: { customType: string; data: unknown }[] = []
+  const activity: string[][] = []
+  let failActivity = false
   let selectCalls = 0
   const pi = {
     registerShortcut: () => {},
@@ -115,12 +117,20 @@ function setup(opts: {
       if (cmd === "cue" && args.join(" ") === LIST_PINNED) {
         return { stdout: opts.pins, stderr: "", code: 0, killed: false }
       }
+      if (cmd === "cue" && args[0] === "activity") {
+        activity.push(args)
+        return failActivity
+          ? { stdout: "", stderr: "Error: boom", code: 1, killed: false }
+          : { stdout: "", stderr: "", code: 0, killed: false }
+      }
       return { stdout: "", stderr: "", code: 1, killed: false }
     },
   } as unknown as ExtensionAPI
   const ctx = {
     cwd: "/w",
     isIdle: () => opts.idle ?? true,
+    hasUI: true,
+    sessionManager: { getSessionId: () => "s1" },
     ui: {
       notify: (m: string) => notes.push(m),
       custom: async () => {
@@ -138,6 +148,10 @@ function setup(opts: {
     notes,
     names,
     entries,
+    activity,
+    failActivity: () => {
+      failActivity = true
+    },
     selects: () => selectCalls,
   }
 }
@@ -154,6 +168,13 @@ describe("/cue:context:pins", () => {
     expect(message.details).toEqual({ address: "a/b/two" })
     expect(message.content).toContain("Active cue context for this session: two")
     expect(s.names).toEqual(["two"])
+    expect(s.activity).toEqual([
+      [
+        "activity", "add", "--context", "a/b/two",
+        "--kind", "session_associated", "--details", '{"method":"inject"}',
+        "--harness", "pi", "--session-id", "s1",
+      ],
+    ])
   })
 
   test("no pins: notifies, no picker", async () => {
@@ -162,6 +183,15 @@ describe("/cue:context:pins", () => {
     expect(s.selects()).toBe(0)
     expect(s.sent).toHaveLength(0)
     expect(s.notes).toHaveLength(1)
+  })
+
+  test("recording failure warns without blocking the link", async () => {
+    const s = setup({ pins: pinsJson("one"), pick: "a/b/one", action: "alt" })
+    s.failActivity()
+    await s.run()
+    expect(s.entries).toHaveLength(1)
+    expect(s.names).toEqual(["one"])
+    expect(s.notes.some((n) => n.includes("activity not recorded"))).toBe(true)
   })
 
   test("cancel is a no-op", async () => {
@@ -175,6 +205,7 @@ describe("/cue:context:pins", () => {
     await s.run()
     expect(s.sent).toHaveLength(0)
     expect(s.entries).toHaveLength(0)
+    expect(s.activity).toHaveLength(0)
     expect(s.notes).toHaveLength(1)
   })
 
@@ -191,6 +222,9 @@ describe("/cue:context:pins", () => {
       { customType: CUE_CONTEXT_TYPE, data: { address: "a/b/two" } },
     ])
     expect(s.names).toEqual(["two"])
+    expect(s.activity).toHaveLength(1)
+    expect(s.activity[0]).toContain('{"method":"link"}')
+    expect(s.activity[0]).toContain("a/b/two")
   })
 })
 
