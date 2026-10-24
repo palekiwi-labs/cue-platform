@@ -100,7 +100,8 @@ orientation commands (`/cue:context:current`, `/cue:context:inject`,
 `/cue:context:pins`), `/cue:idea`, and `/review:run`. It also supplies cue skill
 injection, session naming, Acuity idle reporting, and the cast MCP adapter.
 `prompts/pi/` supplies `/cue:init`; `skills/` contains the nine cue skills.
-`extensions/` holds the footer, tmux-state and tmux-resume.
+`extensions/` holds the footer, tmux-state and session-describe
+(`/describe`). Sessions are browsed in the cue browser (ctrl+r).
 
 The extensions call cue, cue-agent, git and tmux from PATH; the flake
 bundle provides all but git.

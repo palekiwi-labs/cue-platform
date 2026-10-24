@@ -34,6 +34,15 @@ import {
   treePrefix,
   typeBadge,
 } from "./model"
+import {
+  fmtTokens,
+  groupSessions,
+  NO_CONTEXT,
+  type SessionListRow,
+  type SessionRow,
+  syntheticContext,
+  transcript,
+} from "./sessions"
 
 export interface ContextRef {
   address: string
@@ -66,6 +75,14 @@ export interface BrowserDeps {
    * new tmux window; returns an error message on failure.
    */
   newSession(address: string, target: Target): string | undefined
+  /** Sessions in the browser's scopes. */
+  loadSessions(): Promise<SessionRow[]>
+  /** Path of this pi's active session file. */
+  currentSession(): string | undefined
+  /** Resume a session here or in tmux; returns an error message on failure. */
+  resume(session: SessionRow, target: Target): string | undefined
+  /** Delete a session file; resolves to what happened ("moved to trash"). */
+  deleteSession(path: string): Promise<string>
 }
 
 /** Where open and new-session actions run. */
@@ -84,6 +101,7 @@ interface Wizard {
 export type BrowserStart =
   | { view: "contexts" }
   | { view: "artifacts"; context: ContextRef }
+  | { view: "sessions" }
 
 interface ContextsView {
   kind: "contexts"
@@ -103,7 +121,28 @@ interface ArtifactsView {
   loading: boolean
 }
 
-type View = ContextsView | ArtifactsView
+/** Which sessions tab lists: grouped all/pinned, or flat labeled. */
+type SessionSubset = "all" | "pinned" | "labeled"
+
+interface SessionsView {
+  kind: "sessions"
+  /** Only this context's subtree, when opened from a context. */
+  context?: ContextRef
+  subset: SessionSubset
+  contexts: ContextRow[]
+  sessions: SessionRow[]
+  query: string
+  selected: number
+  loading: boolean
+}
+
+type View = ContextsView | ArtifactsView | SessionsView
+
+const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
+  all: "pinned",
+  pinned: "labeled",
+  labeled: "all",
+}
 
 const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
   research: "accent",
@@ -149,6 +188,11 @@ export class CueBrowser implements Component {
   private collapsed = new Set<string>()
   /** Slug column width; only grows, so tab and filtering never shift it. */
   private slugWidth = 12
+  /** Contexts whose sessions are folded; set up on the first sessions load. */
+  private sessionFolds: Set<string> | undefined
+  /** Sessions loaded once per browser; deletes edit this copy. */
+  private sessionsCache: Promise<SessionRow[]> | undefined
+  private confirmDelete: SessionRow | undefined
 
   constructor(
     private tui: TUI,
@@ -166,7 +210,8 @@ export class CueBrowser implements Component {
         this.growSlugWidth(rows)
         this.tui.requestRender()
       })
-    } else this.pushArtifacts(start.context)
+    } else if (start.view === "sessions") this.pushSessions()
+    else this.pushArtifacts(start.context)
   }
 
   private get view(): View {
@@ -219,6 +264,52 @@ export class CueBrowser implements Component {
     this.slugWidth = Math.min(40, Math.max(this.slugWidth, ...widths))
   }
 
+  private pushSessions(context?: ContextRef): void {
+    const v: SessionsView = {
+      kind: "sessions", context, subset: "all", contexts: [], sessions: [], query: "",
+      selected: 0, loading: true,
+    }
+    this.views.push(v)
+    this.input.setValue("")
+    void this.loadSessions(v, true)
+  }
+
+  private async loadSessions(v: SessionsView, focus = false): Promise<void> {
+    v.loading = true
+    this.sessionsCache ??= this.deps.loadSessions()
+    const [contexts, sessions] = await Promise.all([
+      this.deps.loadContexts(v.subset === "pinned"),
+      this.sessionsCache,
+    ])
+    v.contexts = contexts
+    v.sessions = sessions
+    if (v.context) {
+      // The context's subtree: its row and every deeper row after it.
+      const i = contexts.findIndex((c) => c.address === v.context!.address)
+      let j = i + 1
+      while (i >= 0 && j < contexts.length && contexts[j]!.depth > contexts[i]!.depth) j++
+      v.contexts = i >= 0 ? contexts.slice(i, j) : []
+      const keep = new Set(v.contexts.map((c) => c.address))
+      v.sessions = sessions.filter((s) => s.address !== undefined && keep.has(s.address))
+    }
+    v.loading = false
+    const here = this.deps.sessionAddress()
+    if (!this.sessionFolds) {
+      this.sessionFolds = new Set(sessions.map((s) => s.address ?? NO_CONTEXT))
+      if (here) this.sessionFolds.delete(here)
+    }
+    if (v.context && focus) this.sessionFolds.delete(v.context.address)
+    if (focus) {
+      const rows = this.shownSessions(v)
+      const current = this.deps.currentSession()
+      let i = rows.findIndex((r) => r.kind === "session" && r.session.path === current)
+      if (i < 0) i = rows.findIndex((r) => r.kind === "context" && r.context.address === here)
+      if (i >= 0) v.selected = i
+      this.previewScroll = Number.MAX_SAFE_INTEGER
+    }
+    this.refresh()
+  }
+
   private async loadArtifacts(v: ArtifactsView): Promise<void> {
     v.loading = true
     v.rows = sortArtifacts(await this.deps.loadArtifacts(v.context.address))
@@ -239,12 +330,50 @@ export class CueBrowser implements Component {
     return fuzzyFilter(v.rows, v.query, (r) => `${r.slug} ${r.title} ${r.scope}`)
   }
 
+  private shownSessions(v: SessionsView): SessionListRow[] {
+    const flat = (list: SessionRow[]): SessionListRow[] => list
+      .sort((a, b) => b.modified - a.modified)
+      .map((session) => ({ kind: "session", session, context: this.contextOf(v, session) }))
+    if (v.subset === "labeled") {
+      const labeled = v.sessions.filter((s) => s.label !== undefined)
+      return flat(v.query.trim() === "" ? labeled : this.matchSessions(v, labeled))
+    }
+    const orphans = v.subset === "all" && !v.context
+    if (v.query.trim() === "") return groupSessions(v.contexts, v.sessions, this.sessionFolds ?? new Set(), orphans)
+    // A query searches every session of the grouping, folded or not, and lists them flat.
+    const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
+      .flatMap((r) => (r.kind === "session" ? [r.session] : []))
+    return flat(this.matchSessions(v, pool))
+  }
+
+  private matchSessions(v: SessionsView, list: SessionRow[]): SessionRow[] {
+    return fuzzyFilter(list, v.query, (s) =>
+      `${this.contextOf(v, s).slug} ${s.description} ${s.label ?? ""}`)
+  }
+
+  private contextOf(v: SessionsView, s: SessionRow): ContextRow {
+    const address = s.address ?? NO_CONTEXT
+    return v.contexts.find((c) => c.address === address) ?? syntheticContext(address)
+  }
+
+  private selectedSessionRow(): SessionListRow | undefined {
+    const v = this.view
+    return v.kind === "sessions" ? this.shownSessions(v)[v.selected] : undefined
+  }
+
+  /** The highlighted session, or a context row's newest session. */
+  private selectedSession(): SessionRow | undefined {
+    const r = this.selectedSessionRow()
+    return r?.kind === "session" ? r.session : r?.sessions[0]
+  }
+
   private shownArtifacts(v: ArtifactsView): ArtifactRow[] {
     return fuzzyFilter(v.rows, v.query, (r) => `${r.type} ${r.title} ${r.name}`)
   }
 
   private shownCount(): number {
     const v = this.view
+    if (v.kind === "sessions") return this.shownSessions(v).length
     return v.kind === "contexts"
       ? this.shownContexts(v).length
       : this.shownArtifacts(v).length
@@ -267,6 +396,8 @@ export class CueBrowser implements Component {
   private selectedAddress(): string | undefined {
     const c = this.selectedContext()
     if (c) return c.address
+    const s = this.selectedSessionRow()
+    if (s) return s.context.address || undefined
     const v = this.view
     const a = this.selectedArtifact()
     return a && v.kind === "artifacts" ? artifactAddress(v.context.address, a.path) : undefined
@@ -276,12 +407,19 @@ export class CueBrowser implements Component {
   private actionContext(): ContextRef | undefined {
     const c = this.selectedContext()
     if (c) return { address: c.address, slug: c.slug }
+    const s = this.selectedSessionRow()
+    if (s) return s.context.address ? { address: s.context.address, slug: s.context.slug } : undefined
     const v = this.view
     return v.kind === "artifacts" ? v.context : undefined
   }
 
   private previewShown(): boolean {
-    return this.view.kind === "artifacts" && this.showPreview
+    return this.view.kind !== "contexts" && this.showPreview
+  }
+
+  /** Sessions previews open at the end, where the conversation left off. */
+  private previewStart(): number {
+    return this.view.kind === "sessions" ? Number.MAX_SAFE_INTEGER : 0
   }
 
   private notify(msg: string): void {
@@ -294,11 +432,12 @@ export class CueBrowser implements Component {
   handleInput(data: string): void {
     if (this.busy) return
     if (this.wizard) return this.wizardInput(this.wizard, data)
+    if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
     const v = this.view
     const move = (delta: number) => {
       const n = this.shownCount()
       v.selected = n === 0 ? 0 : Math.max(0, Math.min(n - 1, v.selected + delta))
-      this.previewScroll = 0
+      this.previewScroll = this.previewStart()
       this.refresh()
     }
     const page = Math.max(1, this.bodyHeight() - 1)
@@ -328,7 +467,23 @@ export class CueBrowser implements Component {
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
       if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
       if (matchesKey(data, "alt+z")) return this.onToggleCollapse(v)
+      if (matchesKey(data, "ctrl+r")) {
+        const c = this.selectedContext()
+        if (c) this.pushSessions({ address: c.address, slug: c.slug })
+        return
+      }
     } else {
+      if (v.kind === "sessions") {
+        if (matchesKey(data, "tab")) {
+          v.subset = NEXT_SUBSET[v.subset]
+          v.selected = 0
+          this.previewScroll = this.previewStart()
+          return void this.loadSessions(v)
+        }
+        if (matchesKey(data, "ctrl+l")) return void this.onLink()
+        if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
+        if (matchesKey(data, "ctrl+x")) return this.onDelete()
+      }
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
         return this.refresh()
@@ -347,7 +502,7 @@ export class CueBrowser implements Component {
     if (after !== before) {
       v.query = after
       v.selected = 0
-      this.previewScroll = 0
+      this.previewScroll = this.previewStart()
       this.refresh()
     }
   }
@@ -369,6 +524,7 @@ export class CueBrowser implements Component {
   }
 
   private async onEnter(): Promise<void> {
+    if (this.view.kind === "sessions") return this.onResume()
     const c = this.selectedContext()
     if (c) {
       this.status = ""
@@ -398,7 +554,11 @@ export class CueBrowser implements Component {
   }
 
   private async onCopy(what: "address" | "path"): Promise<void> {
-    const text = what === "address" ? this.selectedAddress() : this.selectedPath()
+    const text = what === "address"
+      ? this.selectedAddress()
+      : this.selectedSessionRow()?.kind === "session"
+        ? this.selectedSession()?.path
+        : this.selectedPath()
     if (!text) return
     try {
       await this.deps.copy(text)
@@ -491,8 +651,64 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  private onResume(): void {
+    const s = this.selectedSession()
+    if (!s) return
+    if (s.path === this.deps.currentSession()) return this.notify("already in this session")
+    const err = this.deps.resume(s, this.target)
+    if (err) return this.notify(err)
+    if (this.target === "here") return this.done()
+    this.notify(`resumed ${s.description.slice(0, 40)} in tmux`)
+  }
+
+  /** Fold or unfold the sessions of the row's context. */
+  private onFoldSessions(v: SessionsView): void {
+    const r = this.selectedSessionRow()
+    if (!r || v.query.trim() !== "" || v.subset === "labeled" || !this.sessionFolds) return
+    const address = r.context.address
+    if (this.sessionFolds.has(address)) this.sessionFolds.delete(address)
+    else this.sessionFolds.add(address)
+    const i = this.shownSessions(v).findIndex((x) => x.kind === "context" && x.context.address === address)
+    if (i >= 0) v.selected = i
+    this.refresh()
+  }
+
+  private onDelete(): void {
+    const r = this.selectedSessionRow()
+    if (r?.kind !== "session") return this.notify("select a session row to delete")
+    if (r.session.path === this.deps.currentSession()) return this.notify("cannot delete the active session")
+    this.confirmDelete = r.session
+    this.tui.requestRender()
+  }
+
+  private confirmInput(s: SessionRow, data: string): void {
+    if (matchesKey(data, "enter") || data === "y" || data === "Y") {
+      this.confirmDelete = undefined
+      void this.deleteSession(s)
+    } else if (matchesKey(data, "escape") || data === "n" || data === "N") {
+      this.confirmDelete = undefined
+      this.status = ""
+    }
+    this.tui.requestRender()
+  }
+
+  private async deleteSession(s: SessionRow): Promise<void> {
+    try {
+      const how = await this.deps.deleteSession(s.path)
+      const remaining = (await this.sessionsCache ?? []).filter((x) => x.path !== s.path)
+      this.sessionsCache = Promise.resolve(remaining)
+      for (const v of this.views) {
+        if (v.kind === "sessions") v.sessions = v.sessions.filter((x) => x.path !== s.path)
+      }
+      this.notify(`session ${how}`)
+    } catch (e) {
+      this.notify(`delete failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    this.refresh()
+  }
+
   private async onLink(): Promise<void> {
-    const c = this.selectedContext()
+    const c = this.actionContext()
     if (!c) return
     await this.deps.link(c.address)
     this.done()
@@ -530,7 +746,10 @@ export class CueBrowser implements Component {
       lines.push(...this.bodyLines(v, width, body))
     }
     while (lines.length < height - 1) lines.push("")
-    lines.push(this.status ? t.fg("warning", this.status) : "")
+    const confirm = this.confirmDelete
+      ? t.fg("error", `delete session "${this.confirmDelete.description}"? y/enter confirm, n/esc cancel`)
+      : ""
+    lines.push(confirm || (this.status ? t.fg("warning", this.status) : ""))
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
   }
 
@@ -538,7 +757,9 @@ export class CueBrowser implements Component {
     const t = this.theme
     const listFor = (w: number, h: number) => v.kind === "contexts"
       ? this.contextLines(v, w, h)
-      : this.artifactLines(v, w, h)
+      : v.kind === "sessions"
+        ? this.sessionLines(v, w, h)
+        : this.artifactLines(v, w, h)
     const out: string[] = []
     if (!this.previewShown()) {
       const list = listFor(width, body)
@@ -590,7 +811,9 @@ export class CueBrowser implements Component {
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
       ? `Cue contexts ${t.fg("muted", v.pinnedOnly ? "(pinned)" : "(all)")}`
-      : `Cue artifacts ${t.fg("muted", v.context.address)}`
+      : v.kind === "sessions"
+        ? `Cue sessions ${t.fg("muted", `(${v.subset})${v.context ? ` ${v.context.address}` : ""}`)}`
+        : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title)) + "  " + target
@@ -607,9 +830,13 @@ export class CueBrowser implements Component {
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
         "tab pinned/all", esc]
+    } else if (v.kind === "sessions") {
+      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete",
+        "alt+z fold", "tab all/pinned/labeled", "ctrl+h address", "ctrl+y path", "alt+p preview",
+        "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
@@ -659,6 +886,49 @@ export class CueBrowser implements Component {
     return out
   }
 
+  private sessionLines(v: SessionsView, width: number, height: number): string[] {
+    const t = this.theme
+    if (v.loading && v.sessions.length === 0) return [t.fg("dim", "loading…")]
+    const rows = this.shownSessions(v)
+    if (rows.length === 0) return [t.fg("warning", v.subset === "all" ? "no sessions" : `no ${v.subset} sessions (tab: next)`)]
+    v.selected = Math.min(v.selected, rows.length - 1)
+    const now = Math.floor(Date.now() / 1000)
+    const here = this.deps.sessionAddress()
+    const current = this.deps.currentSession()
+    const flat = v.subset === "labeled" || v.query.trim() !== ""
+    const right = (s: SessionRow | undefined) => t.fg("muted",
+      `${(s ? fmtTokens(s.tokens) : "").padStart(6)} ${(s ? relativeAge(s.modified, now) : "").padStart(4)}`)
+    const label = (s: SessionRow) => (s.label ? " " + t.fg("error", `[${truncateToWidth(s.label, 12, "…")}]`) : "")
+    const nameWidth = Math.max(10, width - 12)
+    const [a, b] = this.window(rows.length, v.selected, height)
+    const out: string[] = []
+    for (let i = a; i < b; i++) {
+      const r = rows[i]!
+      const sel = i === v.selected
+      let name: string
+      let tail: SessionRow | undefined
+      if (r.kind === "context") {
+        const c = r.context
+        const pin = c.pinned ? t.fg("warning", "*") : " "
+        const slug = c.address === here ? t.fg("accent", c.slug) : t.fg("warning", c.slug)
+        const folded = this.sessionFolds?.has(c.address) && r.sessions.length > 0
+        const count = r.sessions.length ? t.fg("dim", ` (${r.sessions.length})${folded ? " +" : ""}`) : ""
+        name = `${pin} ${"  ".repeat(c.depth)}${r.sessions.length ? slug : t.fg("dim", c.slug)}${count}`
+        tail = r.sessions[0]
+      } else {
+        const s = r.session
+        const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
+        const desc = s.path === current ? t.fg("accent", s.description) : s.description
+        const where = flat ? " " + t.fg("muted", r.context.slug) : ""
+        name = indent + desc + label(s) + where
+        tail = s
+      }
+      const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)
+      out.push(sel ? t.bg("selectedBg", line) : line)
+    }
+    return out
+  }
+
   private artifactLines(v: ArtifactsView, width: number, height: number): string[] {
     const t = this.theme
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
@@ -686,20 +956,26 @@ export class CueBrowser implements Component {
     return out
   }
 
+  /** Markdown for the preview: an artifact file or a session transcript. */
+  private previewSource(path: string): string {
+    let text: string
+    try {
+      text = readFileSync(path, "utf8")
+    } catch {
+      return `_cannot read ${path}_`
+    }
+    if (this.view.kind === "sessions") {
+      return transcript(text, this.selectedSession()?.description) || "_no messages_"
+    }
+    return path.endsWith(".md") ? previewMarkdown(text) : "```\n" + text + "\n```"
+  }
+
   private previewLines(width: number, height: number): string[] {
-    const path = this.selectedPath()
+    const path = this.view.kind === "sessions" ? this.selectedSession()?.path : this.selectedPath()
     if (!path) return []
     const key = `${path}:${width}`
     if (this.previewCache?.key !== key) {
-      let text: string
-      try {
-        text = readFileSync(path, "utf8")
-      } catch {
-        text = `_cannot read ${path}_`
-      }
-      const md = path.endsWith(".md")
-        ? previewMarkdown(text)
-        : "```\n" + text + "\n```"
+      const md = this.previewSource(path)
       const lines = new Markdown(md, 0, 0, getMarkdownTheme()).render(width)
       this.previewCache = { key, lines }
     }

@@ -141,7 +141,7 @@ export type SessionListRow =
     }
   | { kind: "session"; session: SessionRow; context: ContextRow }
 
-function syntheticContext(address: string): ContextRow {
+export function syntheticContext(address: string): ContextRow {
   const slug = address === NO_CONTEXT ? "(no context)" : address.split("/").pop() ?? address
   return {
     address, scope: address === NO_CONTEXT ? "" : scopeOf(address), slug, title: slug,
