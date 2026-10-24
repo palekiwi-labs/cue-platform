@@ -55,6 +55,13 @@ export interface MonitorDeps {
   newSession(address: string, target: Target, note: string): string | undefined
 }
 
+/** Fixed monitor list columns; the label column takes the rest. */
+const COL = (() => {
+  const right = 6 + 1 + 6 + 1 + 7
+  const c = { right, state: 10, agent: 10, model: 22, indent: 2 }
+  return { ...c, fixed: c.indent + c.state + c.agent + c.model + right + 4 }
+})()
+
 /**
  * The note a session started from a run carries: the run id.
  */
@@ -396,7 +403,8 @@ export class AgentMonitor implements Component {
       out.push(...this.previewLines(width, body - listH - 1))
       return out
     }
-    const listWidth = Math.max(40, Math.min(width - 30, Math.floor(width * 0.55)))
+    // The list takes what its rows need, leaving the preview at least 40.
+    const listWidth = Math.max(40, Math.min(width - 43, this.contentWidth()))
     const previewWidth = Math.max(10, width - listWidth - 3)
     const list = this.listLines(listWidth, body)
     const preview = this.previewLines(previewWidth, body)
@@ -405,6 +413,15 @@ export class AgentMonitor implements Component {
       out.push(pad(list[i] ?? "", listWidth) + sep + pad(preview[i] ?? "", previewWidth))
     }
     return out
+  }
+
+  /** Width the list's rows need to show every label in full. */
+  private contentWidth(): number {
+    const groups = this.groups()
+    const runs = Math.max(6, ...groups.flatMap((g) => g.runs.map((r) => r.label.length)))
+    const heads = Math.max(0, ...groups.map((g) =>
+      2 + COL.state + 1 + g.label.length + 1 + `${g.totals.done}/${g.totals.total}`.length))
+    return Math.max(COL.fixed + runs, heads + COL.right + 1)
   }
 
   private listLines(width: number, height: number): string[] {
@@ -419,16 +436,10 @@ export class AgentMonitor implements Component {
     // Fixed columns on the right, shared by headings and run lines.
     const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
       `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
-    const rightW = 6 + 1 + 6 + 1 + 7
-    const stateW = 10
-    const agentW = 10
-    const modelW = 22
-    const indentW = 2
-    // The label column fits its content so figures sit next to it.
-    const fixedW = indentW + stateW + agentW + modelW + rightW + 4
+    const { right: rightW, state: stateW, agent: agentW, model: modelW, indent: indentW, fixed: fixedW } = COL
     const groups = this.groups()
-    const longest = Math.max(6, ...groups.flatMap((g) => g.runs.map((r) => r.label.length)))
-    const labelW = Math.max(6, Math.min(width - fixedW, longest))
+    // The label column takes the rest, so rows fill the list's width.
+    const labelW = Math.max(6, width - fixedW)
     const rowW = fixedW + labelW
     const leftW = rowW - rightW - 1
 
