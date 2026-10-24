@@ -21,6 +21,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui"
+import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
   artifactFilename,
@@ -35,7 +36,6 @@ import {
   recencyIndex,
   relativeAge,
   sortArtifacts,
-  treePrefix,
   typeBadge,
 } from "./model"
 import {
@@ -156,13 +156,6 @@ const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
   all: "recent",
 }
 
-const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
-  research: "accent",
-  design: "warning",
-  build: "success",
-  review: "error",
-  learn: "muted",
-}
 
 const TYPE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
   task: "accent",
@@ -296,9 +289,7 @@ export class CueBrowser implements Component {
   }
 
   private growSlugWidth(rows: ContextRow[]): void {
-    const widths = rows.map((r) =>
-      visibleWidth(treePrefix(r) + r.slug) + (this.collapsed.has(r.address) ? 5 : 0))
-    this.slugWidth = Math.min(40, Math.max(this.slugWidth, ...widths))
+    this.slugWidth = slugWidthFor(rows, this.collapsed, this.slugWidth)
   }
 
   private pushSessions(context?: ContextRef): void {
@@ -365,8 +356,7 @@ export class CueBrowser implements Component {
 
   private shownContexts(v: ContextsView): ContextRow[] {
     // A query searches the whole tree, collapsed, old or not.
-    if (v.query.trim() === "") return collapseTree(this.treeRows(v), this.collapsed).rows
-    return fuzzyFilter(v.rows, v.query, (r) => `${r.slug} ${r.title} ${r.scope}`)
+    return shownContexts(v.rows, v.query, this.treeRows(v), this.collapsed)
   }
 
   private now(): number {
@@ -374,7 +364,7 @@ export class CueBrowser implements Component {
   }
 
   private treeRows(v: ContextsView): ContextRow[] {
-    return v.recent ? filterRecent(v.rows, this.now(), this.recencyDays) : v.rows
+    return treeRows(v.rows, v.recent, this.now(), this.recencyDays)
   }
 
   /** Contexts to group sessions under: recent ones count session activity too. */
@@ -969,18 +959,7 @@ export class CueBrowser implements Component {
     for (let i = a; i < b; i++) {
       const r = rows[i]!
       const sel = i === v.selected
-      const pin = r.pinned ? t.fg("warning", "*") : " "
-      const name = (tree ? t.fg("dim", treePrefix(r)) : "") +
-        (r.address === here ? t.fg("accent", r.slug) : r.ancestorOnly ? t.fg("dim", r.slug) : r.slug) +
-        (hidden.has(r.address) ? t.fg("dim", ` +${hidden.get(r.address)}`) : "")
-      const mode = r.mode
-        ? t.fg(MODE_COLOR[r.mode] ?? "muted", pad(r.mode.toUpperCase(), 8))
-        : t.fg("dim", pad("—", 8))
-      const age = t.fg("muted", relativeAge(r.lastLoggedAt, now).padStart(4))
-      // Cross-repo lists show the scope in place of the title, as cue.nvim does.
-      const rest = mixed ? t.fg("muted", r.scope) : t.fg("muted", r.title)
-      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${rest}`
-      line = pad(line, width)
+      const line = contextLine(t, r, { tree, here, mixed, hidden, slugWidth, now, width })
       out.push(sel ? t.bg("selectedBg", line) : line)
     }
     return out
