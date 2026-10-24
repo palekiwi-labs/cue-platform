@@ -128,16 +128,6 @@ export function previewMarkdown(text: string): string {
   return "```yaml\n" + m[1] + "\n```\n" + text.slice(m[0].length)
 }
 
-/** The most common scope; rows from other scopes show theirs. */
-function majorityScope(rows: readonly ContextRow[]): string {
-  const counts = new Map<string, number>()
-  for (const r of rows) counts.set(r.scope, (counts.get(r.scope) ?? 0) + 1)
-  let best = ""
-  let n = 0
-  for (const [s, c] of counts) if (c > n) [best, n] = [s, c]
-  return best
-}
-
 const pad = (s: string, w: number): string =>
   truncateToWidth(s, w, "…", true)
 
@@ -287,7 +277,7 @@ export class CueBrowser implements Component {
     if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
     if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
     if (matchesKey(data, "enter")) return void this.onEnter()
-    if (matchesKey(data, "ctrl+o")) return void this.onOpen()
+    if (matchesKey(data, "ctrl+e")) return void this.onOpen()
     if (matchesKey(data, "ctrl+t")) {
       this.target = this.target === "here" ? "tmux" : "here"
       return this.tui.requestRender()
@@ -425,7 +415,7 @@ export class CueBrowser implements Component {
   }
 
   private async wizardCreate(w: Wizard): Promise<void> {
-    const filename = artifactFilename(w.input.getValue(), w.asPath)
+    const filename = artifactFilename(w.input.getValue(), w.asPath, CREATE_TYPES[w.typeIndex] !== "tmp")
     if (!filename) {
       w.error = "enter a name"
       return this.tui.requestRender()
@@ -531,7 +521,7 @@ export class CueBrowser implements Component {
       out.push(t.fg("muted", `type: ${type}`))
       out.push(t.fg("muted", w.asPath ? "path (nesting allowed):" : "slug:"))
       out.push(w.input.render(width)[0] ?? "")
-      const name = artifactFilename(w.input.getValue(), w.asPath)
+      const name = artifactFilename(w.input.getValue(), w.asPath, type !== "tmp")
       if (name) out.push(t.fg("dim", `  -> ${type}/${name}`))
       if (w.error) out.push(t.fg("error", w.error))
     }
@@ -561,10 +551,10 @@ export class CueBrowser implements Component {
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+o open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter artifacts", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+l link", "ctrl+h address", "ctrl+y path", "tab pinned/all", esc]
     } else {
-      hints = ["enter open", "ctrl+o open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
         ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     }
@@ -585,7 +575,7 @@ export class CueBrowser implements Component {
     v.selected = Math.min(v.selected, rows.length - 1)
     const tree = v.query.trim() === ""
     const here = this.deps.sessionAddress()
-    const home = majorityScope(rows)
+    const mixed = new Set(rows.map((r) => r.scope)).size > 1
     const slugWidth = Math.min(
       40,
       Math.max(12, ...rows.map((r) => visibleWidth((tree ? treePrefix(r) : "") + r.slug))),
@@ -604,9 +594,9 @@ export class CueBrowser implements Component {
         : t.fg("dim", pad("—", 8))
       const age = t.fg("muted", relativeAge(r.lastLoggedAt, now).padStart(4))
       const kind = t.fg("dim", pad(r.kind ?? "", 9))
-      const rest = t.fg("muted", r.title) +
-        (r.scope !== home ? t.fg("dim", `  ${r.scope}`) : "")
-      let line = `${pin} ${pad(name, slugWidth)} ${mode} ${kind} ${age}  ${rest}`
+      // Cross-repo lists show the scope in place of the title, as cue.nvim does.
+      const rest = mixed ? t.fg("muted", r.scope) : t.fg("muted", r.title)
+      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${kind} ${rest}`
       line = pad(line, width)
       out.push(sel ? t.bg("selectedBg", line) : line)
     }

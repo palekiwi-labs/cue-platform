@@ -122,6 +122,9 @@ describe("artifactFilename", () => {
   test("path mode keeps nesting", () => {
     expect(artifactFilename("ideas/My Idea.md", true)).toBe("ideas/my-idea.md")
   })
+  test("non-markdown keeps its extension", () => {
+    expect(artifactFilename("Dump.json", false, false)).toBe("dump.json")
+  })
   test("rejects empty and escapes", () => {
     expect(artifactFilename("  ", false)).toBeUndefined()
     expect(artifactFilename("../x", true)).toBeUndefined()

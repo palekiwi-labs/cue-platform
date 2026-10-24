@@ -207,20 +207,21 @@ export function artifactAddress(contextAddress: string, path: string): string | 
 }
 
 /** Artifact types the creation wizard offers, in menu order. */
-export const CREATE_TYPES = ["note", "task", "plan", "spec", "trace"] as const
+export const CREATE_TYPES = ["note", "task", "plan", "spec", "trace", "tmp"] as const
 
 /**
  * Filename for a new artifact. In slug mode the input is reduced to a
  * single kebab-case segment; in path mode nested segments are kept and
- * each one is cleaned. `.md` is appended when missing. Undefined when
+ * each one is cleaned. For markdown types `.md` is appended when
+ * missing; other names (tmp files) keep their extension. Undefined when
  * nothing usable remains or the path tries to escape.
  */
-export function artifactFilename(input: string, asPath: boolean): string | undefined {
+export function artifactFilename(input: string, asPath: boolean, markdown = true): string | undefined {
   const clean = (s: string) =>
-    s.toLowerCase().trim().replace(/\.md$/, "").replace(/[^a-z0-9._-]+/g, "-")
+    s.toLowerCase().trim().replace(markdown ? /\.md$/ : /^$/, "").replace(/[^a-z0-9._-]+/g, "-")
       .replace(/^-+|-+$/g, "")
   const parts = asPath ? input.split("/") : [input]
   const segs = parts.map(clean).filter((s) => s !== "")
   if (segs.length === 0 || segs.some((s) => s === "." || s === "..")) return undefined
-  return `${segs.join("/")}.md`
+  return markdown ? `${segs.join("/")}.md` : segs.join("/")
 }
