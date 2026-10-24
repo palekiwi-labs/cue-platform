@@ -226,6 +226,17 @@ const byStart = (a: BatchGroup, b: BatchGroup): number =>
   a.startedAt - b.startedAt || (a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0)
 
 /**
+ * A label followed by the context slug (last address segment), unless
+ * the label already names it. No context leaves the label as is.
+ */
+export function withContext(label: string | null, context: string | null): string | null {
+  const slug = context?.split("/").filter(Boolean).pop()
+  if (!slug) return label
+  if (!label) return slug
+  return label.includes(slug) ? label : `${label} · ${slug}`
+}
+
+/**
  * Group batches into jobs. Jobs are ordered newest first by when their
  * first batch started, so a job keeps its place as later stages start;
  * stages within a job run in start order.
@@ -237,7 +248,8 @@ export function groupJobs(rows: RunRow[]): JobGroup[] {
     const key = r.jobId ?? g.batchId
     let j = jobs.get(key)
     if (!j) {
-      j = { key, label: r.jobId ? (r.jobLabel ?? r.jobId) : g.label, batches: [] }
+      const ctx = g.runs.find((x) => x.context)?.context ?? null
+      j = { key, label: withContext(r.jobId ? (r.jobLabel ?? r.jobId) : g.label, ctx), batches: [] }
       jobs.set(key, j)
     }
     j.batches.push(g)

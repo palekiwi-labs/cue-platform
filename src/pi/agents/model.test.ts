@@ -165,6 +165,15 @@ describe("groupJobs", () => {
     expect(jobs[1]!.label).toBe("job B")
   })
 
+  test("job label shows the context slug unless it already names it", () => {
+    const jobs = groupJobs([
+      row("c1", 40, "C", { context: "o/r/review-x" }),
+      row("d1", 30, "D", { context: "o/r/review-y", jobLabel: "PR #1 · review-y · default" }),
+      row("e1", 20, null, { context: "o/r/ctx" }),
+    ])
+    expect(jobs.map((j) => j.label)).toEqual(["job C · review-x", "PR #1 · review-y · default", "e1 · ctx"])
+  })
+
   test("job totals span first start to last end; state is live if any stage is", () => {
     const [j] = groupJobs([row("a3", 29, "A", { batchState: "running" }), row("a1", 10, "A")])
     expect(jobTotals(j!)).toEqual({ done: 2, total: 2, elapsedSecs: 29, tokensInput: 2, costUsd: 1 })
