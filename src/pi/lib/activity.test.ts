@@ -5,7 +5,10 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import {
   activityArgv,
+  commitDirs,
+  commitLines,
   isGitCommit,
+  originScope,
   recordActivity,
   registerActivityRecording,
   type ActivityCtx,
@@ -53,14 +56,14 @@ describe("isGitCommit", () => {
 describe("activityArgv", () => {
   test("builds cue activity add with provenance", () => {
     expect(
-      activityArgv("a/b/c", "git_commit_attempt", { cwd: "/w" }, "s1"),
+      activityArgv("a/b/c", "git_commit", { cwd: "/w" }, "s1"),
     ).toEqual([
       "activity",
       "add",
       "--context",
       "a/b/c",
       "--kind",
-      "git_commit_attempt",
+      "git_commit",
       "--details",
       '{"cwd":"/w"}',
       "--harness",
@@ -110,13 +113,13 @@ describe("recordActivity", () => {
 
   test("skips without calling cue when there is no address", async () => {
     const f = fakes({ code: 0 })
-    await recordActivity(f.pi, f.ctx, undefined, "git_commit_attempt", {})
+    await recordActivity(f.pi, f.ctx, undefined, "git_commit", {})
     expect(f.calls).toHaveLength(0)
   })
 
   test("nonzero exit warns and does not throw", async () => {
     const f = fakes({ code: 1, stderr: "Error: boom" })
-    await recordActivity(f.pi, f.ctx, "a/b/c", "git_commit_attempt", {})
+    await recordActivity(f.pi, f.ctx, "a/b/c", "git_commit", {})
     expect(f.notes).toHaveLength(1)
     expect(f.notes[0]![0]).toContain("boom")
     expect(f.notes[0]![1]).toBe("warning")
@@ -124,21 +127,82 @@ describe("recordActivity", () => {
 
   test("exec rejection warns and does not throw", async () => {
     const f = fakes(new Error("spawn failed"))
-    await recordActivity(f.pi, f.ctx, "a/b/c", "git_commit_attempt", {})
+    await recordActivity(f.pi, f.ctx, "a/b/c", "git_commit", {})
     expect(f.notes[0]![0]).toContain("spawn failed")
+  })
+})
+
+describe("commitLines", () => {
+  test("parses branch, root-commit and detached HEAD lines", () => {
+    const out = [
+      "[dev 6c9688b] feat: thing",
+      " 2 files changed, 3 insertions(+)",
+      "[master (root-commit) 4fa6186] init",
+      "[detached HEAD 1a2b3c4] wip [x]",
+    ].join("\n")
+    expect(commitLines(out)).toEqual([
+      { short: "6c9688b", branch: "dev", title: "feat: thing" },
+      { short: "4fa6186", branch: "master", title: "init" },
+      { short: "1a2b3c4", branch: null, title: "wip [x]" },
+    ])
+  })
+
+  test("ignores lines that are not commit summaries", () => {
+    expect(commitLines("")).toEqual([])
+    expect(commitLines("nothing to commit, working tree clean")).toEqual([])
+    expect(commitLines("  [dev 6c9688b] indented")).toEqual([])
+    expect(commitLines("[dev xyz1234] not hex")).toEqual([])
+  })
+})
+
+describe("commitDirs", () => {
+  test("session cwd by default", () => {
+    expect(commitDirs("git commit -m x", "/w")).toEqual(["/w"])
+  })
+
+  test("follows cd segments and -C options", () => {
+    expect(commitDirs("cd /tmp/a && git commit -m x", "/w")).toEqual(["/tmp/a"])
+    expect(commitDirs("cd sub; git -C ../r commit", "/w")).toEqual(["/w/r"])
+    expect(
+      commitDirs("git -C /x commit && cd /y && git commit", "/w"),
+    ).toEqual(["/x", "/y"])
+  })
+
+  test("deduplicates and skips non-commit segments", () => {
+    expect(commitDirs("git commit; git status; git commit", "/w")).toEqual(["/w"])
+    expect(commitDirs("git status", "/w")).toEqual([])
+  })
+})
+
+describe("originScope", () => {
+  test("derives org/repo like cue", () => {
+    expect(originScope("git@github.com:palekiwi-labs/cue.git")).toBe("palekiwi-labs/cue")
+    expect(originScope("https://github.com/palekiwi/palekiwi")).toBe("palekiwi/palekiwi")
+    expect(originScope("/srv/git/org/repo.git/")).toBe("org/repo")
+    expect(originScope("repo")).toBeNull()
   })
 })
 
 describe("registerActivityRecording", () => {
   type Handler = (e: unknown, ctx: ExtensionContext) => Promise<void>
-  function setup(linked?: string) {
+  const FULL = "6c9688b0000000000000000000000000000000aa"
+  function setup(linked?: string, git: Record<string, string> = {}) {
     const handlers: Record<string, Handler> = {}
     const calls: string[][] = []
+    const gitCalls: { args: string[]; cwd?: string }[] = []
     const pi = {
       on: (event: string, h: Handler) => {
         handlers[event] = h
       },
-      exec: async (_cmd: string, args: string[]) => {
+      exec: async (cmd: string, args: string[], opts?: { cwd?: string }) => {
+        if (cmd === "git") {
+          gitCalls.push({ args, cwd: opts?.cwd })
+          const key = `${opts?.cwd} ${args.join(" ")}`
+          const out = git[key]
+          return out === undefined
+            ? { stdout: "", stderr: "fatal", code: 128, killed: false }
+            : { stdout: out + "\n", stderr: "", code: 0, killed: false }
+        }
         calls.push(args)
         return { stdout: "", stderr: "", code: 0, killed: false }
       },
@@ -159,40 +223,87 @@ describe("registerActivityRecording", () => {
         { type: "tool_result", toolCallId: "t", content: [], isError: false, ...e },
         ctx,
       )
-    return { fire, calls }
+    return { fire, calls, gitCalls }
   }
+  const repoGit = (dir: string) => ({
+    [`${dir} rev-parse --verify --quiet 6c9688b^{commit}`]: FULL,
+    [`${dir} rev-parse --show-toplevel`]: dir,
+    [`${dir} remote get-url origin`]: "git@github.com:o/r.git",
+  })
+  const text = (t: string) => [{ type: "text", text: t }]
 
-  test("records a git commit into the session context", async () => {
-    const s = setup("a/b/c")
-    await s.fire({ toolName: "bash", input: { command: "git add . && git commit -m x && git commit -m y" } })
+  test("records a verified git_commit from the output", async () => {
+    const s = setup("a/b/c", repoGit("/w"))
+    await s.fire({
+      toolName: "bash",
+      input: { command: "git add . && git commit -m x" },
+      content: text("[dev 6c9688b] feat: x\n 1 file changed"),
+    })
     expect(s.calls).toEqual([
       activityArgv(
         "a/b/c",
-        "git_commit_attempt",
-        { command: "git add . && git commit -m x && git commit -m y", cwd: "/w" },
+        "git_commit",
+        { hash: FULL, branch: "dev", title: "feat: x", repo: "o/r", root: "/w" },
         "s1",
       ),
     ])
   })
 
-  test("nested calls are recorded too", async () => {
-    const s = setup("a/b/c")
-    await s.fire({ toolName: "bash", parentToolCallId: "p", input: { command: "git commit" } })
+  test("records even when the call reports an error", async () => {
+    const s = setup("a/b/c", repoGit("/w"))
+    await s.fire({
+      toolName: "bash",
+      isError: true,
+      input: { command: "git commit -m x && false" },
+      content: text("[dev 6c9688b] x"),
+    })
     expect(s.calls).toHaveLength(1)
   })
 
-  test("skips without cue when the session has no context", async () => {
-    const s = setup()
-    await s.fire({ toolName: "bash", input: { command: "git commit" } })
-    expect(s.calls).toHaveLength(0)
+  test("resolves the hash in the cd target", async () => {
+    const s = setup("a/b/c", repoGit("/tmp/r"))
+    await s.fire({
+      toolName: "bash",
+      input: { command: "cd /tmp/r && git commit -m x" },
+      content: text("[master (root-commit) 6c9688b] x"),
+    })
+    expect(s.calls).toHaveLength(1)
+    expect(JSON.parse(s.calls[0]![7]!)).toMatchObject({ root: "/tmp/r", branch: "master" })
   })
 
-  test("ignores failed calls, other tools and non-commits", async () => {
-    const s = setup("a/b/c")
-    await s.fire({ toolName: "bash", isError: true, input: { command: "git commit" } })
-    await s.fire({ toolName: "read", input: { command: "git commit" } })
-    await s.fire({ toolName: "bash", input: { command: "git status" } })
-    await s.fire({ toolName: "bash", input: {} })
+  test("repo is null without an origin remote", async () => {
+    const git = repoGit("/w")
+    delete git["/w remote get-url origin"]
+    const s = setup("a/b/c", git)
+    await s.fire({ toolName: "bash", input: { command: "git commit" }, content: text("[dev 6c9688b] x") })
+    expect(JSON.parse(s.calls[0]![7]!).repo).toBeNull()
+  })
+
+  test("nested calls are recorded too", async () => {
+    const s = setup("a/b/c", repoGit("/w"))
+    await s.fire({
+      toolName: "bash",
+      parentToolCallId: "p",
+      input: { command: "git commit" },
+      content: text("[dev 6c9688b] x"),
+    })
+    expect(s.calls).toHaveLength(1)
+  })
+
+  test("skips without cue or git when the session has no context", async () => {
+    const s = setup(undefined, repoGit("/w"))
+    await s.fire({ toolName: "bash", input: { command: "git commit" }, content: text("[dev 6c9688b] x") })
+    expect(s.calls).toHaveLength(0)
+    expect(s.gitCalls).toHaveLength(0)
+  })
+
+  test("no event without proof: quiet commits, unresolved hashes, non-commits", async () => {
+    const s = setup("a/b/c", repoGit("/w"))
+    await s.fire({ toolName: "bash", input: { command: "git commit -q -m x" }, content: text("") })
+    await s.fire({ toolName: "bash", input: { command: "git commit" }, content: text("[dev 1111111] x") })
+    await s.fire({ toolName: "bash", input: { command: "git log" }, content: text("[dev 6c9688b] x") })
+    await s.fire({ toolName: "read", input: { command: "git commit" }, content: text("[dev 6c9688b] x") })
+    await s.fire({ toolName: "bash", input: {}, content: text("[dev 6c9688b] x") })
     expect(s.calls).toHaveLength(0)
   })
 })
