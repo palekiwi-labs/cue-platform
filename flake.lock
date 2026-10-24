@@ -66,11 +66,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1792689700,
-        "narHash": "sha256-sErGEz9SMpFLYoHw1GFMHeCECG8gmJCUs92jPEMas+g=",
+        "lastModified": 1792836779,
+        "narHash": "sha256-TISD5OXoo9fCTc/mY1q33KUb0MEGgJltQq88ZewGkJk=",
         "ref": "cue-agent-prototype",
-        "rev": "42a607169e4a908d1812a33bf9ef61597662b5bd",
-        "revCount": 531,
+        "rev": "bbb51bd5a63a24db6609fe2e06a24b50a2127258",
+        "revCount": 536,
         "type": "git",
         "url": "file:///home/pl/code/palekiwi-labs/cue"
       },
