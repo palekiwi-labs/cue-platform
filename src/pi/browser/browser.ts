@@ -219,7 +219,7 @@ export class CueBrowser implements Component {
   /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
-  private sessionsFlat = false
+  private sessionsFlat = true
 
   constructor(
     private tui: TUI,
