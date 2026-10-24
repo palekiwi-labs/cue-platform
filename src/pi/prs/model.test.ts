@@ -4,6 +4,7 @@ import {
   buildRows,
   fmtAge,
   isContextAddress,
+  parseContextList,
   parseSearch,
   type Pr,
   repoOfRemote,
@@ -172,4 +173,17 @@ test("isContextAddress", () => {
   expect(isContextAddress("palekiwi/palekiwi/pi-gh-prs")).toBe(true)
   expect(isContextAddress("pi-gh-prs")).toBe(false)
   expect(isContextAddress("a/b/c/d")).toBe(false)
+})
+
+test("parseContextList", () => {
+  const json = JSON.stringify([
+    { context: "a", scope: "o/r", title: "A" },
+    { context: "b", scope: "o/r", title: null },
+    { scope: "o/r" },
+  ])
+  expect(parseContextList(json)).toEqual([
+    { address: "o/r/a", title: "A" },
+    { address: "o/r/b", title: null },
+  ])
+  expect(parseContextList("{}")).toEqual([])
 })

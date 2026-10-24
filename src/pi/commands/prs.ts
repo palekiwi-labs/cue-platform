@@ -12,6 +12,8 @@ import {
   PAGE,
   parseSearch,
   type Pr,
+  type ContextChoice,
+  parseContextList,
   repoOfRemote,
   resolveScope,
   SEARCH_QUERY,
@@ -97,6 +99,17 @@ async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: s
   }
 }
 
+/** Contexts of the session repo's scope; none when cue fails. */
+async function contexts(exec: Exec, cwd: string): Promise<ContextChoice[]> {
+  const r = await exec("cue", ["context", "list", "--scope", "repo", "--json"], { cwd })
+  if (r.code !== 0) return []
+  try {
+    return parseContextList(r.stdout)
+  } catch {
+    return []
+  }
+}
+
 /** Detached run in the review tmux session; cue-review prints where it went. */
 async function launchReview(exec: Exec, cwd: string, req: ReviewRequest): Promise<Outcome> {
   const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd })
@@ -127,6 +140,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     view,
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
     manifests: () => manifests(exec, cwd),
+    contexts: () => contexts(exec, cwd),
     launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
   }

@@ -19,6 +19,7 @@ import {
 import {
   applyPreset,
   buildRows,
+  type ContextChoice,
   fmtAge,
   haystack,
   isContextAddress,
@@ -51,6 +52,8 @@ export interface PrDeps {
   checkout(pr: Pr, where: CheckoutTarget): Promise<Outcome>
   /** Manifest names cue-review knows; error text on failure. */
   manifests(): Promise<string[] | { error: string }>
+  /** Contexts of the session repo, offered as review parents. */
+  contexts(): Promise<ContextChoice[]>
   /** Start a detached cue-review run for a PR. */
   launchReview(req: ReviewRequest): Promise<Outcome>
   /** Copy text to system clipboard. */
@@ -78,7 +81,14 @@ interface ReviewForm {
   manifest: number
   field: Field
   error: string
+  /** Parent candidates; the list filters by the parent input. */
+  contexts: ContextChoice[]
+  /** Highlighted candidate in the filtered list; -1 when none. */
+  pick: number
 }
+
+/** Parent candidates shown under the form at most. */
+const PICK_ROWS = 8
 
 export type CheckoutTarget = "root" | "worktree"
 
@@ -308,7 +318,8 @@ export class PrBrowser implements Component {
     if (!pr || this.busy) return
     this.busy = true
     this.notice("loading manifests\u2026", "dim")
-    const m = await this.deps.manifests().finally(() => (this.busy = false))
+    const [m, contexts] = await Promise.all([this.deps.manifests(), this.deps.contexts()])
+      .finally(() => (this.busy = false))
     if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
     const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
     const context = new Input()
@@ -322,6 +333,8 @@ export class PrBrowser implements Component {
       manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
       field: "context",
       error: "",
+      contexts,
+      pick: -1,
     }
     this.input.focused = false
     this.notice("")
@@ -337,11 +350,45 @@ export class PrBrowser implements Component {
     f.field = field
     f.context.focused = field === "context"
     f.parent.focused = field === "parent"
+    f.pick = -1
     this.tui.requestRender()
+  }
+
+  /** Parent candidates matching the parent input. */
+  protected candidates(f: ReviewForm): ContextChoice[] {
+    const q = f.parent.getValue().trim()
+    return q ? fuzzyFilter(f.contexts, q, (c) => `${c.address} ${c.title ?? ""}`) : f.contexts
+  }
+
+  /**
+   * Picker keys on the parent field: ctrl+n/ctrl+p highlight a candidate,
+   * enter takes it, esc drops the highlight. True when the key was used.
+   */
+  private handlePick(data: string, f: ReviewForm): boolean {
+    const n = Math.min(PICK_ROWS, this.candidates(f).length)
+    const move = matchesKey(data, "ctrl+n") ? 1 : matchesKey(data, "ctrl+p") ? -1 : 0
+    if (move) {
+      if (n > 0) f.pick = f.pick < 0 ? (move > 0 ? 0 : n - 1) : (f.pick + move + n) % n
+      this.tui.requestRender()
+      return true
+    }
+    if (f.pick < 0) return false
+    if (matchesKey(data, "escape")) {
+      f.pick = -1
+    } else if (matchesKey(data, "enter")) {
+      const c = this.candidates(f)[f.pick]
+      if (c) f.parent.setValue(c.address)
+      f.pick = -1
+    } else {
+      return false
+    }
+    this.tui.requestRender()
+    return true
   }
 
   private handleForm(data: string, f: ReviewForm): void {
     if (this.busy) return
+    if (f.field === "parent" && this.handlePick(data, f)) return
     if (matchesKey(data, "escape")) return this.closeForm()
     const step = (d: number) => FIELDS[(FIELDS.indexOf(f.field) + d + FIELDS.length) % FIELDS.length]!
     if (matchesKey(data, "tab") || this.kb.matches(data, "tui.select.down")) return this.focus(f, step(1))
@@ -357,6 +404,7 @@ export class PrBrowser implements Component {
     }
     f[f.field].handleInput(data)
     f.error = ""
+    f.pick = -1
     this.tui.requestRender()
   }
 
@@ -380,9 +428,9 @@ export class PrBrowser implements Component {
     const manifests = f.manifests
       .map((m, i) => (i === f.manifest ? t.fg("accent", t.bold(`[${m}]`)) : t.fg("dim", m)))
       .join(" ")
-    return [
+    const lines = [
       t.fg("accent", t.bold(`review #${f.pr.number}`)) + " " + f.pr.title,
-      t.fg("dim", "tab/up/down field \u2022 left/right manifest \u2022 enter start \u2022 esc cancel"),
+      t.fg("dim", "tab/up/down field \u2022 ctrl+n/p parent \u2022 left/right manifest \u2022 enter start \u2022 esc cancel"),
       "",
       label("context") + (f.context.render(inputW)[0] ?? ""),
       label("parent") + (f.parent.render(inputW)[0] ?? ""),
@@ -390,6 +438,14 @@ export class PrBrowser implements Component {
       "",
       f.error ? t.fg("error", f.error) : "",
     ]
+    if (f.field !== "parent") return lines
+    const shown = this.candidates(f).slice(0, PICK_ROWS)
+    if (shown.length === 0) return [...lines, t.fg("dim", "  no matching contexts")]
+    for (const [i, c] of shown.entries()) {
+      const row = `${c.address}${c.title ? t.fg("dim", `  ${c.title}`) : ""}`
+      lines.push(truncateToWidth(i === f.pick ? t.fg("accent", `\u203a ${row}`) : `  ${row}`, width))
+    }
+    return lines
   }
 
   protected busy = false
