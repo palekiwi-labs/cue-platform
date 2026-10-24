@@ -631,6 +631,12 @@ def "main branch" [
   let manifest = (resolve-manifest $manifest)
   let repo = (repo-of ($C | default $env.PWD | path expand))
   let integ = (integration-ref $repo $base)
+  # A stale origin/<base> yields an older merge-base and an oversized diff.
+  # Only origin refs are fetched; a local --base is used as given.
+  if ($integ | str starts-with 'origin/') {
+    let f = (do { ^git -C $repo fetch origin ($integ | str replace 'origin/' '') } | complete)
+    if $f.exit_code != 0 { log $"warning: fetch of ($integ) failed, using local ref: ($f.stderr | str trim)" }
+  }
 
   for name in $branches {
     let head_sha = (rev-parse $repo $name)
