@@ -266,7 +266,9 @@ export class CueBrowser implements Component {
 
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
-      kind: "sessions", context, subset: "pinned", contexts: [], sessions: [], query: "",
+      kind: "sessions", context,
+      // A context's own sessions may not be pinned, so that view starts on all.
+      subset: context ? "all" : "pinned", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
     }
     this.views.push(v)
