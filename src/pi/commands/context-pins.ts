@@ -58,17 +58,20 @@ export async function contextOrientation(
  * Inject a context into the session without starting a turn. Sent while
  * idle with no delivery options, pi persists it as a displayed
  * custom_message entry immediately (`deliverAs: "nextTurn"` would hold it
- * in memory, unseen and unpersisted, until the next prompt).
+ * in memory, unseen and unpersisted, until the next prompt). An optional
+ * note is appended after the orientation.
  */
 export async function injectContext(
   pi: ExtensionAPI,
   ctx: ActivityCtx,
   address: string,
+  note?: string,
 ): Promise<void> {
   const details: CueContextDetails = { address }
+  const orientation = await contextOrientation(pi, ctx.cwd, address)
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
-    content: await contextOrientation(pi, ctx.cwd, address),
+    content: note ? `${orientation}\n\n${note}` : orientation,
     display: true,
     details,
   })

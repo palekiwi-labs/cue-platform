@@ -66,20 +66,22 @@ export function openInTmux(path: string): string | undefined {
  * cannot call newSession, so dispatch the hidden /resume-open command,
  * whose command context can.
  * In tmux: a new window running pi with the inject command as its
- * first message.
+ * first message. An optional note follows the injected orientation.
  */
-function newSession(
+export function newSession(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   address: string,
   target: Target,
+  note?: string,
 ): string | undefined {
+  const args = note ? `${address} ${note}` : address
   if (target === "tmux") {
-    const inject = `/cue:context:inject ${address}`
+    const inject = `/cue:context:inject ${args}`
     return tmuxWindow(slugOf(address) || "pi", ctx.cwd, `pi ${shellQuote(inject)}`)
   }
   if (!ctx.isIdle()) return "wait for the agent to finish to start a session here"
-  pi.sendUserMessage(`/resume-open new ${address}`, { expandPromptTemplates: true })
+  pi.sendUserMessage(`/resume-open new ${args}`, { expandPromptTemplates: true })
   return undefined
 }
 
@@ -330,11 +332,11 @@ export function registerCueBrowser(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const [verb, ...rest] = args.trim().split(/\s+/)
       if (verb === "new") {
-        const address = rest.join("")
-        if (!address) return
+        const inject = rest.join(" ")
+        if (!inject) return
         await ctx.newSession({
           withSession: async (nctx) => {
-            await nctx.sendUserMessage(`/cue:context:inject ${address}`, { expandPromptTemplates: true })
+            await nctx.sendUserMessage(`/cue:context:inject ${inject}`, { expandPromptTemplates: true })
           },
         })
         return

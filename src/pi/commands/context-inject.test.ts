@@ -4,7 +4,7 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent"
 import { CUE_CONTEXT_TYPE } from "../lib/current-context"
-import { parseAddress, registerContextInjectCommand } from "./context-inject"
+import { parseAddress, parseInjectArgs, registerContextInjectCommand } from "./context-inject"
 
 describe("parseAddress", () => {
   test("accepts three segments, trims slashes and whitespace", () => {
@@ -17,6 +17,14 @@ describe("parseAddress", () => {
     expect(parseAddress("a/b")).toBeUndefined()
     expect(parseAddress("a/b/c/d")).toBeUndefined()
     expect(parseAddress("a/b c/d")).toBeUndefined()
+  })
+})
+
+describe("parseInjectArgs", () => {
+  test("first word is the address, the rest an optional note", () => {
+    expect(parseInjectArgs(" a/b/c ")).toEqual({ address: "a/b/c", note: undefined })
+    expect(parseInjectArgs("a/b/c  see  run 1 ")).toEqual({ address: "a/b/c", note: "see run 1" })
+    expect(parseInjectArgs("slug note").address).toBeUndefined()
   })
 })
 
@@ -68,6 +76,13 @@ describe("/cue:context:inject", () => {
     const rec = s.calls.find((a) => a[0] === "activity")
     expect(rec).toContain("x/y/other")
     expect(rec).toContain('{"method":"inject"}')
+  })
+
+  test("appends a trailing note after the orientation", async () => {
+    const s = setup()
+    await s.run("x/y/other look at review/r1/")
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0]!.message.content).toEndWith("\n\nlook at review/r1/")
   })
 
   test("bad argument: usage notice, nothing sent", async () => {

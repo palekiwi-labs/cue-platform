@@ -48,6 +48,21 @@ export interface MonitorDeps {
   copy(text: string): Promise<void>
   /** Open a file in a new tmux window; error text on failure. */
   openInTmux(path: string): string | undefined
+  /**
+   * Start a pi session injecting a context, with a note after the
+   * orientation; error text on failure.
+   */
+  newSession(address: string, target: Target, note: string): string | undefined
+}
+
+/**
+ * The note a session started from a run carries: where the run's review
+ * artifacts live, and that it should wait rather than start analysing.
+ */
+export function runSessionNote(r: RunRow): string {
+  const id = r.jobId ?? r.runId
+  return `This session was started from cue-agent run ${id}. Its review artifacts, if any, ` +
+    `are under review/${id}/ in this context. Do not start an analysis; wait for instructions.`
 }
 
 export type Target = "here" | "tmux"
@@ -220,6 +235,7 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "ctrl+s")) return this.onSession()
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("id")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "alt+p")) {
@@ -260,6 +276,24 @@ export class AgentMonitor implements Component {
     } finally {
       this.busy = false
     }
+    this.tui.requestRender()
+  }
+
+  /** Start a session in the selected run's context, carrying the run id. */
+  private onSession(): void {
+    const r = this.selectedEntry()?.row
+    if (!r) return
+    if (!r.context || r.context.split("/").filter(Boolean).length !== 3) {
+      this.status = "this run has no context"
+      return this.tui.requestRender()
+    }
+    const err = this.deps.newSession(r.context, this.target, runSessionNote(r))
+    if (err) {
+      this.status = err
+      return this.tui.requestRender()
+    }
+    if (this.target === "here") return this.close()
+    this.status = `started a session for ${r.context} in tmux`
     this.tui.requestRender()
   }
 
@@ -338,6 +372,7 @@ export class AgentMonitor implements Component {
       "ctrl+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold",
+      "ctrl+s session",
       "ctrl+h id",
       "ctrl+y dir",
       "alt+l layout",

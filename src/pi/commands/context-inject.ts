@@ -15,6 +15,16 @@ export function parseAddress(args: string): string | undefined {
   return parts.join("/")
 }
 
+/**
+ * Split `<address> [note]`: the first word is the address, the rest an
+ * optional note appended to the injected orientation.
+ */
+export function parseInjectArgs(args: string): { address?: string; note?: string } {
+  const [first = "", ...rest] = args.trim().split(/\s+/)
+  const note = rest.join(" ").trim()
+  return { address: parseAddress(first), note: note || undefined }
+}
+
 /** Every context address in the store, for argument completion. */
 async function storeAddresses(
   pi: ExtensionAPI,
@@ -38,10 +48,10 @@ async function handler(
   args: string,
   ctx: ExtensionContext,
 ): Promise<void> {
-  const address = parseAddress(args)
+  const { address, note } = parseInjectArgs(args)
   if (!address) {
     ctx.ui.notify(
-      "cue: usage /cue:context:inject <org>/<repo>/<context>",
+      "cue: usage /cue:context:inject <org>/<repo>/<context> [note]",
       "warning",
     )
     return
@@ -57,7 +67,7 @@ async function handler(
     ctx.ui.notify("cue: wait for the agent to finish to inject", "warning")
     return
   }
-  await injectContext(pi, ctx, address)
+  await injectContext(pi, ctx, address, note)
 }
 
 /**
@@ -66,7 +76,7 @@ async function handler(
  */
 export function registerContextInjectCommand(pi: ExtensionAPI): void {
   pi.registerCommand("cue:context:inject", {
-    description: "Inject a cue context by canonical address <org>/<repo>/<ctx>",
+    description: "Inject a cue context by canonical address <org>/<repo>/<ctx> [note]",
     getArgumentCompletions: async (prefix) => {
       const p = prefix.trim()
       const items = (await storeAddresses(pi, process.cwd()))

@@ -5,7 +5,7 @@ import type { TUI } from "@earendil-works/pi-tui"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { parsePs, type RunRow } from "../agents/model"
 import { AgentMonitor, type MonitorDeps } from "../agents/monitor"
-import { editInTerminal, openInTmux } from "./cue-browser"
+import { editInTerminal, newSession, openInTmux } from "./cue-browser"
 
 /** Open the cue-agent monitor. */
 export const AGENTS_SHORTCUT = "alt+m"
@@ -50,6 +50,7 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     editFile: (path) => editInTerminal(tui, path),
     copy: copyToClipboard,
     openInTmux,
+    newSession: (address, target, note) => newSession(pi, ctx, address, target, note),
   })
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) =>
