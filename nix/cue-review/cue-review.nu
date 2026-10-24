@@ -187,8 +187,8 @@ def tag-window [opts: record, --target: string] {
 
 # Is a review window for this context still running?
 def running-for [context: string] {
-  if ((do { ^tmux has-session -t review } | complete).exit_code != 0) { return false }
-  let rows = (^tmux list-windows -t review -F "#{@review_context}\t#{@review_state}" | split row "\n")
+  if ((do { ^tmux has-session -t =review } | complete).exit_code != 0) { return false }
+  let rows = (^tmux list-windows -t =review: -F "#{@review_context}\t#{@review_state}" | split row "\n")
   $rows | any {|l|
     let p = ($l | split column "\t" c s | first)
     $p.c == $context and $p.s == "running"
@@ -548,12 +548,12 @@ def dispatch [repo: path, manifest: path, t: record, --foreground, --force] {
   if not $force and (running-for $t.context) {
     die $"a review window for ($t.context) is already running; pass --force to fire anyway"
   }
-  if ((do { ^tmux has-session -t review } | complete).exit_code != 0) {
+  if ((do { ^tmux has-session -t =review } | complete).exit_code != 0) {
     ^tmux new-session -d -s review
   }
   let target = (sh-quote (target-record $t | to json -r))
   let cmd = $"cue-review run --manifest ($manifest) --context ($t.context) --base ($t.base_sha) --head ($t.head_sha) --target ($target) -C ($repo); exec bash"
-  let win = (^tmux new-window -t review -n $t.window -P -F '#{window_id}' $cmd | str trim)
+  let win = (^tmux new-window -t =review: -n $t.window -P -F '#{window_id}' $cmd | str trim)
   mut tags = {
     review_target: $t.kind
     review_context: $t.context
@@ -799,11 +799,11 @@ def "main run" [
 
 # State of review windows in the review tmux session.
 def "main status" [] {
-  if ((do { ^tmux has-session -t review } | complete).exit_code != 0) {
+  if ((do { ^tmux has-session -t =review } | complete).exit_code != 0) {
     log "no review session"
     return
   }
-  ^tmux list-windows -t review -F "#{@review_state}#{?@review_state,,pending}\t#{window_name}\t#{@review_target}\t#{@review_context}\t#{@review_run}\t#{@review_title}"
+  ^tmux list-windows -t =review: -F "#{@review_state}#{?@review_state,,pending}\t#{window_name}\t#{@review_target}\t#{@review_context}\t#{@review_run}\t#{@review_title}"
   | lines | each {|l| $l | split column "\t" state name target context run title } | flatten
 }
 
