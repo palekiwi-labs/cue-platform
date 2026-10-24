@@ -120,6 +120,9 @@ export function stateTone(state: string): StateTone {
     case "finishing":
     case "finalizing":
       return "live"
+    // Harness gone, waiting for its batch: not working, so not live-coloured.
+    case "exited":
+      return "dim"
     default:
       return "dim"
   }
