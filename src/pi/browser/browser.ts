@@ -17,6 +17,7 @@ import {
   Input,
   Markdown,
   matchesKey,
+  sliceByColumn,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -184,6 +185,16 @@ export function previewMarkdown(text: string): string {
 
 const pad = (s: string, w: number): string =>
   truncateToWidth(s, w, "…", true)
+
+/**
+ * Pad or cut plain text to `w` columns. Unlike truncateToWidth it emits no
+ * ANSI reset when cutting, so a row's selection background survives.
+ */
+const clip = (s: string, w: number): string => {
+  const sw = visibleWidth(s)
+  if (sw <= w) return s + " ".repeat(w - sw)
+  return sliceByColumn(s, 0, Math.max(0, w - 1), true) + "…"
+}
 
 export class CueBrowser implements Component {
   private views: View[] = []
@@ -1020,7 +1031,7 @@ export class CueBrowser implements Component {
         const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
         const desc = s.path === current ? t.fg("accent", s.description) : s.description
         // Flat rows lead with the context, as the tmux window picker does.
-        const where = flat ? t.fg("muted", pad(r.context.slug, slugWidth)) + " " : ""
+        const where = flat ? t.fg("muted", clip(r.context.slug, slugWidth)) + " " : ""
         name = indent + where + desc + label(s)
         tail = s
       }
