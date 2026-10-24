@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { join } from "node:path"
 import {
   type CheckoutTarget,
@@ -128,6 +128,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
     manifests: () => manifests(exec, cwd),
     launchReview: (req) => launchReview(exec, cwd, req),
+    copy: copyToClipboard,
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),

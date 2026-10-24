@@ -53,6 +53,8 @@ export interface PrDeps {
   manifests(): Promise<string[] | { error: string }>
   /** Start a detached cue-review run for a PR. */
   launchReview(req: ReviewRequest): Promise<Outcome>
+  /** Copy text to system clipboard. */
+  copy(text: string): Promise<void>
 }
 
 export interface ReviewRequest {
@@ -253,7 +255,35 @@ export class PrBrowser implements Component {
       void this.openForm()
       return true
     }
+    if (matchesKey(data, "ctrl+y")) {
+      void this.onCopy("url")
+      return true
+    }
+    if (matchesKey(data, "ctrl+h")) {
+      void this.onCopy("title")
+      return true
+    }
     return false
+  }
+
+  private async onCopy(what: "url" | "title"): Promise<void> {
+    const r = this.selectedRow()
+    if (!r) return
+    const text =
+      r.kind === "pr"
+        ? what === "url"
+          ? r.pr.url
+          : r.pr.title
+        : what === "url"
+          ? `https://github.com/${r.repo}`
+          : r.repo
+    if (!text) return
+    try {
+      await this.deps.copy(text)
+      this.notice(`copied ${text}`, "success")
+    } catch (err) {
+      this.notice(`copy failed: ${err instanceof Error ? err.message : String(err)}`, "error")
+    }
   }
 
   protected form: ReviewForm | undefined
@@ -370,7 +400,18 @@ export class PrBrowser implements Component {
   }
 
   protected helpHints(): string[] {
-    return ["tab preset", "alt+v view", "alt+z fold", "enter worktree", "alt+o root", "alt+r review", "ctrl+r refresh", "esc close"]
+    return [
+      "tab preset",
+      "alt+v view",
+      "alt+z fold",
+      "enter worktree",
+      "alt+o root",
+      "alt+r review",
+      "ctrl+y url",
+      "ctrl+h title",
+      "ctrl+r refresh",
+      "esc close",
+    ]
   }
 
   // ---- rendering -------------------------------------------------------
