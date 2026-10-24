@@ -131,6 +131,7 @@ describe("command registration", () => {
       "cue:context:inject",
       "cue:context:pins",
       "cue:idea",
+      "cue:prs",
       "cue:sessions",
       "mcp-cast",
       "resume-open",

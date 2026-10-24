@@ -30,6 +30,11 @@ def manifest-dir [] {
   $base | path join cue review
 }
 
+# Stems of the manifests in manifest-dir, sorted; empty when the dir is missing.
+def manifest-names [] {
+  try { ls (manifest-dir) | where type == file and name =~ '\.json$' | get name | path parse | get stem | sort } catch { [] }
+}
+
 def resolve-manifest [value: string] {
   if ($value | str contains "/") or ($value | str ends-with ".json") {
     return ($value | path expand)
@@ -37,7 +42,7 @@ def resolve-manifest [value: string] {
   if ($value !~ '^[a-z0-9][a-z0-9-]*$') { die $"manifest name must match [a-z0-9-]+: ($value)" }
   let p = (manifest-dir | path join $"($value).json")
   if not ($p | path exists) {
-    let known = (try { ls (manifest-dir) | where name =~ '\.json$' | get name | path parse | get stem | str join ", " } catch { "" })
+    let known = (manifest-names | str join ", ")
     die $"no manifest named '($value)' in (manifest-dir) \(known: ($known)\)"
   }
   $p
@@ -56,6 +61,7 @@ def main [] {
   print -e "       cue-review commit <sha>... [--context <slug>] [--foreground] [-C <dir>]"
   print -e "       cue-review range <base>..<head>... [--context <slug>] [--foreground] [-C <dir>]"
   print -e "       cue-review status"
+  print -e "       cue-review manifests [--json]"
   print -e "detached (review tmux session) is the default; --foreground blocks"
   exit 2
 }
@@ -763,6 +769,15 @@ def "main status" [] {
   }
   ^tmux list-windows -t review -F "#{@review_state}#{?@review_state,,pending}\t#{window_name}\t#{@review_target}\t#{@review_context}\t#{@review_run}\t#{@review_title}"
   | lines | each {|l| $l | split column "\t" state name target context run title } | flatten
+}
+
+# List the manifest names available to --manifest (global dir only).
+def "main manifests" [
+  --json  # Print a JSON array of {name, path}
+] {
+  let dir = (manifest-dir)
+  let rows = (manifest-names | each {|n| {name: $n, path: ($dir | path join $"($n).json")} })
+  if $json { $rows | to json } else { $rows | get name | str join "\n" }
 }
 
 def print-summary [ctx: record, summary: list] {

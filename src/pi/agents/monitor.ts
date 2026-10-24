@@ -6,6 +6,7 @@
  * MonitorDeps and this module only renders and dispatches keys.
  */
 
+import { dirname } from "node:path"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import {
@@ -19,14 +20,14 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
-  batchTotals,
+  type DisplayGroup,
+  displayGroups,
   fmtCost,
   fmtDuration,
   fmtTokens,
-  groupBatches,
+  inputTokens,
   haystack,
   isLive,
-  type RunManifest,
   type RunRow,
   runState,
   stateTone,
@@ -37,14 +38,14 @@ export const POLL_MS = 5000
 export interface MonitorDeps {
   /** Every run cue-agent knows, newest batch first; error text on failure. */
   load(): Promise<{ rows: RunRow[] } | { error: string }>
-  /** Label and context of a run; manifests never change, so callers cache. */
-  manifest(runPath: string): RunManifest | undefined
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
   /** File holding the document shown in a pane; undefined if none. */
   documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
   editFile(path: string): Promise<void>
+  /** Copy text to the system clipboard. */
+  copy(text: string): Promise<void>
   /** Open a file in a new tmux window; error text on failure. */
   openInTmux(path: string): string | undefined
 }
@@ -53,6 +54,15 @@ export type Target = "here" | "tmux"
 
 type Subset = "running" | "all"
 type Pane = "prompt" | "response"
+
+/** A selectable list line: a run, or the heading of a folded group. */
+interface Entry {
+  id: string
+  group: DisplayGroup
+  /** The run shown in the preview: the run itself, or a folded group's first. */
+  row: RunRow
+  folded: boolean
+}
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
 
@@ -73,6 +83,8 @@ export class AgentMonitor implements Component {
   private target: Target = "tmux"
   private status = ""
   private busy = false
+  /** Groups the operator folded or unfolded; others follow isFolded's default. */
+  private foldOverride = new Map<string, boolean>()
 
   constructor(
     private tui: TUI,
@@ -112,31 +124,64 @@ export class AgentMonitor implements Component {
   }
 
   /**
-   * Runs to list, always in ps order (newest batch first, runs by
-   * position) so batches never interleave. The running subset keeps whole
-   * batches that still have a live run; the query keeps matching runs.
+   * Runs to list in display order: jobs, stages, runs. The running subset
+   * keeps whole jobs that still have a live run; the query keeps matching
+   * runs.
    */
-  private shown(): RunRow[] {
+  private groups(): DisplayGroup[] {
+    const jobOf = (r: RunRow) => r.jobId ?? r.batchId
     let base = this.rows
     if (this.subset === "running") {
-      const live = new Set(this.rows.filter(isLive).map((r) => r.batchId))
-      base = base.filter((r) => live.has(r.batchId))
+      const live = new Set(this.rows.filter(isLive).map(jobOf))
+      base = base.filter((r) => live.has(jobOf(r)))
     }
     const q = this.input.getValue().trim()
-    if (!q) return base
-    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath))).map((r) => r.runId))
-    return base.filter((r) => hit.has(r.runId))
+    if (q) {
+      const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r)).map((r) => r.runId))
+      base = base.filter((r) => hit.has(r.runId))
+    }
+    return displayGroups(base)
   }
 
-  /** Index of the selected run in `rows`, following it across refreshes. */
-  private selectedIndex(rows: RunRow[]): number {
-    const i = rows.findIndex((r) => r.runId === this.selectedId)
+  /** Selectable lines in display order, so moving walks the list top to bottom. */
+  private shown(): Entry[] {
+    return this.groups().flatMap((group): Entry[] =>
+      this.isFolded(group)
+        ? [{ id: `group:${group.key}`, group, row: group.runs[0]!.row, folded: true }]
+        : group.runs.map((r) => ({ id: r.row.runId, group, row: r.row, folded: false })),
+    )
+  }
+
+  /** Index of the selected entry, following it across refreshes and folds. */
+  private selectedIndex(entries: Entry[]): number {
+    let i = entries.findIndex((e) => e.id === this.selectedId)
+    if (i < 0) i = entries.findIndex((e) => e.folded && e.group.runs.some((r) => r.row.runId === this.selectedId))
+    if (i < 0) i = entries.findIndex((e) => this.selectedId === `group:${e.group.key}`)
     return i >= 0 ? i : 0
   }
 
+  private selectedEntry(): Entry | undefined {
+    const entries = this.shown()
+    return entries[this.selectedIndex(entries)]
+  }
+
   private selected(): RunRow | undefined {
-    const rows = this.shown()
-    return rows[this.selectedIndex(rows)]
+    return this.selectedEntry()?.row
+  }
+
+  /** Groups start folded unless a run in them is still live. */
+  private isFolded(g: DisplayGroup): boolean {
+    return this.foldOverride.get(g.key) ?? !g.runs.some((r) => isLive(r.row))
+  }
+
+  private toggleFold(): void {
+    const e = this.selectedEntry()
+    if (!e) return
+    const fold = !this.isFolded(e.group)
+    this.foldOverride.set(e.group.key, fold)
+    this.selectedId = fold ? `group:${e.group.key}` : e.group.runs[0]!.row.runId
+    this.previewScroll = 0
+    this.tui.requestRender()
   }
 
   // ---- input -----------------------------------------------------------
@@ -147,7 +192,7 @@ export class AgentMonitor implements Component {
     const move = (delta: number) => {
       if (rows.length === 0) return
       const i = Math.max(0, Math.min(rows.length - 1, this.selectedIndex(rows) + delta))
-      this.selectedId = rows[i]!.runId
+      this.selectedId = rows[i]!.id
       this.previewScroll = 0
       this.tui.requestRender()
     }
@@ -174,6 +219,9 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "ctrl+h")) return void this.onCopy("id")
+    if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "alt+p")) {
       this.preview = !this.preview
       return this.tui.requestRender()
@@ -211,6 +259,27 @@ export class AgentMonitor implements Component {
       await this.deps.editFile(path)
     } finally {
       this.busy = false
+    }
+    this.tui.requestRender()
+  }
+
+  /**
+   * Copy the selected run's id or directory; on a folded heading, the job
+   * id (else batch id) or the batch directory holding its runs.
+   */
+  private async onCopy(what: "id" | "path"): Promise<void> {
+    const e = this.selectedEntry()
+    if (!e) return
+    const r = e.row
+    const text = what === "id"
+      ? (e.folded ? (r.jobId ?? r.batchId) : r.runId)
+      : (e.folded ? dirname(r.runPath) : r.runPath)
+    if (!text) return
+    try {
+      await this.deps.copy(text)
+      this.status = `copied ${text}`
+    } catch (err) {
+      this.status = `copy failed: ${err instanceof Error ? err.message : String(err)}`
     }
     this.tui.requestRender()
   }
@@ -268,6 +337,9 @@ export class AgentMonitor implements Component {
       `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
       "ctrl+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
+      "alt+z fold",
+      "ctrl+h id",
+      "ctrl+y dir",
       "alt+l layout",
       "ctrl+d/u scroll",
       "esc close",
@@ -305,51 +377,66 @@ export class AgentMonitor implements Component {
   private listLines(width: number, height: number): string[] {
     const t = this.theme
     if (!this.loaded) return [t.fg("dim", "loading…")]
-    const rows = this.shown()
-    if (rows.length === 0) {
+    const entries = this.shown()
+    if (entries.length === 0) {
       return [t.fg("warning", this.subset === "running" ? "no live runs (tab: all)" : "no runs")]
     }
-    const sel = this.selectedIndex(rows)
-    this.selectedId = rows[sel]!.runId
-    const toneColor = { live: "accent", ok: "success", bad: "error", dim: "dim" } as const
-    // Fixed columns on the right, shared by batch and run lines.
+    this.selectedId = entries[this.selectedIndex(entries)]!.id
+    const toneColor = { live: "warning", ok: "success", bad: "error", dim: "dim" } as const
+    // Fixed columns on the right, shared by headings and run lines.
     const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
       `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
     const rightW = 6 + 1 + 6 + 1 + 7
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 4)
+    const indentW = 2
+    // The label column fits its content so figures sit next to it.
+    const fixedW = indentW + stateW + agentW + modelW + rightW + 4
+    const groups = this.groups()
+    const longest = Math.max(6, ...groups.flatMap((g) => g.runs.map((r) => r.label.length)))
+    const labelW = Math.max(6, Math.min(width - fixedW, longest))
+    const rowW = fixedW + labelW
+    const leftW = rowW - rightW - 1
 
     const lines: string[] = []
     let selLine = 0
-    for (const g of groupBatches(rows)) {
-      const tot = batchTotals(g)
-      const head = `${g.label ?? g.batchId}  ${t.fg("muted", `${tot.done}/${tot.total} done`)}`
-      const stateTxt = t.fg(toneColor[stateTone(g.state)], g.state)
-      const leftW = width - rightW - 1
-      lines.push(
-        pad(t.bold(pad(head, Math.max(6, leftW - visibleWidth(g.state) - 1))) + " " + stateTxt, leftW) +
-          " " + t.fg("muted", nums(tot.elapsedSecs, tot.tokensInput, tot.costUsd)),
+    const push = (id: string, line: string) => {
+      if (id === this.selectedId) {
+        selLine = lines.length
+        lines.push(t.bg("selectedBg", line))
+      } else lines.push(line)
+    }
+    // Heading: fold marker, state, label, done count; totals in the shared columns.
+    const heading = (g: DisplayGroup, folded: boolean) => {
+      const n = g.totals
+      const state = g.state
+      const head = [
+        t.fg("dim", folded ? "▸" : "▾"),
+        t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+        t.fg("accent", t.bold(g.label)),
+        t.fg("muted", `${n.done}/${n.total}`),
+      ].join(" ")
+      return pad(head, leftW) + " " + t.fg("muted", nums(n.elapsedSecs, n.tokensInput, n.costUsd))
+    }
+    const runLine = (indent: string, r: RunRow, label: string) => {
+      const state = runState(r)
+      return pad(
+        indent + [
+          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+          pad(r.agent, agentW),
+          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
+          pad(label, labelW + indentW - indent.length),
+          t.fg("muted", nums(r.elapsedSecs, inputTokens(r), r.costUsd)),
+        ].join(" "),
+        rowW,
       )
-      for (const r of g.runs) {
-        const state = runState(r)
-        const line = pad(
-          "  " +
-            [
-              t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-              pad(r.agent, agentW),
-              t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-              pad(this.deps.manifest(r.runPath)?.label ?? "", labelW),
-              t.fg("muted", nums(r.elapsedSecs, r.tokensInput, r.costUsd)),
-            ].join(" "),
-          width,
-        )
-        if (r.runId === this.selectedId) {
-          selLine = lines.length
-          lines.push(t.bg("selectedBg", line))
-        } else lines.push(line)
-      }
+    }
+    for (const g of groups) {
+      const folded = this.isFolded(g)
+      push(`group:${g.key}`, heading(g, folded))
+      if (folded) continue
+      for (const r of g.runs) push(r.row.runId, runLine("  ", r.row, r.label))
     }
     const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))
     return lines.slice(start, start + height)

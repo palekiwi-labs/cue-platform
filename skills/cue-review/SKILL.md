@@ -75,7 +75,8 @@ review artifacts.
    (reviewers opus+sol, merger sol, verifier opus; ~$0.5, minutes/PR).
    Other manifests: `unslop` (AI-slop check against the slop registry,
    one cheap reviewer, no verify; use when asked for an unslop or slop
-   review). List all with `ls ~/.config/cue/review/*.json`; pick the one
+   review). List all with `cue-review manifests` (`--json` for
+   name/path records); pick the one
    the operator names, else `default`.
 3. **Collect**: `cue-review status` lists windows with
    `@review_state` (running/ok/failed/pending). When `ok`, read:
