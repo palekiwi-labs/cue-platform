@@ -12,8 +12,6 @@ import {
   PAGE,
   parseSearch,
   type Pr,
-  type ContextChoice,
-  parseContextList,
   repoOfRemote,
   resolveScope,
   SEARCH_QUERY,
@@ -21,6 +19,8 @@ import {
   type View,
   worktreeFor,
 } from "../prs/model"
+import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
+import { saveRecencyDays, storedRecencyDays } from "./cue-browser"
 
 /** Open the GitHub PR browser. */
 export const PRS_SHORTCUT = "alt+p"
@@ -99,12 +99,12 @@ async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: s
   }
 }
 
-/** Contexts of the session repo's scope; none when cue fails. */
-async function contexts(exec: Exec, cwd: string): Promise<ContextChoice[]> {
-  const r = await exec("cue", ["context", "list", "--scope", "repo", "--json"], { cwd })
+/** The session repo's context tree, pinned first; empty when cue fails. */
+async function contexts(exec: Exec, cwd: string): Promise<ContextRow[]> {
+  const r = await exec("cue", ["context", "tree", "--scope", "repo", "--sort", "recency", "--json"], { cwd })
   if (r.code !== 0) return []
   try {
-    return parseContextList(r.stdout)
+    return pinnedFirst(parseContextTree(r.stdout))
   } catch {
     return []
   }
@@ -141,6 +141,8 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
     manifests: () => manifests(exec, cwd),
     contexts: () => contexts(exec, cwd),
+    recencyDays: () => storedRecencyDays(cwd),
+    saveRecencyDays: (d) => saveRecencyDays(cwd, d),
     launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
   }

@@ -133,13 +133,13 @@ function readState(): BrowserState {
   }
 }
 
-function storedRecencyDays(cwd: string): number | undefined {
+export function storedRecencyDays(cwd: string): number | undefined {
   const scope = cwdScope(cwd)
   const days = scope ? readState()[scope]?.recencyDays : undefined
   return typeof days === "number" ? days : undefined
 }
 
-function saveRecencyDays(cwd: string, days: number): void {
+export function saveRecencyDays(cwd: string, days: number): void {
   const scope = cwdScope(cwd)
   if (!scope) return
   const state = readState()

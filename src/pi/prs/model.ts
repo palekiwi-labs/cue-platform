@@ -216,18 +216,3 @@ export function worktreeFor(porcelain: string, branch: string): string | undefin
 /** Canonical context address check, `<org>/<repo>/<context>`. */
 export const isContextAddress = (s: string): boolean => /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s)
 
-/** A context the review form offers as parent. */
-export interface ContextChoice {
-  address: string
-  title: string | null
-}
-
-/** Contexts from `cue context list --json`, by canonical address. */
-export function parseContextList(json: string): ContextChoice[] {
-  const rows: unknown = JSON.parse(json)
-  if (!Array.isArray(rows)) return []
-  return rows.flatMap((r) =>
-    typeof r?.scope === "string" && typeof r?.context === "string"
-      ? [{ address: `${r.scope}/${r.context}`, title: typeof r.title === "string" ? r.title : null }]
-      : [])
-}
