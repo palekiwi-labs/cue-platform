@@ -265,10 +265,11 @@ export class CueBrowser implements Component {
     if (here) this.selectContext(v, here)
   }
 
-  /** Widen the recency window, wrapping to the narrowest; kept per repository. */
-  private stepRecency(): void {
+  /** Widen (+1) or narrow (-1) the recency window, kept per repository. */
+  private stepRecency(delta: number): void {
     const v = this.view
-    const next = (this.recencyStep + 1) % RECENCY_STEPS.length
+    const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.recencyStep + delta))
+    if (next === this.recencyStep) return this.notify(`recency window at ${this.recencyDays}d`)
     const keep = v.kind === "contexts" ? this.selectedContext()?.address : undefined
     this.recencyStep = next
     this.deps.saveRecencyDays(this.recencyDays)
@@ -511,7 +512,8 @@ export class CueBrowser implements Component {
     if (matchesKey(data, "ctrl+n")) return this.startWizard()
     if (matchesKey(data, "ctrl+s")) return this.onNewSession()
     if (v.kind !== "artifacts") {
-      if (matchesKey(data, "alt+r")) return this.stepRecency()
+      if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
+      if (matchesKey(data, "ctrl+down")) return this.stepRecency(-1)
     }
     if (v.kind === "contexts") {
       if (matchesKey(data, "tab")) {
@@ -889,10 +891,10 @@ export class CueBrowser implements Component {
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
-        "alt+r recency", "tab recent/all", esc]
+        "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete",
-        "alt+z fold", "alt+r recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
+        "alt+z fold", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
@@ -913,7 +915,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownContexts(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (alt+r: widen, tab: all)` : "no contexts")]
+      return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no contexts")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const tree = v.query.trim() === ""
