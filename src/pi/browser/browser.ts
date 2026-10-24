@@ -92,6 +92,8 @@ export interface BrowserDeps {
   resume(session: SessionRow, target: Target): string | undefined
   /** Delete a session file; resolves to what happened ("moved to trash"). */
   deleteSession(path: string): Promise<string>
+  /** Clear every label in a session file. */
+  clearLabels(path: string): void
 }
 
 /** Where open and new-session actions run. */
@@ -542,6 +544,7 @@ export class CueBrowser implements Component {
         if (matchesKey(data, "ctrl+l")) return void this.onLink()
         if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
+        if (matchesKey(data, "alt+u")) return this.onClearLabel()
       }
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
@@ -740,6 +743,27 @@ export class CueBrowser implements Component {
     this.tui.requestRender()
   }
 
+  private onClearLabel(): void {
+    const r = this.selectedSessionRow()
+    if (r?.kind !== "session") return this.notify("select a session row to unlabel")
+    const s = r.session
+    if (s.label === undefined) return this.notify("session has no label")
+    if (s.path === this.deps.currentSession()) return this.notify("cannot unlabel the active session")
+    try {
+      this.deps.clearLabels(s.path)
+    } catch (e) {
+      return this.notify(`unlabel failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    // Rows are shared between the cache and views, so this updates both.
+    s.label = undefined
+    const v = this.view
+    if (v.kind === "sessions" && v.selected >= this.shownSessions(v).length) {
+      v.selected = Math.max(0, v.selected - 1)
+    }
+    this.notify("label cleared")
+    this.refresh()
+  }
+
   private confirmInput(s: SessionRow, data: string): void {
     if (matchesKey(data, "enter") || data === "y" || data === "Y") {
       this.confirmDelete = undefined
@@ -893,7 +917,7 @@ export class CueBrowser implements Component {
         "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete",
+      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
         "alt+z fold", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {

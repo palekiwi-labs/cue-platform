@@ -185,6 +185,14 @@ async function deleteSessionFile(path: string): Promise<string> {
   return "deleted"
 }
 
+/** Append a clearing label entry for every labeled entry in the file. */
+function clearSessionLabels(path: string): void {
+  const sm = SessionManager.open(path)
+  for (const e of sm.getEntries()) {
+    if (sm.getLabel(e.id) !== undefined) sm.appendLabelChange(e.id, undefined)
+  }
+}
+
 async function createArtifact(
   pi: ExtensionAPI,
   cwd: string,
@@ -262,6 +270,7 @@ export async function openBrowser(
         currentSession: () => ctx.sessionManager.getSessionFile(),
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
+        clearLabels: clearSessionLabels,
       }
       return new CueBrowser(tui, theme, kb, deps, () => done(), start)
     },
