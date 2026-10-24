@@ -1,0 +1,99 @@
+/**
+ * Pure data for the log view: parsing `cue log list` JSON into
+ * entries, row markers and preview markdown. Entries are immutable
+ * milestone records of one context.
+ */
+
+export interface LogEntry {
+  /** Stable key within one load: the raw timestamp plus list position. */
+  id: string
+  /** Unix milliseconds (cue records nanoseconds). */
+  timestamp: number
+  title: string
+  /** Canonical address of a linked trace. */
+  trace: string | null
+  found: string[]
+  decided: string[]
+  open: string[]
+}
+
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s !== "") : []
+
+/** Parse `cue log list` JSON; malformed entries are dropped. */
+export function parseLog(stdout: string): LogEntry[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout || "[]")
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const out: LogEntry[] = []
+  parsed.forEach((item, i) => {
+    const e = item as Record<string, unknown>
+    if (typeof e?.timestamp !== "number" || typeof e.title !== "string") return
+    out.push({
+      id: `${e.timestamp}:${i}`,
+      // Nanoseconds lose precision as a double; milliseconds survive.
+      timestamp: Math.floor(e.timestamp / 1e6),
+      title: e.title.replace(/\s+/g, " ").trim(),
+      trace: typeof e.trace === "string" && e.trace !== "" ? e.trace : null,
+      found: strings(e.found),
+      decided: strings(e.decided),
+      open: strings(e.open),
+    })
+  })
+  return out
+}
+
+/** Newest first, as the view lists them. */
+export function sortLog(entries: readonly LogEntry[]): LogEntry[] {
+  return [...entries].sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))
+}
+
+export interface Marker {
+  text: string
+  /** False when the count is zero or the trace absent; drawn dim. */
+  on: boolean
+}
+
+/** Row markers: found/decided/open counts and a trace mark. */
+export function logMarkers(e: LogEntry): Marker[] {
+  const count = (letter: string, n: number): Marker => ({
+    text: n === 0 ? `${letter}-` : `${letter}${n > 9 ? "+" : n}`,
+    on: n > 0,
+  })
+  return [
+    count("F", e.found.length),
+    count("D", e.decided.length),
+    count("O", e.open.length),
+    { text: e.trace ? "T" : "-", on: e.trace !== null },
+  ]
+}
+
+const section = (name: string, items: string[]): string =>
+  items.length === 0 ? "" : `**${name}**\n\n${items.map((s) => `- ${s}`).join("\n")}\n\n`
+
+/**
+ * Markdown preview: title, found/decided/open, then the linked trace.
+ * `trace` is the trace file content; null when it cannot be read.
+ */
+export function logPreview(e: LogEntry, trace?: string | null): string {
+  let md = `# ${e.title}\n\n`
+  md += section("Found", e.found) + section("Decided", e.decided) + section("Open", e.open)
+  if (e.trace) {
+    md += `---\n\n_trace ${e.trace}_\n\n`
+    if (trace === undefined || trace === null) md += "_trace not found in this store_\n"
+    else {
+      const m = /^---\n([\s\S]*?)\n---\n?/.exec(trace)
+      md += m ? "```yaml\n" + m[1] + "\n```\n" + trace.slice(m[0].length) : trace
+    }
+  }
+  return md.trimEnd()
+}
+
+/** File of an entry's trace below a store root, when linked. */
+export function tracePath(e: LogEntry, storeRoot: string): string | null {
+  return e.trace ? `${storeRoot}/${e.trace}` : null
+}
