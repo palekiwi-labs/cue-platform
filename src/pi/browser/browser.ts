@@ -910,7 +910,7 @@ export class CueBrowser implements Component {
       if (r.kind === "context") {
         const c = r.context
         const pin = c.pinned ? t.fg("warning", "*") : " "
-        const slug = c.address === here ? t.fg("accent", c.slug) : t.fg("warning", c.slug)
+        const slug = c.address === here ? t.fg("accent", c.slug) : c.slug
         const folded = this.sessionFolds?.has(c.address) && r.sessions.length > 0
         const count = r.sessions.length ? t.fg("dim", ` (${r.sessions.length})${folded ? " +" : ""}`) : ""
         name = `${pin} ${"  ".repeat(c.depth)}${r.sessions.length ? slug : t.fg("dim", c.slug)}${count}`
