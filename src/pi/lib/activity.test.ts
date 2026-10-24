@@ -223,7 +223,9 @@ describe("registerActivityRecording", () => {
         { type: "tool_result", toolCallId: "t", content: [], isError: false, ...e },
         ctx,
       )
-    return { fire, calls, gitCalls }
+    const start = (e: object) =>
+      handlers["tool_call"]!({ type: "tool_call", toolCallId: "t", ...e }, ctx)
+    return { fire, start, calls, gitCalls, git }
   }
   const repoGit = (dir: string) => ({
     [`${dir} rev-parse --verify --quiet 6c9688b^{commit}`]: FULL,
@@ -297,9 +299,49 @@ describe("registerActivityRecording", () => {
     expect(s.gitCalls).toHaveLength(0)
   })
 
-  test("no event without proof: quiet commits, unresolved hashes, non-commits", async () => {
+  test("quiet commit: moved HEAD records the new commit", async () => {
+    const OLD = "1".repeat(40)
+    const s = setup("a/b/c", { ...repoGit("/w"), "/w rev-parse --verify --quiet HEAD": OLD })
+    const call = { toolName: "bash", input: { command: "git commit -q -m x" } }
+    await s.start(call)
+    s.git["/w rev-parse --verify --quiet HEAD"] = FULL
+    s.git[`/w log -1 --format=%s ${FULL}`] = "feat: quiet"
+    s.git["/w symbolic-ref --short --quiet HEAD"] = "dev"
+    await s.fire({ ...call, content: text("") })
+    expect(s.calls).toEqual([
+      activityArgv(
+        "a/b/c",
+        "git_commit",
+        { hash: FULL, branch: "dev", title: "feat: quiet", repo: "o/r", root: "/w" },
+        "s1",
+      ),
+    ])
+  })
+
+  test("quiet commit: unchanged HEAD records nothing", async () => {
+    const s = setup("a/b/c", { ...repoGit("/w"), "/w rev-parse --verify --quiet HEAD": FULL })
+    const call = { toolName: "bash", input: { command: "git commit -q -m x" } }
+    await s.start(call)
+    await s.fire({ ...call, isError: true, content: text("nothing to commit") })
+    expect(s.calls).toHaveLength(0)
+  })
+
+  test("quiet commit without a start snapshot records an unverified event", async () => {
     const s = setup("a/b/c", repoGit("/w"))
     await s.fire({ toolName: "bash", input: { command: "git commit -q -m x" }, content: text("") })
+    expect(s.calls).toHaveLength(1)
+    expect(JSON.parse(s.calls[0]![7]!)).toMatchObject({
+      hash: null,
+      verified: false,
+      command: "git commit -q -m x",
+      root: "/w",
+    })
+    await s.fire({ toolName: "bash", isError: true, input: { command: "git commit -q" }, content: text("") })
+    expect(s.calls).toHaveLength(1)
+  })
+
+  test("no event without proof: unresolved hashes, non-commits", async () => {
+    const s = setup("a/b/c", repoGit("/w"))
     await s.fire({ toolName: "bash", input: { command: "git commit" }, content: text("[dev 1111111] x") })
     await s.fire({ toolName: "bash", input: { command: "git log" }, content: text("[dev 6c9688b] x") })
     await s.fire({ toolName: "read", input: { command: "git commit" }, content: text("[dev 6c9688b] x") })

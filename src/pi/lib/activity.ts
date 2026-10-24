@@ -253,47 +253,105 @@ async function git(
   }
 }
 
+async function repoInfo(
+  pi: ExtensionAPI,
+  dir: string,
+): Promise<{ repo: string | null; root: string | null }> {
+  const root = await git(pi, dir, ["rev-parse", "--show-toplevel"])
+  const origin = await git(pi, dir, ["remote", "get-url", "origin"])
+  return { repo: origin ? originScope(origin) : null, root }
+}
+
 /**
- * Record git_commit for every commit a bash tool call (nested codemode
- * calls included) proves it made: one event per `[<branch> <hash>] title`
- * line in the output of a command that runs `git commit`. The call's exit
- * status is irrelevant; the output line is the proof. The short hash is
- * resolved in the directories the commit segments ran in, so a line that
- * resolves nowhere records nothing. Quiet commits (-q) print no line and
- * are not recorded. Merges and user `!` bash are not observed.
+ * Record git_commit for the commits a bash tool call (nested codemode
+ * calls included) makes. The output is the first proof: one event per
+ * `[<branch> <hash>] title` line, its short hash resolved in the
+ * directories the commit segments ran in; the call's exit status is
+ * irrelevant then.
+ *
+ * Quiet commits (-q) print no such line. For them HEAD is snapshotted in
+ * each commit directory when the call starts and compared when it ends:
+ * a moved (or newly born) HEAD records the new commit with its subject
+ * and branch. When HEAD cannot be read, or the call start was not
+ * observed, a successful call records
+ * an event without a hash, marked unverified, so the commit is never
+ * silently lost. Merges and user `!` bash are not
+ * observed.
  */
 export function registerActivityRecording(pi: ExtensionAPI): void {
-  pi.on("tool_result", async (event, ctx) => {
+  const heads = new Map<string, Map<string, string | null>>()
+
+  pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return
     const command = event.input.command
     if (typeof command !== "string" || !isGitCommit(command)) return
-    const lines = commitLines(outputText(event.content))
-    if (lines.length === 0) return
+    if (!currentContext(ctx.sessionManager.getBranch())) return
+    const before = new Map<string, string | null>()
+    for (const dir of commitDirs(command, ctx.cwd)) {
+      before.set(dir, await git(pi, dir, ["rev-parse", "--verify", "--quiet", "HEAD"]))
+    }
+    heads.set(event.toolCallId, before)
+  })
+
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName !== "bash") return
+    const before = heads.get(event.toolCallId)
+    heads.delete(event.toolCallId)
+    const command = event.input.command
+    if (typeof command !== "string" || !isGitCommit(command)) return
     const address = currentContext(ctx.sessionManager.getBranch())
     if (!address) return
     const dirs = commitDirs(command, ctx.cwd)
-    const seen = new Set<string>()
-    for (const line of lines) {
-      for (const dir of dirs) {
-        const hash = await git(pi, dir, [
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          `${line.short}^{commit}`,
-        ])
-        if (!hash) continue
-        if (seen.has(hash)) break
-        seen.add(hash)
-        const root = await git(pi, dir, ["rev-parse", "--show-toplevel"])
-        const origin = await git(pi, dir, ["remote", "get-url", "origin"])
+    const lines = commitLines(outputText(event.content))
+    if (lines.length > 0) {
+      const seen = new Set<string>()
+      for (const line of lines) {
+        for (const dir of dirs) {
+          const hash = await git(pi, dir, [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            `${line.short}^{commit}`,
+          ])
+          if (!hash) continue
+          if (seen.has(hash)) break
+          seen.add(hash)
+          await recordActivity(pi, ctx, address, "git_commit", {
+            hash,
+            branch: line.branch,
+            title: line.title,
+            ...(await repoInfo(pi, dir)),
+          })
+          break
+        }
+      }
+      return
+    }
+    const unverified = async (dir: string) =>
+      recordActivity(pi, ctx, address, "git_commit", {
+        hash: null,
+        command,
+        verified: false,
+        ...(await repoInfo(pi, dir)),
+      })
+    for (const dir of dirs) {
+      if (!before) {
+        if (!event.isError) await unverified(dir)
+        continue
+      }
+      const prior = before.get(dir) ?? null
+      const head = await git(pi, dir, ["rev-parse", "--verify", "--quiet", "HEAD"])
+      if (head && head !== prior) {
+        const title = await git(pi, dir, ["log", "-1", "--format=%s", head])
+        const branch = await git(pi, dir, ["symbolic-ref", "--short", "--quiet", "HEAD"])
         await recordActivity(pi, ctx, address, "git_commit", {
-          hash,
-          branch: line.branch,
-          title: line.title,
-          repo: origin ? originScope(origin) : null,
-          root,
+          hash: head,
+          branch,
+          title: title ?? "",
+          ...(await repoInfo(pi, dir)),
         })
-        break
+      } else if (!head && prior === null && !event.isError) {
+        await unverified(dir)
       }
     }
   })
