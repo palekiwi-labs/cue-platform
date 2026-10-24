@@ -6,6 +6,8 @@ import {
   relativeAge,
   sortArtifacts,
   treePrefix,
+  artifactAddress,
+  artifactFilename,
 } from "./model"
 
 const node = (context: string, extra: Record<string, unknown> = {}) => ({
@@ -100,5 +102,28 @@ describe("relativeAge", () => {
     expect(relativeAge(0, 3 * 3600)).toBe("3h")
     expect(relativeAge(0, 6 * 86400)).toBe("6d")
     expect(relativeAge(0, 400 * 86400)).toBe("1y")
+  })
+})
+
+describe("artifactAddress", () => {
+  test("strips the store root", () => {
+    expect(artifactAddress("org/repo/ctx", "/store/org/repo/ctx/note/ideas/a.md"))
+      .toBe("org/repo/ctx/note/ideas/a.md")
+  })
+  test("undefined outside the context", () => {
+    expect(artifactAddress("org/repo/ctx", "/store/org/repo/other/note/a.md")).toBeUndefined()
+  })
+})
+
+describe("artifactFilename", () => {
+  test("slug mode flattens to one segment", () => {
+    expect(artifactFilename("My Idea/Two", false)).toBe("my-idea-two.md")
+  })
+  test("path mode keeps nesting", () => {
+    expect(artifactFilename("ideas/My Idea.md", true)).toBe("ideas/my-idea.md")
+  })
+  test("rejects empty and escapes", () => {
+    expect(artifactFilename("  ", false)).toBeUndefined()
+    expect(artifactFilename("../x", true)).toBeUndefined()
   })
 })

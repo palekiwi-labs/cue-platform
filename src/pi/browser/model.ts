@@ -194,3 +194,33 @@ const BADGES: Record<string, string> = {
 
 export const typeBadge = (type: string): string =>
   BADGES[type] ?? type.toUpperCase().slice(0, 5)
+
+/**
+ * Canonical address of an artifact: its path below the context's
+ * directory, prefixed by the context address. Undefined when the path
+ * does not lie inside that context.
+ */
+export function artifactAddress(contextAddress: string, path: string): string | undefined {
+  const marker = `/${contextAddress}/`
+  const i = path.lastIndexOf(marker)
+  return i === -1 ? undefined : path.slice(i + 1)
+}
+
+/** Artifact types the creation wizard offers, in menu order. */
+export const CREATE_TYPES = ["note", "task", "plan", "spec", "trace"] as const
+
+/**
+ * Filename for a new artifact. In slug mode the input is reduced to a
+ * single kebab-case segment; in path mode nested segments are kept and
+ * each one is cleaned. `.md` is appended when missing. Undefined when
+ * nothing usable remains or the path tries to escape.
+ */
+export function artifactFilename(input: string, asPath: boolean): string | undefined {
+  const clean = (s: string) =>
+    s.toLowerCase().trim().replace(/\.md$/, "").replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+  const parts = asPath ? input.split("/") : [input]
+  const segs = parts.map(clean).filter((s) => s !== "")
+  if (segs.length === 0 || segs.some((s) => s === "." || s === "..")) return undefined
+  return `${segs.join("/")}.md`
+}
