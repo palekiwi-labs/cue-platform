@@ -223,6 +223,9 @@ export function previewMarkdown(text: string): string {
 const pad = (s: string, w: number): string =>
   truncateToWidth(s, w, "…", true)
 
+/** Cut or pad a preview line to the pane, without an ellipsis: previews never wrap. */
+const clip = (s: string, w: number): string => truncateToWidth(s, w, "", true)
+
 
 /** Markdown render width for unwrapped previews: wider than any line. */
 const UNWRAPPED_WIDTH = 2000
@@ -1009,7 +1012,7 @@ export class CueBrowser implements Component {
       const preview = this.previewLines(previewWidth, body)
       const sep = t.fg("border", " │ ")
       for (let i = 0; i < body; i++) {
-        out.push(pad(list[i] ?? "", listWidth) + sep + pad(preview[i] ?? "", previewWidth))
+        out.push(pad(list[i] ?? "", listWidth) + sep + clip(preview[i] ?? "", previewWidth))
       }
     }
     return out
@@ -1319,8 +1322,7 @@ export class CueBrowser implements Component {
 
   /**
    * Markdown lines for the preview, unwrapped: rendered at a width no line
-   * reaches, then cut to the pane by sliceAndClamp (sliceByColumn keeps
-   * styles intact across the cut).
+   * reaches, then cut to the pane by sliceAndClamp.
    */
   private renderPreview(md: string): string[] {
     return new Markdown(md, 0, 0, getMarkdownTheme()).render(UNWRAPPED_WIDTH)
@@ -1331,6 +1333,6 @@ export class CueBrowser implements Component {
     this.previewScroll = Math.min(this.previewScroll, max)
     return lines
       .slice(this.previewScroll, this.previewScroll + height)
-      .map((l) => sliceByColumn(l, 0, width))
+      .map((l) => clip(l, width))
   }
 }
