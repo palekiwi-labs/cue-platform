@@ -17,6 +17,7 @@ import {
   Input,
   Markdown,
   matchesKey,
+  sliceByColumn,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -223,6 +224,9 @@ const pad = (s: string, w: number): string =>
   truncateToWidth(s, w, "…", true)
 
 
+/** Markdown render width for unwrapped previews: wider than any line. */
+const UNWRAPPED_WIDTH = 2000
+
 export class CueBrowser implements Component {
   private views: View[] = []
   private input = new Input()
@@ -233,6 +237,9 @@ export class CueBrowser implements Component {
   private target: Target = "tmux"
   private showPreview = true
   private stacked = false
+  /** Preview soft wrap; off cuts lines at the pane edge (shift+left/right scroll). */
+  private wrap = false
+  private hScroll = 0
   private wizard: Wizard | undefined
   /** Contexts whose children are hidden; survives tab toggles. */
   private collapsed = new Set<string>()
@@ -664,8 +671,6 @@ export class CueBrowser implements Component {
         v.selected = 0
         return this.refresh()
       }
-      if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
     } else {
       if (v.kind === "sessions") {
         if (matchesKey(data, "tab")) {
@@ -686,6 +691,8 @@ export class CueBrowser implements Component {
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
       }
       if (v.kind === "artifacts" && matchesKey(data, "ctrl+g")) return this.pushLog(v.context)
+    }
+    if (v.kind !== "contexts") {
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
         return this.refresh()
@@ -694,8 +701,17 @@ export class CueBrowser implements Component {
         this.stacked = !this.stacked
         return this.refresh()
       }
-      if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
+      if (this.showPreview) {
+        if (matchesKey(data, "alt+w")) {
+          this.wrap = !this.wrap
+          this.hScroll = 0
+          return this.refresh()
+        }
+        if (matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
+        if (matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
+        if (!this.wrap && matchesKey(data, "shift+right")) return this.scrollPreviewSideways(8)
+        if (!this.wrap && matchesKey(data, "shift+left")) return this.scrollPreviewSideways(-8)
+      }
     }
 
     const before = this.input.getValue()
@@ -722,6 +738,11 @@ export class CueBrowser implements Component {
 
   private scrollPreview(delta: number): void {
     this.previewScroll = Math.max(0, this.previewScroll + delta)
+    this.tui.requestRender()
+  }
+
+  private scrollPreviewSideways(delta: number): void {
+    this.hScroll = Math.max(0, this.hScroll + delta)
     this.tui.requestRender()
   }
 
@@ -1067,19 +1088,24 @@ export class CueBrowser implements Component {
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
-        "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+        "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
-      hints = ["tab recent/all", "ctrl+up/down recency", "ctrl+h address",
-        ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+      hints = ["tab recent/all", "ctrl+up/down recency", "ctrl+h address", "alt+p preview", "alt+l layout",
+        ...this.previewHints(), esc]
     } else if (v.kind === "log") {
       hints = ["enter/ctrl+e open trace", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
-        "ctrl+h address", "ctrl+y trace path", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+        "ctrl+h address", "ctrl+y trace path", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
-        ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+        ...this.previewHints(), esc]
     }
     return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
+  }
+
+  private previewHints(): string[] {
+    if (!this.showPreview) return []
+    return ["ctrl+d/u scroll", this.wrap ? "alt+w nowrap" : "alt+w wrap", ...(this.wrap ? [] : ["shift+left/right pan"])]
   }
 
   /** Window of `count` rows keeping `selected` visible. */
@@ -1290,32 +1316,44 @@ export class CueBrowser implements Component {
     if (v.kind === "log") {
       const e = this.selectedLog()
       if (!e) return []
-      const key = `log:${e.id}:${width}`
+      const key = `log:${e.id}:${this.wrap ? width : 0}`
       if (this.previewCache?.key !== key) {
-        const lines = new Markdown(this.logPreviewFor(e), 0, 0, getMarkdownTheme()).render(width)
-        this.previewCache = { key, lines }
+        this.hScroll = 0
+        this.previewCache = { key, lines: this.renderPreview(this.logPreviewFor(e), width) }
       }
-      return this.sliceAndClamp(this.previewCache.lines, height)
+      return this.sliceAndClamp(this.previewCache.lines, width, height)
     }
     const selectedEvent = v.kind === "activity" ? this.selectedActivity() : undefined
     const path = v.kind === "sessions" ? this.selectedSession()?.path : this.selectedPath()
     const key = v.kind === "activity"
-      ? `activity:${selectedEvent?.id ?? ""}:${width}`
-      : `${path}:${width}`
+      ? `activity:${selectedEvent?.id ?? ""}:${this.wrap ? width : 0}`
+      : `${path}:${this.wrap ? width : 0}`
     if ((v.kind === "activity" ? selectedEvent === undefined : !path)) return []
     if (this.previewCache?.key !== key) {
       const md = v.kind === "activity"
         ? this.activityPreview(selectedEvent!)
         : this.previewSource(path!)
-      const lines = new Markdown(md, 0, 0, getMarkdownTheme()).render(width)
-      this.previewCache = { key, lines }
+      this.hScroll = 0
+      this.previewCache = { key, lines: this.renderPreview(md, width) }
     }
-    return this.sliceAndClamp(this.previewCache.lines, height)
+    return this.sliceAndClamp(this.previewCache.lines, width, height)
   }
 
-  private sliceAndClamp(lines: string[], height: number): string[] {
+  /**
+   * Markdown lines for the preview. Unwrapped, it renders at a width no
+   * line reaches, so nothing wraps, and sliceAndClamp cuts each line to
+   * the pane (sliceByColumn keeps styles intact across the cut).
+   */
+  private renderPreview(md: string, width: number): string[] {
+    if (this.wrap) return new Markdown(md, 0, 0, getMarkdownTheme()).render(width)
+    return new Markdown(md, 0, 0, getMarkdownTheme()).render(UNWRAPPED_WIDTH)
+  }
+
+  private sliceAndClamp(lines: string[], width: number, height: number): string[] {
     const max = Math.max(0, lines.length - height)
     this.previewScroll = Math.min(this.previewScroll, max)
-    return lines.slice(this.previewScroll, this.previewScroll + height)
+    const shown = lines.slice(this.previewScroll, this.previewScroll + height)
+    if (this.wrap) return shown
+    return shown.map((l) => sliceByColumn(l, this.hScroll, width))
   }
 }
