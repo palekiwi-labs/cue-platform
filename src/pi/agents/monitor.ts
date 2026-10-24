@@ -80,8 +80,8 @@ export class AgentMonitor implements Component {
   private target: Target = "tmux"
   private status = ""
   private busy = false
-  /** Keys of folded groups. */
-  private folded = new Set<string>()
+  /** Groups the operator folded or unfolded; others follow isFolded's default. */
+  private foldOverride = new Map<string, boolean>()
 
   constructor(
     private tui: TUI,
@@ -143,7 +143,7 @@ export class AgentMonitor implements Component {
   /** Selectable lines in display order, so moving walks the list top to bottom. */
   private shown(): Entry[] {
     return this.groups().flatMap((group): Entry[] =>
-      this.folded.has(group.key)
+      this.isFolded(group)
         ? [{ id: `group:${group.key}`, group, row: group.runs[0]!.row, folded: true }]
         : group.runs.map((r) => ({ id: r.row.runId, group, row: r.row, folded: false })),
     )
@@ -166,14 +166,17 @@ export class AgentMonitor implements Component {
     return this.selectedEntry()?.row
   }
 
+  /** Groups start folded unless a run in them is still live. */
+  private isFolded(g: DisplayGroup): boolean {
+    return this.foldOverride.get(g.key) ?? !g.runs.some((r) => isLive(r.row))
+  }
+
   private toggleFold(): void {
     const e = this.selectedEntry()
     if (!e) return
-    if (this.folded.delete(e.group.key)) this.selectedId = e.group.runs[0]!.row.runId
-    else {
-      this.folded.add(e.group.key)
-      this.selectedId = `group:${e.group.key}`
-    }
+    const fold = !this.isFolded(e.group)
+    this.foldOverride.set(e.group.key, fold)
+    this.selectedId = fold ? `group:${e.group.key}` : e.group.runs[0]!.row.runId
     this.previewScroll = 0
     this.tui.requestRender()
   }
@@ -402,7 +405,7 @@ export class AgentMonitor implements Component {
       )
     }
     for (const g of groups) {
-      const folded = this.folded.has(g.key)
+      const folded = this.isFolded(g)
       push(`group:${g.key}`, heading(g, folded))
       if (folded) continue
       for (const r of g.runs) push(r.row.runId, runLine("  ", r.row, r.label))
