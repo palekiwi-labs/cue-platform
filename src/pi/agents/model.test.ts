@@ -170,7 +170,7 @@ describe("groupJobs", () => {
     expect(stageLabel(j!.batches[0]!, "J1")).toBe("merge")
   })
 
-  test("display groups list job runs flat in stage order under a heading", () => {
+  test("display groups list runs flat in stage order, one group per job or batch", () => {
     const two = (id: string) => [
       row(id, 5, null, { runId: `${id}-1` }),
       row(id, 5, null, { runId: `${id}-2`, position: 2 }),
@@ -178,7 +178,7 @@ describe("groupJobs", () => {
     const groups = displayGroups([
       row("a3", 29, "A", { label: "verify" }), row("solo", 25, null), ...two("pair"), row("a1", 10, "A"),
     ])
-    expect(groups.map((g) => [g.key, g.heading])).toEqual([["solo", false], ["A", true], ["pair", true]])
+    expect(groups.map((g) => g.key)).toEqual(["solo", "A", "pair"])
     expect(groups[1]!.runs.map((r) => r.label)).toEqual(["a1", "verify"])
     expect(groups[2]!.runs.map((r) => r.row.runId)).toEqual(["pair-1", "pair-2"])
   })

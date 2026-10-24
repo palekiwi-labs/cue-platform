@@ -279,14 +279,12 @@ export interface DisplayRun {
 }
 
 /**
- * A block of the monitor list. A job, or a batch of several runs, gets a
- * heading over a flat list of its runs in stage order; a lone run of a
- * standalone batch is just its line (heading false, one run).
+ * A block of the monitor list: a job, or a standalone batch, shown as a
+ * foldable heading over a flat list of its runs in stage order.
  */
 export interface DisplayGroup {
   key: string
   label: string
-  heading: boolean
   state: BatchState
   totals: BatchTotals
   runs: DisplayRun[]
@@ -302,7 +300,6 @@ export function displayGroups(rows: RunRow[]): DisplayGroup[] {
     return {
       key: j.key,
       label: j.label ?? j.key,
-      heading: isJob || runs.length > 1,
       state: jobState(j),
       totals: jobTotals(j),
       runs,
