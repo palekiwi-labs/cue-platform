@@ -1204,7 +1204,8 @@ export class CueBrowser implements Component {
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()
-    const summaryWidth = Math.max(10, width - 11 - 9 - 13)
+    // when(11) badge(9) who(13), each followed by a space
+    const summaryWidth = Math.max(10, width - (11 + 1) - (9 + 1) - (13 + 1))
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
     for (let i = a; i < b; i++) {
