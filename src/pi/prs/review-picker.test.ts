@@ -55,14 +55,14 @@ describe("ReviewPicker", () => {
     expect(s.results[0]).toEqual({ context: "review-t", manifest: "quick", parent: "o/r/alpha" })
   })
 
-  test("alt+e edits the context; esc undoes, invalid slugs are refused", () => {
+  test("ctrl+e edits the context; esc undoes, invalid slugs are refused", () => {
     const s = setup()
-    s.p.handleInput("\x1be")
+    s.p.handleInput("\x05")
     s.type(" x")
     s.p.handleInput("\r")
     expect(s.p.render(80).at(-1)).toContain("slug")
     s.p.handleInput("\x1b")
-    s.p.handleInput("\x1be")
+    s.p.handleInput("\x05")
     s.type("-2")
     s.p.handleInput("\r")
     s.p.handleInput("\r")

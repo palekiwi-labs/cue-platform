@@ -106,7 +106,7 @@ export class ReviewPicker {
       this.manifest = (this.manifest + d + k) % k
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "alt+e")) {
+    if (matchesKey(data, "ctrl+e")) {
       this.saved = this.name.getValue()
       this.editing = true
       this.query.focused = false
@@ -201,7 +201,7 @@ export class ReviewPicker {
     const scope = this.recent ? `recent ${this.days}d` : "all"
     const hints = this.editing
       ? ["enter keep", "esc undo"]
-      : ["enter start", "tab manifest", "alt+e context", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+      : ["enter start", "tab manifest", "ctrl+e context", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
     const lines = [
       truncateToWidth(
         t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
