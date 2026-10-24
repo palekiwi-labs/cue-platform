@@ -21,9 +21,11 @@ import {
   buildRows,
   fmtAge,
   haystack,
+  isContextAddress,
   type Pr,
   type Preset,
   PRESETS,
+  reviewContext,
   reviewRequested,
   type Row,
   type View,
@@ -47,6 +49,33 @@ export interface PrDeps {
   view: View
   /** Check a PR out in the repo root or its own worktree; the outcome. */
   checkout(pr: Pr, where: CheckoutTarget): Promise<Outcome>
+  /** Manifest names cue-review knows; error text on failure. */
+  manifests(): Promise<string[] | { error: string }>
+  /** Start a detached cue-review run for a PR. */
+  launchReview(req: ReviewRequest): Promise<Outcome>
+}
+
+export interface ReviewRequest {
+  pr: Pr
+  context: string
+  parent?: string
+  manifest: string
+}
+
+/** cue-review's preselected manifest. */
+export const DEFAULT_MANIFEST = "default"
+
+type Field = "context" | "parent" | "manifest"
+const FIELDS: Field[] = ["context", "parent", "manifest"]
+
+interface ReviewForm {
+  pr: Pr
+  context: Input
+  parent: Input
+  manifests: string[]
+  manifest: number
+  field: Field
+  error: string
 }
 
 export type CheckoutTarget = "root" | "worktree"
@@ -176,6 +205,7 @@ export class PrBrowser implements Component {
   }
 
   handleInput(data: string): void {
+    if (this.form) return this.handleForm(data, this.form)
     const rows = this.rows()
     const move = (delta: number) => {
       if (rows.length === 0) return
@@ -217,9 +247,106 @@ export class PrBrowser implements Component {
   /** Hook for action keys; true when the key was consumed. */
   protected handleAction(data: string): boolean {
     const where = matchesKey(data, "alt+o") ? "root" : matchesKey(data, "alt+w") ? "worktree" : undefined
-    if (!where) return false
-    this.onCheckout(where)
-    return true
+    if (where) {
+      this.onCheckout(where)
+      return true
+    }
+    if (matchesKey(data, "alt+r")) {
+      void this.openForm()
+      return true
+    }
+    return false
+  }
+
+  protected form: ReviewForm | undefined
+
+  private async openForm(): Promise<void> {
+    const pr = this.actionablePr()
+    if (!pr || this.busy) return
+    this.busy = true
+    this.notice("loading manifests\u2026", "dim")
+    const m = await this.deps.manifests().finally(() => (this.busy = false))
+    if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
+    const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
+    const context = new Input()
+    context.setValue(reviewContext(pr))
+    context.focused = true
+    this.form = {
+      pr,
+      context,
+      parent: new Input(),
+      manifests,
+      manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
+      field: "context",
+      error: "",
+    }
+    this.input.focused = false
+    this.notice("")
+  }
+
+  private closeForm(): void {
+    this.form = undefined
+    this.input.focused = true
+    this.tui.requestRender()
+  }
+
+  private focus(f: ReviewForm, field: Field): void {
+    f.field = field
+    f.context.focused = field === "context"
+    f.parent.focused = field === "parent"
+    this.tui.requestRender()
+  }
+
+  private handleForm(data: string, f: ReviewForm): void {
+    if (this.busy) return
+    if (matchesKey(data, "escape")) return this.closeForm()
+    const step = (d: number) => FIELDS[(FIELDS.indexOf(f.field) + d + FIELDS.length) % FIELDS.length]!
+    if (matchesKey(data, "tab") || this.kb.matches(data, "tui.select.down")) return this.focus(f, step(1))
+    if (matchesKey(data, "shift+tab") || this.kb.matches(data, "tui.select.up")) return this.focus(f, step(-1))
+    if (matchesKey(data, "enter")) return void this.submit(f)
+    if (f.field === "manifest") {
+      const d = matchesKey(data, "left") ? -1 : matchesKey(data, "right") || matchesKey(data, "space") ? 1 : 0
+      if (d) {
+        f.manifest = (f.manifest + d + f.manifests.length) % f.manifests.length
+        this.tui.requestRender()
+      }
+      return
+    }
+    f[f.field].handleInput(data)
+    f.error = ""
+    this.tui.requestRender()
+  }
+
+  private async submit(f: ReviewForm): Promise<void> {
+    const context = f.context.getValue().trim()
+    const parent = f.parent.getValue().trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(context)) f.error = "context must be a slug (letters, digits, . _ -)"
+    else if (parent && !isContextAddress(parent)) f.error = "parent must be <org>/<repo>/<context>"
+    if (f.error) return this.tui.requestRender()
+    const req: ReviewRequest = { pr: f.pr, context, manifest: f.manifests[f.manifest]!, ...(parent ? { parent } : {}) }
+    this.closeForm()
+    await this.run(`starting review of #${f.pr.number}`, () => this.deps.launchReview(req))
+  }
+
+  private formLines(f: ReviewForm, width: number): string[] {
+    const t = this.theme
+    const labelW = 10
+    const label = (field: Field) =>
+      (f.field === field ? t.fg("accent", "\u203a ") : "  ") + t.fg("muted", pad(field, labelW))
+    const inputW = Math.max(10, width - labelW - 2)
+    const manifests = f.manifests
+      .map((m, i) => (i === f.manifest ? t.fg("accent", t.bold(`[${m}]`)) : t.fg("dim", m)))
+      .join(" ")
+    return [
+      t.fg("accent", t.bold(`review #${f.pr.number}`)) + " " + f.pr.title,
+      t.fg("dim", "tab/up/down field \u2022 left/right manifest \u2022 enter start \u2022 esc cancel"),
+      "",
+      label("context") + (f.context.render(inputW)[0] ?? ""),
+      label("parent") + (f.parent.render(inputW)[0] ?? ""),
+      label("manifest") + manifests,
+      "",
+      f.error ? t.fg("error", f.error) : t.fg("dim", "parent is optional; it applies when the context is new"),
+    ]
   }
 
   protected busy = false
@@ -245,7 +372,7 @@ export class PrBrowser implements Component {
   }
 
   protected helpHints(): string[] {
-    return ["tab preset", "alt+v view", "alt+z fold", "alt+o checkout", "alt+w worktree", "ctrl+r refresh", "esc close"]
+    return ["tab preset", "alt+v view", "alt+z fold", "alt+o checkout", "alt+w worktree", "alt+r review", "ctrl+r refresh", "esc close"]
   }
 
   // ---- rendering -------------------------------------------------------
@@ -284,6 +411,7 @@ export class PrBrowser implements Component {
   }
 
   protected bodyLines(width: number, height: number): string[] {
+    if (this.form) return this.formLines(this.form, width)
     return this.listLines(width, height)
   }
 

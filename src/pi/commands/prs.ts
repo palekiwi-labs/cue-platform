@@ -1,6 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { join } from "node:path"
-import { type CheckoutTarget, type Loaded, type Outcome, PrBrowser, type PrDeps } from "../prs/browser"
+import {
+  type CheckoutTarget,
+  type Loaded,
+  type Outcome,
+  PrBrowser,
+  type PrDeps,
+  type ReviewRequest,
+} from "../prs/browser"
 import {
   PAGE,
   parseSearch,
@@ -78,6 +85,31 @@ async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget):
   return add.code === 0 ? { ok: true, text: `worktree for #${pr.number} at ${path}` } : failed("git worktree add", add)
 }
 
+async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: string }> {
+  const r = await exec("cue-review", ["manifests", "--json"], { cwd })
+  if (r.code !== 0) return { error: (r.stderr || r.stdout).trim() || `exit ${r.code}` }
+  try {
+    const rows: unknown = JSON.parse(r.stdout)
+    if (!Array.isArray(rows)) return { error: "expected a JSON array" }
+    return rows.map((m) => m?.name).filter((n): n is string => typeof n === "string")
+  } catch (e) {
+    return { error: `bad JSON: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+/** Detached run in the review tmux session; cue-review prints where it went. */
+async function launchReview(exec: Exec, cwd: string, req: ReviewRequest): Promise<Outcome> {
+  const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd })
+  if (top.code !== 0) return failed("not a git checkout", top)
+  const args = ["pr", String(req.pr.number), "--manifest", req.manifest, "--context", req.context]
+  if (req.parent) args.push("--parent", req.parent)
+  args.push("-C", top.stdout.trim())
+  const r = await exec("cue-review", args, { cwd })
+  if (r.code !== 0) return failed("cue-review", r)
+  const out = (r.stdout + r.stderr).trim().split("\n").filter(Boolean).pop() ?? ""
+  return { ok: true, text: `review of #${req.pr.number} started (${req.context}, ${req.manifest})${out ? `: ${out}` : ""}` }
+}
+
 async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   const exec: Exec = (cmd, args, opts) => pi.exec(cmd, args, opts)
@@ -94,6 +126,8 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     orgs,
     view,
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
+    manifests: () => manifests(exec, cwd),
+    launchReview: (req) => launchReview(exec, cwd, req),
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
