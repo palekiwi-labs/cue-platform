@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { readFile, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import type { TUI } from "@earendil-works/pi-tui"
 import { type BrowserDeps, type BrowserStart, CueBrowser, type Target } from "../browser/browser"
+import { parseActivity, sortActivity } from "../browser/activity"
 import { parseArtifacts, parseContextTree } from "../browser/model"
 import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browser/sessions"
 import { currentContext, slugOf } from "../lib/current-context"
@@ -175,6 +176,50 @@ async function loadSessions(pi: ExtensionAPI, cwd: string): Promise<SessionRow[]
   return inScopes(rows, scopes, cwdScope)
 }
 
+/** Root of the cue store, as cue itself resolves it; cached. */
+let cachedStoreRoot: string | undefined
+function storeRoot(cwd: string): string {
+  if (cachedStoreRoot) return cachedStoreRoot
+  const r = spawnSync("cue", ["status", "--json"], { cwd, encoding: "utf8" })
+  try {
+    const store = JSON.parse(r.stdout ?? "{}").store
+    if (typeof store === "string" && store !== "") cachedStoreRoot = store
+  } catch {
+    // fall through to the default
+  }
+  cachedStoreRoot ??= process.env.CUE_STORE || join(homedir(), ".cue")
+  return cachedStoreRoot
+}
+
+/** `git show` for an activity commit; null when it fails. */
+function gitShow(root: string, hash: string): string | null {
+  if (!existsSync(root)) return null
+  const r = spawnSync("git", ["-C", root, "show", hash], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
+  return r.status === 0 ? r.stdout : null
+}
+
+/** pi session file by session id, from one cached scan of ~/.pi/sessions. */
+let sessionIds: Map<string, string> | undefined
+function sessionFile(sessionId: string): string | undefined {
+  sessionIds ??= (() => {
+    const map = new Map<string, string>()
+    const root = join(homedir(), ".pi", "sessions")
+    try {
+      for (const dir of readdirSync(root, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue
+        for (const f of readdirSync(join(root, dir.name))) {
+          const m = /^(?:.+)_([0-9a-f-]{36})\.jsonl$/.exec(f)
+          if (m) map.set(m[1]!, join(root, dir.name, f))
+        }
+      }
+    } catch {
+      // no sessions directory
+    }
+    return map
+  })()
+  return sessionIds.get(sessionId)
+}
+
 /** Prefer the trash CLI, as pi's own picker does; fall back to unlink. */
 async function deleteSessionFile(path: string): Promise<string> {
   try {
@@ -273,6 +318,15 @@ export async function openBrowser(
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
         clearLabels: clearSessionLabels,
+        loadActivity: async (address) =>
+          sortActivity(
+            parseActivity(
+              await cueBestEffort(pi, ctx.cwd, ["activity", "list", "--context", address, "--json"]),
+            ),
+          ),
+        gitShow,
+        storeRoot: () => storeRoot(ctx.cwd),
+        sessionFile,
       }
       return new CueBrowser(tui, theme, kb, deps, () => done(), start)
     },
