@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { homedir } from "node:os"
-import { contextFlag, dirFlag, storeFlag } from "./cue-args"
+import { contextFlag, dirFlag, provenanceFlags, storeFlag } from "./cue-args"
 
 describe("dirFlag", () => {
   test("absent emits nothing", () => {
@@ -52,5 +52,21 @@ describe("storeFlag", () => {
 
   test("other values pass through trimmed", () => {
     expect(storeFlag(" /mnt/store ")).toEqual(["--store", "/mnt/store"])
+  })
+})
+
+describe("provenanceFlags", () => {
+  test("names the pi harness and session", () => {
+    expect(provenanceFlags("s1")).toEqual([
+      "--harness",
+      "pi",
+      "--session-id",
+      "s1",
+    ])
+  })
+
+  test("omits an empty session id", () => {
+    expect(provenanceFlags(undefined)).toEqual(["--harness", "pi"])
+    expect(provenanceFlags(" ")).toEqual(["--harness", "pi"])
   })
 })

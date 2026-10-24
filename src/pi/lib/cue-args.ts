@@ -41,6 +41,18 @@ export function contextFlag(context: string | undefined): string[] {
 }
 
 /**
+ * Build the activity provenance flags: harness `pi` and the pi session id.
+ *
+ * Passed to `cue add` so cue's native artifact_created event names the
+ * session that wrote the artifact, and to `cue activity add`. An empty
+ * session id is omitted rather than sent as an empty string.
+ */
+export function provenanceFlags(sessionId: string | undefined): string[] {
+  const id = sessionId?.trim()
+  return ["--harness", "pi", ...(id ? ["--session-id", id] : [])]
+}
+
+/**
  * Build the `--store` flag.
  *
  * Normally absent: the store root comes from `$CUE_STORE`, exported by the
