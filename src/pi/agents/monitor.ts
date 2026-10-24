@@ -6,6 +6,7 @@
  * MonitorDeps and this module only renders and dispatches keys.
  */
 
+import { dirname } from "node:path"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import {
@@ -43,6 +44,8 @@ export interface MonitorDeps {
   documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
   editFile(path: string): Promise<void>
+  /** Copy text to the system clipboard. */
+  copy(text: string): Promise<void>
   /** Open a file in a new tmux window; error text on failure. */
   openInTmux(path: string): string | undefined
 }
@@ -217,6 +220,8 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "ctrl+h")) return void this.onCopy("id")
+    if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "alt+p")) {
       this.preview = !this.preview
       return this.tui.requestRender()
@@ -254,6 +259,27 @@ export class AgentMonitor implements Component {
       await this.deps.editFile(path)
     } finally {
       this.busy = false
+    }
+    this.tui.requestRender()
+  }
+
+  /**
+   * Copy the selected run's id or directory; on a folded heading, the job
+   * id (else batch id) or the batch directory holding its runs.
+   */
+  private async onCopy(what: "id" | "path"): Promise<void> {
+    const e = this.selectedEntry()
+    if (!e) return
+    const r = e.row
+    const text = what === "id"
+      ? (e.folded ? (r.jobId ?? r.batchId) : r.runId)
+      : (e.folded ? dirname(r.runPath) : r.runPath)
+    if (!text) return
+    try {
+      await this.deps.copy(text)
+      this.status = `copied ${text}`
+    } catch (err) {
+      this.status = `copy failed: ${err instanceof Error ? err.message : String(err)}`
     }
     this.tui.requestRender()
   }
@@ -312,6 +338,8 @@ export class AgentMonitor implements Component {
       "ctrl+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold",
+      "ctrl+h id",
+      "ctrl+y dir",
       "alt+l layout",
       "ctrl+d/u scroll",
       "esc close",

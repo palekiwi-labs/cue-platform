@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TUI } from "@earendil-works/pi-tui"
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { parsePs, type RunRow } from "../agents/model"
 import { AgentMonitor, type MonitorDeps } from "../agents/monitor"
 import { editInTerminal, openInTmux } from "./cue-browser"
@@ -48,6 +48,7 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     prompt,
     documentPath,
     editFile: (path) => editInTerminal(tui, path),
+    copy: copyToClipboard,
     openInTmux,
   })
   await ctx.ui.custom<void>(
