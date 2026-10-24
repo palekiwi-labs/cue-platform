@@ -190,7 +190,7 @@ export class CueBrowser implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private busy = false
-  private target: Target = "here"
+  private target: Target = "tmux"
   private showPreview = true
   private stacked = false
   private wizard: Wizard | undefined
