@@ -202,3 +202,24 @@ export function groupSessions(
   if (none) push(syntheticContext(NO_CONTEXT), none)
   return out
 }
+
+/** `<org>/<repo>` of a git remote URL (https, ssh or scp form). */
+export function scopeOfRemote(url: string): string | undefined {
+  const m = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url.trim())
+  return m ? `${m[1]}/${m[2]}` : undefined
+}
+
+/**
+ * Sessions belonging to the browser's scopes: by the linked context's
+ * scope, or, without a context, by the scope of the session's cwd.
+ */
+export function inScopes(
+  sessions: SessionRow[],
+  scopes: ReadonlySet<string>,
+  cwdScope: (cwd: string) => string | undefined,
+): SessionRow[] {
+  return sessions.filter((s) => {
+    const scope = s.address ? scopeOf(s.address) : s.cwd ? cwdScope(s.cwd) : undefined
+    return scope !== undefined && scopes.has(scope)
+  })
+}

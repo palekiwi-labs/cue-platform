@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { parseContextTree } from "./model"
-import { groupSessions, type SessionRow, scopeOf, sessionMeta, transcript } from "./sessions"
+import {
+  groupSessions, inScopes, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
+} from "./sessions"
 
 let n = 0
 const entry = (fields: Record<string, unknown>, parentId: string | null) => {
@@ -107,5 +109,25 @@ describe("groupSessions", () => {
     expect(shape(rows)).toEqual(["a", "b"])
     const b = rows[1]!
     expect(b.kind === "context" && b.sessions.length).toBe(2)
+  })
+})
+
+describe("scopeOfRemote", () => {
+  test("https, ssh and scp forms", () => {
+    expect(scopeOfRemote("https://github.com/o/r.git")).toBe("o/r")
+    expect(scopeOfRemote("ssh://git@github.com/o/r")).toBe("o/r")
+    expect(scopeOfRemote("git@github.com:o/r.git\n")).toBe("o/r")
+    expect(scopeOfRemote("nope")).toBeUndefined()
+  })
+})
+
+describe("inScopes", () => {
+  const s = (path: string, address?: string, cwd = "/w"): SessionRow => ({
+    path, cwd, address, description: path, tokens: null, modified: 0,
+  })
+  test("context scope wins; cwd scope covers sessions without one", () => {
+    const rows = [s("a", "o/r/x"), s("b", "z/z/x"), s("c"), s("d", undefined, "/other"), s("e", undefined, "")]
+    const kept = inScopes(rows, new Set(["o/r"]), (cwd) => (cwd === "/w" ? "o/r" : "q/q"))
+    expect(kept.map((r) => r.path)).toEqual(["a", "c"])
   })
 })
