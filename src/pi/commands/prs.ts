@@ -21,7 +21,7 @@ import {
 } from "../prs/model"
 
 /** Open the GitHub PR browser. */
-export const PRS_SHORTCUT = "alt+g"
+export const PRS_SHORTCUT = "alt+p"
 
 type Exec = ExtensionAPI["exec"]
 

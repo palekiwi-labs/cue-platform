@@ -246,7 +246,11 @@ export class PrBrowser implements Component {
 
   /** Hook for action keys; true when the key was consumed. */
   protected handleAction(data: string): boolean {
-    const where = matchesKey(data, "alt+o") ? "root" : matchesKey(data, "alt+w") ? "worktree" : undefined
+    const where = matchesKey(data, "enter") || matchesKey(data, "alt+w")
+      ? "worktree"
+      : matchesKey(data, "alt+o")
+        ? "root"
+        : undefined
     if (where) {
       this.onCheckout(where)
       return true
@@ -372,7 +376,7 @@ export class PrBrowser implements Component {
   }
 
   protected helpHints(): string[] {
-    return ["tab preset", "alt+v view", "alt+z fold", "alt+o checkout", "alt+w worktree", "alt+r review", "ctrl+r refresh", "esc close"]
+    return ["tab preset", "alt+v view", "alt+z fold", "enter worktree", "alt+o root", "alt+r review", "ctrl+r refresh", "esc close"]
   }
 
   // ---- rendering -------------------------------------------------------
