@@ -16,7 +16,6 @@ import {
   matchesKey,
   type TUI,
   truncateToWidth,
-  visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
   fmtCost,
@@ -40,7 +39,15 @@ export interface MonitorDeps {
   manifest(runPath: string): RunManifest | undefined
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
+  /** File holding the document shown in a pane; undefined if none. */
+  documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined
+  /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
+  editFile(path: string): Promise<void>
+  /** Open a file in a new tmux window; error text on failure. */
+  openInTmux(path: string): string | undefined
 }
+
+export type Target = "here" | "tmux"
 
 type Subset = "running" | "all"
 type Pane = "prompt" | "response"
@@ -60,7 +67,9 @@ export class AgentMonitor implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
-  private lastLoad = 0
+  private target: Target = "tmux"
+  private status = ""
+  private busy = false
 
   constructor(
     private tui: TUI,
@@ -94,7 +103,6 @@ export class AgentMonitor implements Component {
       if (first && !r.rows.some(isLive)) this.subset = "all"
     }
     this.loaded = true
-    this.lastLoad = Date.now()
     // The selected run's response may have just arrived.
     this.previewCache = undefined
     this.tui.requestRender()
@@ -121,6 +129,7 @@ export class AgentMonitor implements Component {
   // ---- input -----------------------------------------------------------
 
   handleInput(data: string): void {
+    if (this.busy) return
     const rows = this.shown()
     const move = (delta: number) => {
       if (rows.length === 0) return
@@ -142,6 +151,11 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "ctrl+r")) return void this.reload(false)
+    if (matchesKey(data, "enter")) return void this.onOpen()
+    if (matchesKey(data, "ctrl+t")) {
+      this.target = this.target === "here" ? "tmux" : "here"
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "alt+r")) {
       this.pane = this.pane === "prompt" ? "response" : "prompt"
       this.previewScroll = 0
@@ -161,6 +175,27 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       this.tui.requestRender()
     }
+  }
+
+  private async onOpen(): Promise<void> {
+    const r = this.selected()
+    if (!r) return
+    const path = this.deps.documentPath(r, this.pane)
+    if (!path) {
+      this.status = `no ${this.pane} to open`
+      return this.tui.requestRender()
+    }
+    if (this.target === "tmux") {
+      this.status = this.deps.openInTmux(path) ?? `opened ${this.pane} of ${r.runId} in tmux`
+      return this.tui.requestRender()
+    }
+    this.busy = true
+    try {
+      await this.deps.editFile(path)
+    } finally {
+      this.busy = false
+    }
+    this.tui.requestRender()
   }
 
   private scrollPreview(delta: number): void {
@@ -195,24 +230,24 @@ export class AgentMonitor implements Component {
       ...this.bodyLines(width, body),
     ]
     while (lines.length < height - 1) lines.push("")
-    lines.push(this.error ? t.fg("error", `cue-agent: ${this.error}`) : "")
+    lines.push(this.error ? t.fg("error", `cue-agent: ${this.error}`) : t.fg("muted", this.status))
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
   }
 
   private headerLine(width: number): string {
     const t = this.theme
     const live = this.rows.filter(isLive).length
-    const title = t.fg("accent", t.bold("cue-agent runs")) + " " +
+    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
       t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`)
-    const age = this.lastLoad ? `${Math.round((Date.now() - this.lastLoad) / 1000)}s ago` : "loading"
-    const right = t.fg("dim", `${this.loading ? "refreshing" : `updated ${age}`} • every ${POLL_MS / 1000}s`)
-    const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(right))
-    return title + " ".repeat(gap) + right
+    return truncateToWidth(title, width)
   }
 
   private helpLine(width: number): string {
     const hints = [
       "tab running/all",
+      `enter open ${this.pane}`,
+      "ctrl+t target",
       `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
       "ctrl+r refresh",
       "alt+l layout",
