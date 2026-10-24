@@ -16,16 +16,18 @@ import {
   matchesKey,
   type TUI,
   truncateToWidth,
+  visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
+  batchTotals,
   fmtCost,
   fmtDuration,
   fmtTokens,
+  groupBatches,
   haystack,
   isLive,
   type RunManifest,
   type RunRow,
-  rowLabel,
   runState,
   stateTone,
 } from "./model"
@@ -108,11 +110,21 @@ export class AgentMonitor implements Component {
     this.tui.requestRender()
   }
 
+  /**
+   * Runs to list, always in ps order (newest batch first, runs by
+   * position) so batches never interleave. The running subset keeps whole
+   * batches that still have a live run; the query keeps matching runs.
+   */
   private shown(): RunRow[] {
-    const base = this.subset === "running" ? this.rows.filter(isLive) : this.rows
+    let base = this.rows
+    if (this.subset === "running") {
+      const live = new Set(this.rows.filter(isLive).map((r) => r.batchId))
+      base = base.filter((r) => live.has(r.batchId))
+    }
     const q = this.input.getValue().trim()
     if (!q) return base
-    return fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath)))
+    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r, this.deps.manifest(r.runPath))).map((r) => r.runId))
+    return base.filter((r) => hit.has(r.runId))
   }
 
   /** Index of the selected run in `rows`, following it across refreshes. */
@@ -288,35 +300,48 @@ export class AgentMonitor implements Component {
     }
     const sel = this.selectedIndex(rows)
     this.selectedId = rows[sel]!.runId
-    const start = Math.max(0, Math.min(sel - Math.floor(height / 2), rows.length - height))
-    const end = Math.min(rows.length, start + height)
     const toneColor = { live: "accent", ok: "success", bad: "error", dim: "dim" } as const
-    // Fixed columns on the right; agent, model and label share the rest.
-    const right = (r: RunRow) => t.fg("muted",
-      `${fmtDuration(r.elapsedSecs).padStart(6)} ${fmtTokens(r.tokensInput).padStart(6)} ${fmtCost(r.costUsd).padStart(7)}`)
+    // Fixed columns on the right, shared by batch and run lines.
+    const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
+      `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
     const rightW = 6 + 1 + 6 + 1 + 7
     const stateW = 10
     const agentW = 10
     const modelW = 22
-    const labelW = Math.max(6, width - stateW - agentW - modelW - rightW - 5)
-    const out: string[] = []
-    for (let i = start; i < end; i++) {
-      const r = rows[i]!
-      const state = runState(r)
-      const m = this.deps.manifest(r.runPath)
-      const line = pad(
-        [
-          t.fg(toneColor[stateTone(state)], pad(state, stateW)),
-          pad(r.agent, agentW),
-          t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-          pad(rowLabel(r, m), labelW),
-          right(r),
-        ].join(" "),
-        width,
+    const labelW = Math.max(6, width - 2 - stateW - agentW - modelW - rightW - 5)
+
+    const lines: string[] = []
+    let selLine = 0
+    for (const g of groupBatches(rows)) {
+      const tot = batchTotals(g)
+      const head = `${g.label ?? g.batchId}  ${t.fg("muted", `${tot.done}/${tot.total} done`)}`
+      const stateTxt = t.fg(toneColor[stateTone(g.state)], g.state)
+      const leftW = width - rightW - 1
+      lines.push(
+        pad(t.bold(pad(head, Math.max(6, leftW - visibleWidth(g.state) - 1))) + " " + stateTxt, leftW) +
+          " " + t.fg("muted", nums(tot.elapsedSecs, tot.tokensInput, tot.costUsd)),
       )
-      out.push(i === sel ? t.bg("selectedBg", line) : line)
+      for (const r of g.runs) {
+        const state = runState(r)
+        const line = pad(
+          "  " +
+            [
+              t.fg(toneColor[stateTone(state)], pad(state, stateW)),
+              pad(r.agent, agentW),
+              t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
+              pad(this.deps.manifest(r.runPath)?.label ?? "", labelW),
+              t.fg("muted", nums(r.elapsedSecs, r.tokensInput, r.costUsd)),
+            ].join(" "),
+          width,
+        )
+        if (r.runId === this.selectedId) {
+          selLine = lines.length
+          lines.push(t.bg("selectedBg", line))
+        } else lines.push(line)
+      }
     }
-    return out
+    const start = Math.max(0, Math.min(selLine - Math.floor(height / 2), lines.length - height))
+    return lines.slice(start, start + height)
   }
 
   private previewSource(r: RunRow): string {

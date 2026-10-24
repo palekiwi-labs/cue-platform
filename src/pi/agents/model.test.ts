@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import {
+  batchTotals,
   fmtCost,
   fmtDuration,
+  groupBatches,
   haystack,
   isLive,
   parseManifest,
   parsePs,
+  type RunRow,
   rowLabel,
   runState,
   stateTone,
@@ -109,4 +112,27 @@ test("formatting", () => {
   expect(fmtDuration(3720)).toBe("1h02")
   expect(fmtCost(0.0043)).toBe("$0.004")
   expect(fmtCost(null)).toBe("-")
+})
+
+describe("groupBatches", () => {
+  const row = (batchId: string, position: number, extra: Partial<RunRow> = {}): RunRow => ({
+    batchId, batchLabel: `L-${batchId}`, batchState: "running", startedAt: 0,
+    runId: `${batchId}-${position}`, agent: "a", model: "m", position, phase: "running",
+    runPath: "", elapsedSecs: null, tokensInput: null, tokensOutput: null, costUsd: null,
+    outcome: null, response: null, error: null, ...extra,
+  })
+
+  test("keeps runs of a batch together in first-appearance order", () => {
+    const groups = groupBatches([row("b2", 1), row("b1", 1), row("b2", 2), row("b1", 2)])
+    expect(groups.map((g) => g.batchId)).toEqual(["b2", "b1"])
+    expect(groups[0]!.runs.map((r) => r.position)).toEqual([1, 2])
+  })
+
+  test("totals: done count, longest run, summed cost", () => {
+    const [g] = groupBatches([
+      row("b", 1, { elapsedSecs: 10, costUsd: 0.5, outcome: "completed" }),
+      row("b", 2, { elapsedSecs: 30, costUsd: 0.25 }),
+    ])
+    expect(batchTotals(g!)).toEqual({ done: 1, total: 2, elapsedSecs: 30, tokensInput: null, costUsd: 0.75 })
+  })
 })
