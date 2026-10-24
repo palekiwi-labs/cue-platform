@@ -139,9 +139,9 @@ interface SessionsView {
 type View = ContextsView | ArtifactsView | SessionsView
 
 const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
-  all: "pinned",
   pinned: "labeled",
   labeled: "all",
+  all: "pinned",
 }
 
 const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
@@ -266,7 +266,7 @@ export class CueBrowser implements Component {
 
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
-      kind: "sessions", context, subset: "all", contexts: [], sessions: [], query: "",
+      kind: "sessions", context, subset: "pinned", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
     }
     this.views.push(v)
@@ -835,7 +835,7 @@ export class CueBrowser implements Component {
         "tab pinned/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete",
-        "alt+z fold", "tab all/pinned/labeled", "ctrl+h address", "ctrl+y path", "alt+p preview",
+        "alt+z fold", "tab pinned/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
