@@ -56,13 +56,11 @@ export interface MonitorDeps {
 }
 
 /**
- * The note a session started from a run carries: where the run's review
- * artifacts live, and that it should wait rather than start analysing.
+ * The note a session started from a run carries: the run id.
  */
 export function runSessionNote(r: RunRow): string {
   const id = r.jobId ?? r.runId
-  return `This session was started from cue-agent run ${id}. Its review artifacts, if any, ` +
-    `are under review/${id}/ in this context. Do not start an analysis; wait for instructions.`
+  return `This session was started from cue-agent run ${id}`
 }
 
 export type Target = "here" | "tmux"
