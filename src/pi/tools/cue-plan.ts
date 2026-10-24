@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
-import { contextFlag, dirFlag, storeFlag } from "../lib/cue-args"
+import { contextFlag, dirFlag, provenanceFlags, storeFlag } from "../lib/cue-args"
 import { runCue } from "../lib/cue-exec"
 import { frontmatterFlags } from "../lib/frontmatter"
 import { withTempFile } from "../lib/temp"
@@ -78,6 +78,7 @@ export function cuePlanTool(pi: ExtensionAPI): ToolDefinition<typeof parameters>
           ...dirFlag(args.dir, ctx.cwd),
           ...storeFlag(args.store),
           ...contextFlag(args.context),
+          ...provenanceFlags(ctx.sessionManager.getSessionId()),
           ...frontmatterFlags(frontmatter),
         ]
         const output = await runCue(

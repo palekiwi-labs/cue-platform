@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path"
 import { homedir } from "node:os"
 import { Type } from "typebox"
 import { diffFilename, resolveBase } from "../lib/branch-diff-helpers"
+import { provenanceFlags } from "../lib/cue-args"
 import { runCue } from "../lib/cue-exec"
 import { withTempFile } from "../lib/temp"
 
@@ -127,7 +128,17 @@ export function saveBranchDiffTool(pi: ExtensionAPI): ToolDefinition<typeof para
       const output = await withTempFile(diffContent, "branch-diff", "diff", async (tempPath) =>
         runCue(
           pi,
-          ["add", "--type", "tmp", "--context", args.context, "--file", tempPath, filename],
+          [
+            "add",
+            "--type",
+            "tmp",
+            "--context",
+            args.context,
+            ...provenanceFlags(ctx.sessionManager.getSessionId()),
+            "--file",
+            tempPath,
+            filename,
+          ],
           targetDir,
         ),
       )
