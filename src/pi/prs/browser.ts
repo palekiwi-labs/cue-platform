@@ -45,6 +45,16 @@ export interface PrDeps {
   orgs: string[]
   /** View to open in. */
   view: View
+  /** Check a PR out in the repo root or its own worktree; the outcome. */
+  checkout(pr: Pr, where: CheckoutTarget): Promise<Outcome>
+}
+
+export type CheckoutTarget = "root" | "worktree"
+
+/** Result of an action, shown in the footer. */
+export interface Outcome {
+  ok: boolean
+  text: string
 }
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
@@ -205,12 +215,37 @@ export class PrBrowser implements Component {
   }
 
   /** Hook for action keys; true when the key was consumed. */
-  protected handleAction(_data: string): boolean {
-    return false
+  protected handleAction(data: string): boolean {
+    const where = matchesKey(data, "alt+o") ? "root" : matchesKey(data, "alt+w") ? "worktree" : undefined
+    if (!where) return false
+    this.onCheckout(where)
+    return true
+  }
+
+  protected busy = false
+
+  protected async run(label: string, action: () => Promise<Outcome>): Promise<void> {
+    if (this.busy) return
+    this.busy = true
+    this.notice(`${label}…`, "dim")
+    try {
+      const o = await action()
+      this.notice(o.text, o.ok ? "success" : "error")
+    } catch (e) {
+      this.notice(e instanceof Error ? e.message : String(e), "error")
+    } finally {
+      this.busy = false
+    }
+  }
+
+  private onCheckout(where: CheckoutTarget): void {
+    const pr = this.actionablePr()
+    if (!pr) return
+    void this.run(`checking out #${pr.number} (${where})`, () => this.deps.checkout(pr, where))
   }
 
   protected helpHints(): string[] {
-    return ["tab preset", "alt+v view", "alt+z fold", "ctrl+r refresh", "esc close"]
+    return ["tab preset", "alt+v view", "alt+z fold", "alt+o checkout", "alt+w worktree", "ctrl+r refresh", "esc close"]
   }
 
   // ---- rendering -------------------------------------------------------

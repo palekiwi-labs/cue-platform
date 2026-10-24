@@ -1,6 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { type Loaded, PrBrowser, type PrDeps } from "../prs/browser"
-import { PAGE, parseSearch, repoOfRemote, resolveScope, SEARCH_QUERY, searchString, type View } from "../prs/model"
+import { join } from "node:path"
+import { type CheckoutTarget, type Loaded, type Outcome, PrBrowser, type PrDeps } from "../prs/browser"
+import {
+  PAGE,
+  parseSearch,
+  type Pr,
+  repoOfRemote,
+  resolveScope,
+  SEARCH_QUERY,
+  searchString,
+  type View,
+  worktreeFor,
+} from "../prs/model"
 
 /** Open the GitHub PR browser. */
 export const PRS_SHORTCUT = "alt+g"
@@ -35,6 +46,38 @@ async function search(exec: Exec, cwd: string, view: View, scopes: string[]): Pr
   return loaded
 }
 
+const failed = (what: string, r: { stdout: string; stderr: string; code: number }): Outcome => ({
+  ok: false,
+  text: `${what}: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`,
+})
+
+/**
+ * Root: `gh pr checkout`, refused on a dirty tree. Worktree: reuse the one
+ * holding the branch, else fetch the PR head into a local branch and add
+ * `worktrees/<headRef>` under the repo root.
+ */
+async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget): Promise<Outcome> {
+  const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd })
+  if (top.code !== 0) return failed("not a git checkout", top)
+  const root = top.stdout.trim()
+  if (where === "root") {
+    const st = await exec("git", ["status", "--porcelain"], { cwd: root })
+    if (st.code !== 0) return failed("git status", st)
+    if (st.stdout.trim()) return { ok: false, text: `${root} has uncommitted changes; not checking out #${pr.number}` }
+    const r = await exec("gh", ["pr", "checkout", String(pr.number)], { cwd: root })
+    return r.code === 0 ? { ok: true, text: `checked out #${pr.number} (${pr.headRef}) in ${root}` } : failed("gh pr checkout", r)
+  }
+  const list = await exec("git", ["worktree", "list", "--porcelain"], { cwd: root })
+  if (list.code !== 0) return failed("git worktree list", list)
+  const existing = worktreeFor(list.stdout, pr.headRef)
+  if (existing) return { ok: true, text: `${pr.headRef} is already checked out in ${existing}` }
+  const fetch = await exec("git", ["fetch", "origin", `pull/${pr.number}/head:${pr.headRef}`], { cwd: root })
+  if (fetch.code !== 0) return failed("git fetch", fetch)
+  const path = join(root, "worktrees", pr.headRef)
+  const add = await exec("git", ["worktree", "add", path, pr.headRef], { cwd: root })
+  return add.code === 0 ? { ok: true, text: `worktree for #${pr.number} at ${path}` } : failed("git worktree add", add)
+}
+
 async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   const exec: Exec = (cmd, args, opts) => pi.exec(cmd, args, opts)
@@ -50,6 +93,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     localRepo,
     orgs,
     view,
+    checkout: (pr, where) => checkout(exec, cwd, pr, where),
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
