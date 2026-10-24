@@ -28,6 +28,7 @@ const pr = (o: Partial<Pr>): Pr => ({
   headRef: "h",
   defaultBranch: "master",
   reviewers: [],
+  labels: [],
   ...o,
 })
 

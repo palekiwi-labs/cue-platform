@@ -102,12 +102,6 @@ const checksTone = (c: Pr["checks"]): Tone =>
 const checksGlyph = (c: Pr["checks"]): string =>
   c === "SUCCESS" ? "✓" : c === "FAILURE" || c === "ERROR" ? "✗" : c ? "●" : " "
 
-const reviewTone = (d: Pr["reviewDecision"]): Tone =>
-  d === "APPROVED" ? "success" : d === "CHANGES_REQUESTED" ? "error" : d ? "warning" : "dim"
-
-const reviewLabel = (d: Pr["reviewDecision"]): string =>
-  d === "APPROVED" ? "approved" : d === "CHANGES_REQUESTED" ? "changes" : d ? "review" : ""
-
 const rowId = (r: Row): string => (r.kind === "repo" ? `repo:${r.repo}` : `pr:${r.pr.repo}#${r.pr.number}`)
 
 export class PrBrowser implements Component {
@@ -449,12 +443,11 @@ export class PrBrowser implements Component {
     const numW = Math.max(3, ...rows.map((r) => (r.kind === "pr" ? `#${r.pr.number}`.length : 0)))
     const authorW = Math.min(16, Math.max(6, ...rows.map((r) => (r.kind === "pr" ? r.pr.author.length : 0))))
     const ageW = 4
-    const reviewW = 8
     const indentBase = this.view === "org" ? 2 : 0
     const lines: string[] = []
     let selLine = 0
     for (const r of rows) {
-      const line = r.kind === "repo" ? this.repoLine(r, width) : this.prLine(r.pr, r.depth, indentBase, d.viewer, { numW, authorW, ageW, reviewW }, width)
+      const line = r.kind === "repo" ? this.repoLine(r, width) : this.prLine(r.pr, r.depth, indentBase, d.viewer, { numW, authorW, ageW }, width)
       if (rowId(r) === this.selectedId) {
         selLine = lines.length
         lines.push(t.bg("selectedBg", pad(line, width)))
@@ -478,7 +471,7 @@ export class PrBrowser implements Component {
     depth: number,
     indentBase: number,
     viewer: string,
-    w: { numW: number; authorW: number; ageW: number; reviewW: number },
+    w: { numW: number; authorW: number; ageW: number },
     width: number,
   ): string {
     const t = this.theme
@@ -486,13 +479,14 @@ export class PrBrowser implements Component {
     const state = pr.isDraft ? t.fg("muted", "◌") : t.fg("success", "●")
     const num = t.fg(pr.isDraft ? "muted" : "success", pad(`#${pr.number}`, w.numW))
     const checks = t.fg(checksTone(pr.checks), checksGlyph(pr.checks))
-    const review = t.fg(reviewTone(pr.reviewDecision), pad(reviewLabel(pr.reviewDecision), w.reviewW))
     const me = reviewRequested(pr, viewer) ? t.fg("warning", "◆") : " "
     const age = t.fg("muted", fmtAge(pr.createdAt).padStart(w.ageW))
     const author = t.fg("muted", pad(pr.author, w.authorW))
     const title = pr.isDraft ? t.fg("muted", pr.title) : pr.title
+    const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
+    const branch = t.fg("dim", `(${pr.headRef})`)
     return pad(
-      [indent + state, num, checks, review, me, age, author, title, t.fg("dim", pr.headRef)].join(" "),
+      [indent + state, num, checks, me, age, author, title, branch + labels].join(" "),
       width,
     )
   }

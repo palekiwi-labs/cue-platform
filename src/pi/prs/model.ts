@@ -31,6 +31,7 @@ export interface Pr {
   defaultBranch: string
   /** Logins of users whose review is requested. */
   reviewers: string[]
+  labels: string[]
 }
 
 export interface SearchResult {
@@ -50,6 +51,7 @@ export const SEARCH_QUERY = `query($q: String!) {
       number title url isDraft createdAt reviewDecision baseRefName headRefName
       author { login }
       repository { nameWithOwner defaultBranchRef { name } }
+      labels(first: 10) { nodes { name } }
       reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     } }
@@ -86,6 +88,9 @@ export function parseSearch(json: string): SearchResult {
         reviewers: (n.reviewRequests?.nodes ?? [])
           .map((r: any) => r?.requestedReviewer?.login)
           .filter((l: unknown): l is string => typeof l === "string"),
+        labels: (n.labels?.nodes ?? [])
+          .map((l: any) => l?.name)
+          .filter((s: unknown): s is string => typeof s === "string"),
       })),
   }
 }
@@ -193,7 +198,8 @@ export function slugify(name: string): string {
 export const reviewContext = (pr: Pr): string => `review-${slugify(pr.headRef)}`
 
 /** Text the fuzzy filter matches against. */
-export const haystack = (pr: Pr): string => `${pr.repo} #${pr.number} ${pr.title} ${pr.author} ${pr.headRef}`
+export const haystack = (pr: Pr): string =>
+  `${pr.repo} #${pr.number} ${pr.title} ${pr.author} ${pr.headRef} ${pr.labels.join(" ")}`
 
 /**
  * Worktree already holding `branch`, from `git worktree list --porcelain`.
