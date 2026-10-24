@@ -65,6 +65,7 @@ export class AgentMonitor implements Component {
   private subset: Subset = "running"
   private pane: Pane = "prompt"
   private stacked = false
+  private preview = true
   private selectedId: string | undefined
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
@@ -173,6 +174,10 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "alt+p")) {
+      this.preview = !this.preview
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "alt+l")) {
       this.stacked = !this.stacked
       return this.tui.requestRender()
@@ -262,6 +267,7 @@ export class AgentMonitor implements Component {
       "ctrl+t target",
       `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
       "ctrl+r refresh",
+      `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+l layout",
       "ctrl+d/u scroll",
       "esc close",
@@ -272,6 +278,11 @@ export class AgentMonitor implements Component {
   private bodyLines(width: number, body: number): string[] {
     const t = this.theme
     const out: string[] = []
+    if (!this.preview) {
+      const list = this.listLines(width, body)
+      for (let i = 0; i < body; i++) out.push(pad(list[i] ?? "", width))
+      return out
+    }
     if (this.stacked) {
       const listH = Math.max(3, Math.floor((body - 1) * 0.4))
       const list = this.listLines(width, listH)
