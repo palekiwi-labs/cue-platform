@@ -935,10 +935,9 @@ export class CueBrowser implements Component {
         ? t.fg(MODE_COLOR[r.mode] ?? "muted", pad(r.mode.toUpperCase(), 8))
         : t.fg("dim", pad("—", 8))
       const age = t.fg("muted", relativeAge(r.lastLoggedAt, now).padStart(4))
-      const kind = t.fg("dim", pad(r.kind ?? "", 9))
       // Cross-repo lists show the scope in place of the title, as cue.nvim does.
       const rest = mixed ? t.fg("muted", r.scope) : t.fg("muted", r.title)
-      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${kind} ${rest}`
+      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${rest}`
       line = pad(line, width)
       out.push(sel ? t.bg("selectedBg", line) : line)
     }
