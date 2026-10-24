@@ -1,6 +1,6 @@
 /**
- * Full-screen cue browser: a list of contexts or artifacts on the left,
- * a markdown preview of the selection on the right. One component holds
+ * Full-screen cue browser: a list of contexts, or a list of artifacts
+ * with an optional markdown preview beside or below it. One component holds
  * a stack of views, so drilling from a context into its artifacts and
  * stepping back keeps the earlier view's filter and selection.
  *
@@ -22,8 +22,11 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
+  artifactAddress,
+  artifactFilename,
   type ArtifactRow,
   type ContextRow,
+  CREATE_TYPES,
   isFinished,
   relativeAge,
   sortArtifacts,
@@ -47,6 +50,32 @@ export interface BrowserDeps {
   editFile(path: string): Promise<void>
   /** Open a file in a new tmux window; returns an error message on failure. */
   openInTmux(path: string): string | undefined
+  /** Copy text to the system clipboard. */
+  copy(text: string): Promise<void>
+  /** Create an artifact; resolves to its path or an error message. */
+  create(
+    address: string,
+    type: string,
+    filename: string,
+  ): Promise<{ path: string } | { error: string }>
+  /**
+   * Start a fresh pi session with the context injected, here or in a
+   * new tmux window; returns an error message on failure.
+   */
+  newSession(address: string, target: Target): string | undefined
+}
+
+/** Where open and new-session actions run. */
+export type Target = "here" | "tmux"
+
+/** Creation wizard: pick a type, then name the file. */
+interface Wizard {
+  context: ContextRef
+  step: "type" | "name"
+  typeIndex: number
+  asPath: boolean
+  input: Input
+  error: string
 }
 
 export type BrowserStart =
@@ -119,6 +148,10 @@ export class CueBrowser implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private busy = false
+  private target: Target = "here"
+  private showPreview = true
+  private stacked = false
+  private wizard: Wizard | undefined
 
   constructor(
     private tui: TUI,
@@ -209,10 +242,36 @@ export class CueBrowser implements Component {
     return this.selectedContext()?.path ?? this.selectedArtifact()?.path
   }
 
+  private selectedAddress(): string | undefined {
+    const c = this.selectedContext()
+    if (c) return c.address
+    const v = this.view
+    const a = this.selectedArtifact()
+    return a && v.kind === "artifacts" ? artifactAddress(v.context.address, a.path) : undefined
+  }
+
+  /** The context actions apply to: the highlighted one, or the view's. */
+  private actionContext(): ContextRef | undefined {
+    const c = this.selectedContext()
+    if (c) return { address: c.address, slug: c.slug }
+    const v = this.view
+    return v.kind === "artifacts" ? v.context : undefined
+  }
+
+  private previewShown(): boolean {
+    return this.view.kind === "artifacts" && this.showPreview
+  }
+
+  private notify(msg: string): void {
+    this.status = msg
+    this.tui.requestRender()
+  }
+
   // ---- input -----------------------------------------------------------
 
   handleInput(data: string): void {
     if (this.busy) return
+    if (this.wizard) return this.wizardInput(this.wizard, data)
     const v = this.view
     const move = (delta: number) => {
       const n = this.shownCount()
@@ -227,10 +286,16 @@ export class CueBrowser implements Component {
     if (this.kb.matches(data, "tui.select.down")) return move(1)
     if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
     if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
-    if (matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-    if (matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
     if (matchesKey(data, "enter")) return void this.onEnter()
-    if (matchesKey(data, "ctrl+t")) return this.onTmux()
+    if (matchesKey(data, "ctrl+o")) return void this.onOpen()
+    if (matchesKey(data, "ctrl+t")) {
+      this.target = this.target === "here" ? "tmux" : "here"
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
+    if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
+    if (matchesKey(data, "ctrl+n")) return this.startWizard()
+    if (matchesKey(data, "ctrl+s")) return this.onNewSession()
     if (v.kind === "contexts") {
       if (matchesKey(data, "tab")) {
         v.pinnedOnly = !v.pinnedOnly
@@ -238,7 +303,17 @@ export class CueBrowser implements Component {
         return void this.loadContexts(v)
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
-      if (matchesKey(data, "ctrl+o")) return void this.onEdit()
+    } else {
+      if (matchesKey(data, "alt+p")) {
+        this.showPreview = !this.showPreview
+        return this.refresh()
+      }
+      if (matchesKey(data, "alt+l")) {
+        this.stacked = !this.stacked
+        return this.refresh()
+      }
+      if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
+      if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
     }
 
     const before = this.input.getValue()
@@ -275,12 +350,12 @@ export class CueBrowser implements Component {
       this.pushArtifacts({ address: c.address, slug: c.slug })
       return
     }
-    await this.onEdit()
+    await this.onOpen()
   }
 
-  private async onEdit(): Promise<void> {
-    const path = this.selectedPath()
+  private async onOpen(path = this.selectedPath()): Promise<void> {
     if (!path) return
+    if (this.target === "tmux") return this.onTmux(path)
     this.busy = true
     try {
       await this.deps.editFile(path)
@@ -292,12 +367,82 @@ export class CueBrowser implements Component {
     else this.refresh()
   }
 
-  private onTmux(): void {
-    const path = this.selectedPath()
-    if (!path) return
+  private onTmux(path: string): void {
     const err = this.deps.openInTmux(path)
-    this.status = err ?? `opened ${path.split("/").slice(-2).join("/")} in tmux`
+    this.notify(err ?? `opened ${path.split("/").slice(-2).join("/")} in tmux`)
+  }
+
+  private async onCopy(what: "address" | "path"): Promise<void> {
+    const text = what === "address" ? this.selectedAddress() : this.selectedPath()
+    if (!text) return
+    try {
+      await this.deps.copy(text)
+      this.notify(`copied ${text}`)
+    } catch (e) {
+      this.notify(`copy failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  private onNewSession(): void {
+    const c = this.actionContext()
+    if (!c) return
+    const err = this.deps.newSession(c.address, this.target)
+    if (err) return this.notify(err)
+    if (this.target === "here") return this.done()
+    this.notify(`started a session for ${c.slug} in tmux`)
+  }
+
+  // ---- creation wizard -------------------------------------------------
+
+  private startWizard(): void {
+    const context = this.actionContext()
+    if (!context) return
+    const input = new Input()
+    input.focused = true
+    this.wizard = { context, step: "type", typeIndex: 0, asPath: false, input, error: "" }
+    this.status = ""
     this.tui.requestRender()
+  }
+
+  private wizardInput(w: Wizard, data: string): void {
+    if (matchesKey(data, "escape")) {
+      if (w.step === "name") w.step = "type"
+      else this.wizard = undefined
+      return this.tui.requestRender()
+    }
+    if (w.step === "type") {
+      const n = CREATE_TYPES.length
+      if (this.kb.matches(data, "tui.select.up")) w.typeIndex = (w.typeIndex + n - 1) % n
+      else if (this.kb.matches(data, "tui.select.down")) w.typeIndex = (w.typeIndex + 1) % n
+      else if (matchesKey(data, "enter")) w.step = "name"
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "tab")) w.asPath = !w.asPath
+    else if (matchesKey(data, "enter")) return void this.wizardCreate(w)
+    else w.input.handleInput(data)
+    w.error = ""
+    this.tui.requestRender()
+  }
+
+  private async wizardCreate(w: Wizard): Promise<void> {
+    const filename = artifactFilename(w.input.getValue(), w.asPath)
+    if (!filename) {
+      w.error = "enter a name"
+      return this.tui.requestRender()
+    }
+    const type = CREATE_TYPES[w.typeIndex]!
+    this.busy = true
+    const res = await this.deps.create(w.context.address, type, filename)
+    this.busy = false
+    if ("error" in res) {
+      w.error = res.error
+      return this.tui.requestRender()
+    }
+    this.wizard = undefined
+    this.notify(`created ${type}/${filename}`)
+    const v = this.view
+    if (v.kind === "artifacts" && v.context.address === w.context.address) void this.loadArtifacts(v)
+    await this.onOpen(res.path)
   }
 
   private async onLink(): Promise<void> {
@@ -315,7 +460,7 @@ export class CueBrowser implements Component {
 
   /** Rows available to the list and preview. */
   private bodyHeight(): number {
-    return this.height() - 4
+    return this.height() - 5
   }
 
   invalidate(): void {
@@ -329,25 +474,68 @@ export class CueBrowser implements Component {
     const height = this.height()
     const body = this.bodyHeight()
 
-    const listWidth = Math.max(40, Math.min(width - 30, Math.floor(width * 0.55)))
-    const previewWidth = Math.max(10, width - listWidth - 3)
-
-    const header = this.headerLine(width)
-    const query = this.input.render(width)[0] ?? ""
     const rule = t.fg("border", "─".repeat(width))
+    const lines = [this.headerLine(width), this.helpLine(width)]
 
-    const list = v.kind === "contexts"
-      ? this.contextLines(v, listWidth, body)
-      : this.artifactLines(v, listWidth, body)
-    const preview = this.previewLines(previewWidth, body)
-
-    const sep = t.fg("border", " │ ")
-    const lines = [header, query, rule]
-    for (let i = 0; i < body; i++) {
-      lines.push(pad(list[i] ?? "", listWidth) + sep + pad(preview[i] ?? "", previewWidth))
+    if (this.wizard) {
+      lines.push(rule, ...this.wizardLines(this.wizard, width, body + 1))
+    } else {
+      lines.push(this.input.render(width)[0] ?? "", rule)
+      lines.push(...this.bodyLines(v, width, body))
     }
-    lines.push(this.footerLine(width))
+    while (lines.length < height - 1) lines.push("")
+    lines.push(this.status ? t.fg("warning", this.status) : "")
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
+  }
+
+  private bodyLines(v: View, width: number, body: number): string[] {
+    const t = this.theme
+    const listFor = (w: number, h: number) => v.kind === "contexts"
+      ? this.contextLines(v, w, h)
+      : this.artifactLines(v, w, h)
+    const out: string[] = []
+    if (!this.previewShown()) {
+      const list = listFor(width, body)
+      for (let i = 0; i < body; i++) out.push(pad(list[i] ?? "", width))
+    } else if (this.stacked) {
+      const listH = Math.max(3, Math.floor((body - 1) * 0.4))
+      const previewH = body - listH - 1
+      const list = listFor(width, listH)
+      for (let i = 0; i < listH; i++) out.push(pad(list[i] ?? "", width))
+      out.push(t.fg("border", "─".repeat(width)))
+      out.push(...this.previewLines(width, previewH))
+    } else {
+      const listWidth = Math.max(40, Math.min(width - 30, Math.floor(width * 0.55)))
+      const previewWidth = Math.max(10, width - listWidth - 3)
+      const list = listFor(listWidth, body)
+      const preview = this.previewLines(previewWidth, body)
+      const sep = t.fg("border", " │ ")
+      for (let i = 0; i < body; i++) {
+        out.push(pad(list[i] ?? "", listWidth) + sep + pad(preview[i] ?? "", previewWidth))
+      }
+    }
+    return out
+  }
+
+  private wizardLines(w: Wizard, width: number, height: number): string[] {
+    const t = this.theme
+    const out = [t.fg("accent", t.bold(`New artifact in ${w.context.address}`)), ""]
+    if (w.step === "type") {
+      out.push(t.fg("muted", "type:"))
+      CREATE_TYPES.forEach((type, i) => {
+        const line = pad(`  ${type}`, width)
+        out.push(i === w.typeIndex ? t.bg("selectedBg", line) : line)
+      })
+    } else {
+      const type = CREATE_TYPES[w.typeIndex]!
+      out.push(t.fg("muted", `type: ${type}`))
+      out.push(t.fg("muted", w.asPath ? "path (nesting allowed):" : "slug:"))
+      out.push(w.input.render(width)[0] ?? "")
+      const name = artifactFilename(w.input.getValue(), w.asPath)
+      if (name) out.push(t.fg("dim", `  -> ${type}/${name}`))
+      if (w.error) out.push(t.fg("error", w.error))
+    }
+    return out.slice(0, height)
   }
 
   private headerLine(width: number): string {
@@ -357,20 +545,30 @@ export class CueBrowser implements Component {
     const title = v.kind === "contexts"
       ? `Cue contexts ${t.fg("muted", v.pinnedOnly ? "(pinned)" : "(all)")}`
       : `Cue artifacts ${t.fg("muted", v.context.address)}`
-    const right = here ? t.fg("dim", `session: ${here}`) : t.fg("dim", "session: none")
+    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `target: ${this.target}`)
+    const right = target + t.fg("dim", `  session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title))
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
     return left + " ".repeat(gap) + right
   }
 
-  private footerLine(width: number): string {
-    const t = this.theme
+  private helpLine(width: number): string {
     const v = this.view
-    const hints = v.kind === "contexts"
-      ? ["enter artifacts", "ctrl+l link", "ctrl+o edit", "ctrl+t tmux", "tab pinned/all", "ctrl+d/u preview", "esc close"]
-      : ["enter edit", "ctrl+t tmux", "ctrl+d/u preview", this.views.length > 1 ? "esc back" : "esc close"]
-    const text = this.status ? t.fg("warning", this.status) + t.fg("dim", "  ") : ""
-    return truncateToWidth(text + t.fg("dim", hints.join(" • ")), width)
+    const esc = this.views.length > 1 ? "esc back" : "esc close"
+    let hints: string[]
+    if (this.wizard) {
+      hints = this.wizard.step === "type"
+        ? ["up/down type", "enter next", "esc cancel"]
+        : ["enter create", "tab slug/path", "esc back"]
+    } else if (v.kind === "contexts") {
+      hints = ["enter artifacts", "ctrl+o open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+        "ctrl+l link", "ctrl+h address", "ctrl+y path", "tab pinned/all", esc]
+    } else {
+      hints = ["enter open", "ctrl+o open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+        "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
+        ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
+    }
+    return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
   }
 
   /** Window of `count` rows keeping `selected` visible. */
@@ -399,7 +597,6 @@ export class CueBrowser implements Component {
       const r = rows[i]!
       const sel = i === v.selected
       const pin = r.pinned ? t.fg("warning", "*") : " "
-      const mark = r.address === here ? t.fg("accent", "●") : " "
       const name = (tree ? t.fg("dim", treePrefix(r)) : "") +
         (r.address === here ? t.fg("accent", r.slug) : r.slug)
       const mode = r.mode
@@ -409,7 +606,7 @@ export class CueBrowser implements Component {
       const kind = t.fg("dim", pad(r.kind ?? "", 9))
       const rest = t.fg("muted", r.title) +
         (r.scope !== home ? t.fg("dim", `  ${r.scope}`) : "")
-      let line = `${pin}${mark} ${pad(name, slugWidth)} ${mode} ${age} ${kind} ${rest}`
+      let line = `${pin} ${pad(name, slugWidth)} ${mode} ${kind} ${age}  ${rest}`
       line = pad(line, width)
       out.push(sel ? t.bg("selectedBg", line) : line)
     }
