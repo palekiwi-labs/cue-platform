@@ -207,6 +207,8 @@ export class CueBrowser implements Component {
   private confirmDelete: SessionRow | undefined
   /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
+  /** Sessions listed flat, newest first, instead of grouped by context. */
+  private sessionsFlat = false
 
   constructor(
     private tui: TUI,
@@ -393,6 +395,13 @@ export class CueBrowser implements Component {
       return flat(v.query.trim() === "" ? labeled : this.matchSessions(v, labeled))
     }
     const orphans = v.subset === "all" && !v.context
+    if (this.sessionsFlat && v.query.trim() === "") {
+      // Newest first across contexts; recent keeps the window by session time.
+      const since = this.now() - this.recencyDays * 86400
+      const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
+        .flatMap((r) => (r.kind === "session" ? [r.session] : []))
+      return flat(v.subset === "recent" ? pool.filter((s) => s.modified >= since) : pool)
+    }
     if (v.query.trim() === "") {
       return groupSessions(this.sessionContexts(v), v.sessions, this.sessionFolds ?? new Set(), orphans)
     }
@@ -543,6 +552,12 @@ export class CueBrowser implements Component {
         }
         if (matchesKey(data, "ctrl+l")) return void this.onLink()
         if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
+        if (matchesKey(data, "alt+t")) {
+          this.sessionsFlat = !this.sessionsFlat
+          v.selected = 0
+          this.previewScroll = this.previewStart()
+          return this.refresh()
+        }
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
       }
@@ -726,7 +741,7 @@ export class CueBrowser implements Component {
   /** Fold or unfold the sessions of the row's context. */
   private onFoldSessions(v: SessionsView): void {
     const r = this.selectedSessionRow()
-    if (!r || v.query.trim() !== "" || v.subset === "labeled" || !this.sessionFolds) return
+    if (!r || v.query.trim() !== "" || v.subset === "labeled" || this.sessionsFlat || !this.sessionFolds) return
     const address = r.context.address
     if (this.sessionFolds.has(address)) this.sessionFolds.delete(address)
     else this.sessionFolds.add(address)
@@ -895,7 +910,7 @@ export class CueBrowser implements Component {
     const title = v.kind === "contexts"
       ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset})${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${this.sessionsFlat && v.subset !== "labeled" ? ", flat" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
@@ -918,7 +933,7 @@ export class CueBrowser implements Component {
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
-        "alt+z fold", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
+        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
@@ -979,7 +994,7 @@ export class CueBrowser implements Component {
     const now = Math.floor(Date.now() / 1000)
     const here = this.deps.sessionAddress()
     const current = this.deps.currentSession()
-    const flat = v.subset === "labeled" || v.query.trim() !== ""
+    const flat = v.subset === "labeled" || this.sessionsFlat || v.query.trim() !== ""
     const right = (s: SessionRow | undefined) => t.fg("muted",
       `${(s ? fmtTokens(s.tokens) : "").padStart(6)} ${(s ? relativeAge(s.modified, now) : "").padStart(4)}`)
     const label = (s: SessionRow) => (s.label ? " " + t.fg("error", `[${truncateToWidth(s.label, 12, "…")}]`) : "")
