@@ -4,6 +4,7 @@ import {
   displayGroups,
   fmtCost,
   fmtDuration,
+  fmtTokens,
   groupBatches,
   groupJobs,
   haystack,
@@ -97,6 +98,11 @@ describe("state", () => {
 })
 
 describe("labels and tokens", () => {
+  test("token counts fit six characters", () => {
+    expect([999, 1200, 999_949, 999_950, 1_234_567, 99_994_999, 123_456_789].map(fmtTokens))
+      .toEqual(["999", "1.2k", "999.9k", "1.00M", "1.23M", "99.99M", "123M"])
+  })
+
   test("reads run label, context, job and cache tokens from ps", () => {
     const [r] = parsePs(ps([{
       batch_id: "B", label: "batch", state: "running", job: { id: "J", label: "job" },

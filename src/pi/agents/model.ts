@@ -134,7 +134,11 @@ export function fmtDuration(secs: number | null): string {
 
 export function fmtTokens(n: number | null): string {
   if (n === null) return "-"
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
+  // At most six characters, the width of the monitor's token column.
+  if (n < 1000) return `${n}`
+  if (n < 999_950) return `${(n / 1000).toFixed(1)}k`
+  if (n < 99_995_000) return `${(n / 1_000_000).toFixed(2)}M`
+  return `${Math.round(n / 1_000_000)}M`
 }
 
 export function fmtCost(usd: number | null): string {
