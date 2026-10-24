@@ -382,7 +382,7 @@ export class AgentMonitor implements Component {
       return [t.fg("warning", this.subset === "running" ? "no live runs (tab: all)" : "no runs")]
     }
     this.selectedId = entries[this.selectedIndex(entries)]!.id
-    const toneColor = { live: "accent", ok: "success", bad: "error", dim: "dim" } as const
+    const toneColor = { live: "warning", ok: "success", bad: "error", dim: "dim" } as const
     // Fixed columns on the right, shared by headings and run lines.
     const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
       `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
