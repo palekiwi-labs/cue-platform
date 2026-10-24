@@ -114,20 +114,24 @@ export class AgentMonitor implements Component {
   }
 
   /**
-   * Runs to list, always in ps order (newest batch first, runs by
-   * position) so batches never interleave. The running subset keeps whole
-   * batches that still have a live run; the query keeps matching runs.
+   * Runs to list in display order: jobs, stages, runs. The running subset
+   * keeps whole jobs that still have a live run; the query keeps matching
+   * runs.
    */
   private shown(): RunRow[] {
+    const jobOf = (r: RunRow) => r.jobId ?? r.batchId
     let base = this.rows
     if (this.subset === "running") {
-      const live = new Set(this.rows.filter(isLive).map((r) => r.batchId))
-      base = base.filter((r) => live.has(r.batchId))
+      const live = new Set(this.rows.filter(isLive).map(jobOf))
+      base = base.filter((r) => live.has(jobOf(r)))
     }
     const q = this.input.getValue().trim()
-    if (!q) return base
-    const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r)).map((r) => r.runId))
-    return base.filter((r) => hit.has(r.runId))
+    if (q) {
+      const hit = new Set(fuzzyFilter(base, q, (r) => haystack(r)).map((r) => r.runId))
+      base = base.filter((r) => hit.has(r.runId))
+    }
+    // Display order, so moving the selection walks the list top to bottom.
+    return groupJobs(base).flatMap((j) => j.batches.flatMap((b) => b.runs))
   }
 
   /** Index of the selected run in `rows`, following it across refreshes. */
