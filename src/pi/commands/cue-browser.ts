@@ -10,7 +10,6 @@ import { type BrowserDeps, type BrowserStart, CueBrowser, type Target } from "..
 import { parseArtifacts, parseContextTree } from "../browser/model"
 import { currentContext, slugOf } from "../lib/current-context"
 import { cueBestEffort } from "./common"
-import { parseAddress } from "./context-inject"
 import { linkContext } from "./context-pins"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
@@ -55,12 +54,10 @@ function openInTmux(path: string): string | undefined {
   return tmuxWindow(name, dirname(path), `${editorCommand()} ${shellQuote(path)}`)
 }
 
-/** Command that starts a fresh session bound to a context, here. */
-export const SESSION_NEW_COMMAND = "cue:session:new"
-
 /**
- * Start a fresh pi session for a context. Here: dispatch
- * /cue:session:new, which needs a command context for newSession.
+ * Start a fresh pi session for a context. Here: shortcut contexts
+ * cannot call newSession, so dispatch the resume picker's hidden
+ * /resume-open command (extensions/tmux-resume.ts), as it does itself.
  * In tmux: a new window running pi with the inject command as its
  * first message.
  */
@@ -75,7 +72,7 @@ function newSession(
     return tmuxWindow(slugOf(address) || "pi", ctx.cwd, `pi ${shellQuote(inject)}`)
   }
   if (!ctx.isIdle()) return "wait for the agent to finish to start a session here"
-  pi.sendUserMessage(`/${SESSION_NEW_COMMAND} ${address}`, { expandPromptTemplates: true })
+  pi.sendUserMessage(`/resume-open new ${address}`, { expandPromptTemplates: true })
   return undefined
 }
 
@@ -179,25 +176,6 @@ async function openArtifacts(
 
 /** Register the browser commands and their shortcuts. */
 export function registerCueBrowser(pi: ExtensionAPI): void {
-  pi.registerCommand(SESSION_NEW_COMMAND, {
-    description: "Start a fresh session with a cue context injected <org>/<repo>/<ctx>",
-    handler: async (args, ctx) => {
-      const address = parseAddress(args)
-      if (!address) {
-        ctx.ui.notify(`cue: usage /${SESSION_NEW_COMMAND} <org>/<repo>/<context>`, "warning")
-        return
-      }
-      // The old pi is stale once the session is replaced: inject from
-      // the new session by dispatching the inject command there.
-      await ctx.newSession({
-        withSession: async (next) => {
-          await next.sendUserMessage(`/cue:context:inject ${address}`, {
-            expandPromptTemplates: true,
-          })
-        },
-      })
-    },
-  })
   pi.registerCommand("cue:browse", {
     description: "Browse cue contexts (full screen)",
     handler: async (_args, ctx) => openBrowser(pi, ctx, { view: "contexts" }),
