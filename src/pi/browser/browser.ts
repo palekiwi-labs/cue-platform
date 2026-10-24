@@ -31,7 +31,7 @@ import {
   fmtWhen,
   kindLabel,
 } from "./activity"
-import { type LogEntry, logMarkers, logPreview, tracePath } from "./log"
+import { type LogEntry, logPreview, tracePath } from "./log"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -1248,10 +1248,8 @@ export class CueBrowser implements Component {
     for (let i = a; i < b; i++) {
       const e = rows[i]!
       const when = pad(fmtWhen(e.timestamp, now), 11)
-      const marks = logMarkers(e)
-        .map((m) => (m.on ? t.fg("accent", m.text) : t.fg("dim", m.text)))
-        .join(" ")
-      const line = pad(`${when} ${marks}  ${e.title}`, width)
+      const trace = e.trace ? t.fg("accent", "trace") : "     "
+      const line = pad(`${when} ${trace} ${e.title}`, width)
       out.push(i === v.selected ? t.bg("selectedBg", line) : line)
     }
     return out

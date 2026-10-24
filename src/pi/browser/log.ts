@@ -52,26 +52,6 @@ export function sortLog(entries: readonly LogEntry[]): LogEntry[] {
   return [...entries].sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))
 }
 
-export interface Marker {
-  text: string
-  /** False when the count is zero or the trace absent; drawn dim. */
-  on: boolean
-}
-
-/** Row markers: found/decided/open counts and a trace mark. */
-export function logMarkers(e: LogEntry): Marker[] {
-  const count = (letter: string, n: number): Marker => ({
-    text: n === 0 ? `${letter}-` : `${letter}${n > 9 ? "+" : n}`,
-    on: n > 0,
-  })
-  return [
-    count("F", e.found.length),
-    count("D", e.decided.length),
-    count("O", e.open.length),
-    { text: e.trace ? "T" : "-", on: e.trace !== null },
-  ]
-}
-
 const section = (name: string, items: string[]): string =>
   items.length === 0 ? "" : `**${name}**\n\n${items.map((s) => `- ${s}`).join("\n")}\n\n`
 

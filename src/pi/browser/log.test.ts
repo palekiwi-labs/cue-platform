@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { logMarkers, logPreview, parseLog, sortLog, tracePath } from "./log"
+import { logPreview, parseLog, sortLog, tracePath } from "./log"
 
 const raw = (over: Record<string, unknown> = {}) => ({
   timestamp: 1792854954237737617,
@@ -36,16 +36,6 @@ describe("parseLog", () => {
 test("sortLog lists newest first", () => {
   const es = parseLog(JSON.stringify([raw({ timestamp: 1e18 }), raw({ timestamp: 2e18 })]))
   expect(sortLog(es).map((e) => e.timestamp)).toEqual([2e12, 1e12])
-})
-
-test("logMarkers counts sections and marks traces", () => {
-  const [e] = parseLog(JSON.stringify([raw({ found: Array(12).fill("f"), trace: "a/b/c/trace/x.md" })]))
-  expect(logMarkers(e!)).toEqual([
-    { text: "F+", on: true },
-    { text: "D1", on: true },
-    { text: "O-", on: false },
-    { text: "T", on: true },
-  ])
 })
 
 describe("logPreview", () => {
