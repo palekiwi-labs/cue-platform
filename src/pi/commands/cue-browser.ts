@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { readFile, unlink } from "node:fs/promises"
-import { dirname } from "node:path"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
 import {
   copyToClipboard,
   type ExtensionAPI,
@@ -112,6 +113,43 @@ function cwdScope(cwd: string): string | undefined {
   return cwdScopes.get(cwd)
 }
 
+/** Browser state across runs: per repository scope, e.g. the recency window. */
+const STATE_FILE = join(
+  process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+  "cue-platform",
+  "browser.json",
+)
+
+type BrowserState = Record<string, { recencyDays?: number }>
+
+function readState(): BrowserState {
+  try {
+    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8")) as unknown
+    return parsed && typeof parsed === "object" ? (parsed as BrowserState) : {}
+  } catch {
+    return {}
+  }
+}
+
+function storedRecencyDays(cwd: string): number | undefined {
+  const scope = cwdScope(cwd)
+  const days = scope ? readState()[scope]?.recencyDays : undefined
+  return typeof days === "number" ? days : undefined
+}
+
+function saveRecencyDays(cwd: string, days: number): void {
+  const scope = cwdScope(cwd)
+  if (!scope) return
+  const state = readState()
+  state[scope] = { ...state[scope], recencyDays: days }
+  try {
+    mkdirSync(dirname(STATE_FILE), { recursive: true })
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + "\n")
+  } catch {
+    // Best effort: the window just resets next time.
+  }
+}
+
 /** Every pi session in the scopes of this repository's context tree. */
 async function loadSessions(pi: ExtensionAPI, cwd: string): Promise<SessionRow[]> {
   const [tree, infos] = await Promise.all([
@@ -145,6 +183,14 @@ async function deleteSessionFile(path: string): Promise<string> {
   }
   await unlink(path)
   return "deleted"
+}
+
+/** Append a clearing label entry for every labeled entry in the file. */
+function clearSessionLabels(path: string): void {
+  const sm = SessionManager.open(path)
+  for (const e of sm.getEntries()) {
+    if (sm.getLabel(e.id) !== undefined) sm.appendLabelChange(e.id, undefined)
+  }
 }
 
 async function createArtifact(
@@ -194,13 +240,12 @@ export async function openBrowser(
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const deps: BrowserDeps = {
-        loadContexts: async (pinnedOnly) =>
+        loadContexts: async () =>
           parseContextTree(
-            await cueBestEffort(pi, ctx.cwd, [
-              "context", "tree", "--sort", "recency", "--json",
-              ...(pinnedOnly ? ["--pinned"] : []),
-            ]),
+            await cueBestEffort(pi, ctx.cwd, ["context", "tree", "--sort", "recency", "--json"]),
           ),
+        recencyDays: () => storedRecencyDays(ctx.cwd),
+        saveRecencyDays: (days) => saveRecencyDays(ctx.cwd, days),
         loadArtifacts: async (address) =>
           parseArtifacts(
             await cueBestEffort(pi, ctx.cwd, [
@@ -225,6 +270,7 @@ export async function openBrowser(
         currentSession: () => ctx.sessionManager.getSessionFile(),
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
+        clearLabels: clearSessionLabels,
       }
       return new CueBrowser(tui, theme, kb, deps, () => done(), start)
     },

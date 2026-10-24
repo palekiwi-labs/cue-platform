@@ -28,7 +28,11 @@ import {
   type ContextRow,
   collapseTree,
   CREATE_TYPES,
+  filterRecent,
   isFinished,
+  pinnedFirst,
+  RECENCY_STEPS,
+  recencyIndex,
   relativeAge,
   sortArtifacts,
   treePrefix,
@@ -50,7 +54,12 @@ export interface ContextRef {
 }
 
 export interface BrowserDeps {
-  loadContexts(pinnedOnly: boolean): Promise<ContextRow[]>
+  /** The whole context tree, in subtree recency order. */
+  loadContexts(): Promise<ContextRow[]>
+  /** Stored recency window in days for this repository, if any. */
+  recencyDays(): number | undefined
+  /** Remember the recency window for this repository. */
+  saveRecencyDays(days: number): void
   loadArtifacts(address: string): Promise<ArtifactRow[]>
   /** Context linked to this session, if any. */
   sessionAddress(): string | undefined
@@ -83,6 +92,8 @@ export interface BrowserDeps {
   resume(session: SessionRow, target: Target): string | undefined
   /** Delete a session file; resolves to what happened ("moved to trash"). */
   deleteSession(path: string): Promise<string>
+  /** Clear every label in a session file. */
+  clearLabels(path: string): void
 }
 
 /** Where open and new-session actions run. */
@@ -105,7 +116,8 @@ export type BrowserStart =
 
 interface ContextsView {
   kind: "contexts"
-  pinnedOnly: boolean
+  /** Recent contexts only, or the whole tree. */
+  recent: boolean
   rows: ContextRow[]
   query: string
   selected: number
@@ -121,8 +133,8 @@ interface ArtifactsView {
   loading: boolean
 }
 
-/** Which sessions tab lists: grouped all/pinned, or flat labeled. */
-type SessionSubset = "all" | "pinned" | "labeled"
+/** Which sessions tab lists: grouped recent/all, or flat labeled. */
+type SessionSubset = "all" | "recent" | "labeled"
 
 interface SessionsView {
   kind: "sessions"
@@ -139,9 +151,9 @@ interface SessionsView {
 type View = ContextsView | ArtifactsView | SessionsView
 
 const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
-  pinned: "labeled",
+  recent: "labeled",
   labeled: "all",
-  all: "pinned",
+  all: "recent",
 }
 
 const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
@@ -173,6 +185,7 @@ export function previewMarkdown(text: string): string {
 const pad = (s: string, w: number): string =>
   truncateToWidth(s, w, "…", true)
 
+
 export class CueBrowser implements Component {
   private views: View[] = []
   private input = new Input()
@@ -180,7 +193,7 @@ export class CueBrowser implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private busy = false
-  private target: Target = "here"
+  private target: Target = "tmux"
   private showPreview = true
   private stacked = false
   private wizard: Wizard | undefined
@@ -193,6 +206,10 @@ export class CueBrowser implements Component {
   /** Sessions loaded once per browser; deletes edit this copy. */
   private sessionsCache: Promise<SessionRow[]> | undefined
   private confirmDelete: SessionRow | undefined
+  /** Index into RECENCY_STEPS for the recent tabs. */
+  private recencyStep: number
+  /** Sessions listed flat, newest first, instead of grouped by context. */
+  private sessionsFlat = true
 
   constructor(
     private tui: TUI,
@@ -203,14 +220,9 @@ export class CueBrowser implements Component {
     start: BrowserStart,
   ) {
     this.input.focused = true
-    if (start.view === "contexts") {
-      this.pushContexts(true)
-      // Seed the width from the all view too, so the first tab keeps it.
-      void this.deps.loadContexts(false).then((rows) => {
-        this.growSlugWidth(rows)
-        this.tui.requestRender()
-      })
-    } else if (start.view === "sessions") this.pushSessions()
+    this.recencyStep = recencyIndex(deps.recencyDays())
+    if (start.view === "contexts") this.pushContexts(true)
+    else if (start.view === "sessions") this.pushSessions()
     else this.pushArtifacts(start.context)
   }
 
@@ -218,9 +230,13 @@ export class CueBrowser implements Component {
     return this.views[this.views.length - 1]!
   }
 
-  private pushContexts(pinnedOnly: boolean): void {
+  private get recencyDays(): number {
+    return RECENCY_STEPS[this.recencyStep]!
+  }
+
+  private pushContexts(recent: boolean): void {
     const v: ContextsView = {
-      kind: "contexts", pinnedOnly, rows: [], query: "", selected: 0, loading: true,
+      kind: "contexts", recent, rows: [], query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -242,13 +258,34 @@ export class CueBrowser implements Component {
    */
   private async loadContexts(v: ContextsView, keep?: string): Promise<void> {
     v.loading = true
-    v.rows = await this.deps.loadContexts(v.pinnedOnly)
+    v.rows = pinnedFirst(await this.deps.loadContexts())
     v.loading = false
     this.growSlugWidth(v.rows)
-    if (!(keep && this.selectContext(v, keep)) && v.query === "") {
-      const here = this.deps.sessionAddress()
-      if (here) this.selectContext(v, here)
+    if (!(keep && this.selectContext(v, keep)) && v.query === "") this.selectHere(v)
+    this.refresh()
+  }
+
+  private selectHere(v: ContextsView): void {
+    const here = this.deps.sessionAddress()
+    if (here) this.selectContext(v, here)
+  }
+
+  /** Widen (+1) or narrow (-1) the recency window, kept per repository. */
+  private stepRecency(delta: number): void {
+    const v = this.view
+    const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.recencyStep + delta))
+    if (next === this.recencyStep) return this.notify(`recency window at ${this.recencyDays}d`)
+    const keep = v.kind === "contexts" ? this.selectedContext()?.address : undefined
+    this.recencyStep = next
+    this.deps.saveRecencyDays(this.recencyDays)
+    if (v.kind === "contexts") {
+      if (!v.recent) v.recent = true
+      if (!(keep && this.selectContext(v, keep))) v.selected = 0
+    } else if (v.kind === "sessions") {
+      if (v.subset !== "recent") v.subset = "recent"
+      v.selected = 0
     }
+    this.notify(`recency window ${this.recencyDays}d`)
     this.refresh()
   }
 
@@ -267,8 +304,8 @@ export class CueBrowser implements Component {
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
       kind: "sessions", context,
-      // A context's own sessions may not be pinned, so that view starts on all.
-      subset: context ? "all" : "pinned", contexts: [], sessions: [], query: "",
+      // A context's own sessions may be old, so that view starts on all.
+      subset: context ? "all" : "recent", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
     }
     this.views.push(v)
@@ -280,7 +317,7 @@ export class CueBrowser implements Component {
     v.loading = true
     this.sessionsCache ??= this.deps.loadSessions()
     const [contexts, sessions] = await Promise.all([
-      this.deps.loadContexts(v.subset === "pinned"),
+      this.deps.loadContexts().then(pinnedFirst),
       this.sessionsCache,
     ])
     v.contexts = contexts
@@ -327,9 +364,27 @@ export class CueBrowser implements Component {
   // ---- filtering -------------------------------------------------------
 
   private shownContexts(v: ContextsView): ContextRow[] {
-    // A query searches the whole tree, collapsed or not.
-    if (v.query.trim() === "") return collapseTree(v.rows, this.collapsed).rows
+    // A query searches the whole tree, collapsed, old or not.
+    if (v.query.trim() === "") return collapseTree(this.treeRows(v), this.collapsed).rows
     return fuzzyFilter(v.rows, v.query, (r) => `${r.slug} ${r.title} ${r.scope}`)
+  }
+
+  private now(): number {
+    return Math.floor(Date.now() / 1000)
+  }
+
+  private treeRows(v: ContextsView): ContextRow[] {
+    return v.recent ? filterRecent(v.rows, this.now(), this.recencyDays) : v.rows
+  }
+
+  /** Contexts to group sessions under: recent ones count session activity too. */
+  private sessionContexts(v: SessionsView): ContextRow[] {
+    if (v.subset !== "recent") return v.contexts
+    const newest = new Map<string, number>()
+    for (const s of v.sessions) {
+      if (s.address && s.modified > (newest.get(s.address) ?? 0)) newest.set(s.address, s.modified)
+    }
+    return filterRecent(v.contexts, this.now(), this.recencyDays, newest)
   }
 
   private shownSessions(v: SessionsView): SessionListRow[] {
@@ -341,9 +396,18 @@ export class CueBrowser implements Component {
       return flat(v.query.trim() === "" ? labeled : this.matchSessions(v, labeled))
     }
     const orphans = v.subset === "all" && !v.context
-    if (v.query.trim() === "") return groupSessions(v.contexts, v.sessions, this.sessionFolds ?? new Set(), orphans)
+    if (this.sessionsFlat && v.query.trim() === "") {
+      // Newest first across contexts; recent keeps the window by session time.
+      const since = this.now() - this.recencyDays * 86400
+      const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
+        .flatMap((r) => (r.kind === "session" ? [r.session] : []))
+      return flat(v.subset === "recent" ? pool.filter((s) => s.modified >= since) : pool)
+    }
+    if (v.query.trim() === "") {
+      return groupSessions(this.sessionContexts(v), v.sessions, this.sessionFolds ?? new Set(), orphans)
+    }
     // A query searches every session of the grouping, folded or not, and lists them flat.
-    const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
+    const pool = groupSessions(v.contexts, v.sessions, new Set(), !v.context)
       .flatMap((r) => (r.kind === "session" ? [r.session] : []))
     return flat(this.matchSessions(v, pool))
   }
@@ -459,12 +523,17 @@ export class CueBrowser implements Component {
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "ctrl+n")) return this.startWizard()
     if (matchesKey(data, "ctrl+s")) return this.onNewSession()
+    if (v.kind !== "artifacts") {
+      if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
+      if (matchesKey(data, "ctrl+down")) return this.stepRecency(-1)
+    }
     if (v.kind === "contexts") {
       if (matchesKey(data, "tab")) {
         const keep = this.selectedContext()?.address
-        v.pinnedOnly = !v.pinnedOnly
+        v.recent = !v.recent
         v.selected = 0
-        return void this.loadContexts(v, keep)
+        if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
+        return this.refresh()
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
       if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
@@ -484,7 +553,14 @@ export class CueBrowser implements Component {
         }
         if (matchesKey(data, "ctrl+l")) return void this.onLink()
         if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
+        if (matchesKey(data, "alt+t")) {
+          this.sessionsFlat = !this.sessionsFlat
+          v.selected = 0
+          this.previewScroll = this.previewStart()
+          return this.refresh()
+        }
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
+        if (matchesKey(data, "alt+u")) return this.onClearLabel()
       }
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
@@ -666,7 +742,7 @@ export class CueBrowser implements Component {
   /** Fold or unfold the sessions of the row's context. */
   private onFoldSessions(v: SessionsView): void {
     const r = this.selectedSessionRow()
-    if (!r || v.query.trim() !== "" || v.subset === "labeled" || !this.sessionFolds) return
+    if (!r || v.query.trim() !== "" || v.subset === "labeled" || this.sessionsFlat || !this.sessionFolds) return
     const address = r.context.address
     if (this.sessionFolds.has(address)) this.sessionFolds.delete(address)
     else this.sessionFolds.add(address)
@@ -681,6 +757,27 @@ export class CueBrowser implements Component {
     if (r.session.path === this.deps.currentSession()) return this.notify("cannot delete the active session")
     this.confirmDelete = r.session
     this.tui.requestRender()
+  }
+
+  private onClearLabel(): void {
+    const r = this.selectedSessionRow()
+    if (r?.kind !== "session") return this.notify("select a session row to unlabel")
+    const s = r.session
+    if (s.label === undefined) return this.notify("session has no label")
+    if (s.path === this.deps.currentSession()) return this.notify("cannot unlabel the active session")
+    try {
+      this.deps.clearLabels(s.path)
+    } catch (e) {
+      return this.notify(`unlabel failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    // Rows are shared between the cache and views, so this updates both.
+    s.label = undefined
+    const v = this.view
+    if (v.kind === "sessions" && v.selected >= this.shownSessions(v).length) {
+      v.selected = Math.max(0, v.selected - 1)
+    }
+    this.notify("label cleared")
+    this.refresh()
   }
 
   private confirmInput(s: SessionRow, data: string): void {
@@ -812,9 +909,9 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.pinnedOnly ? "(pinned)" : "(all)")}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset})${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
@@ -834,10 +931,10 @@ export class CueBrowser implements Component {
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
-        "tab pinned/all", esc]
+        "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete",
-        "alt+z fold", "tab pinned/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
+      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
+        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...(this.showPreview ? ["ctrl+d/u scroll"] : []), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
@@ -857,12 +954,14 @@ export class CueBrowser implements Component {
     const t = this.theme
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownContexts(v)
-    if (rows.length === 0) return [t.fg("warning", v.pinnedOnly ? "no pinned contexts (tab: all)" : "no contexts")]
+    if (rows.length === 0) {
+      return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no contexts")]
+    }
     v.selected = Math.min(v.selected, rows.length - 1)
     const tree = v.query.trim() === ""
     const here = this.deps.sessionAddress()
     const mixed = new Set(rows.map((r) => r.scope)).size > 1
-    const hidden = tree ? collapseTree(v.rows, this.collapsed).hidden : new Map<string, number>()
+    const hidden = tree ? collapseTree(this.treeRows(v), this.collapsed).hidden : new Map<string, number>()
     const slugWidth = this.slugWidth
     const now = Math.floor(Date.now() / 1000)
     const [a, b] = this.window(rows.length, v.selected, height)
@@ -872,16 +971,15 @@ export class CueBrowser implements Component {
       const sel = i === v.selected
       const pin = r.pinned ? t.fg("warning", "*") : " "
       const name = (tree ? t.fg("dim", treePrefix(r)) : "") +
-        (r.address === here ? t.fg("accent", r.slug) : r.slug) +
+        (r.address === here ? t.fg("accent", r.slug) : r.ancestorOnly ? t.fg("dim", r.slug) : r.slug) +
         (hidden.has(r.address) ? t.fg("dim", ` +${hidden.get(r.address)}`) : "")
       const mode = r.mode
         ? t.fg(MODE_COLOR[r.mode] ?? "muted", pad(r.mode.toUpperCase(), 8))
         : t.fg("dim", pad("—", 8))
       const age = t.fg("muted", relativeAge(r.lastLoggedAt, now).padStart(4))
-      const kind = t.fg("dim", pad(r.kind ?? "", 9))
       // Cross-repo lists show the scope in place of the title, as cue.nvim does.
       const rest = mixed ? t.fg("muted", r.scope) : t.fg("muted", r.title)
-      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${kind} ${rest}`
+      let line = `${pin} ${pad(name, slugWidth)} ${age} ${mode} ${rest}`
       line = pad(line, width)
       out.push(sel ? t.bg("selectedBg", line) : line)
     }
@@ -897,7 +995,7 @@ export class CueBrowser implements Component {
     const now = Math.floor(Date.now() / 1000)
     const here = this.deps.sessionAddress()
     const current = this.deps.currentSession()
-    const flat = v.subset === "labeled" || v.query.trim() !== ""
+    const flat = v.subset === "labeled" || this.sessionsFlat || v.query.trim() !== ""
     const right = (s: SessionRow | undefined) => t.fg("muted",
       `${(s ? fmtTokens(s.tokens) : "").padStart(6)} ${(s ? relativeAge(s.modified, now) : "").padStart(4)}`)
     const label = (s: SessionRow) => (s.label ? " " + t.fg("error", `[${truncateToWidth(s.label, 12, "…")}]`) : "")
@@ -921,8 +1019,9 @@ export class CueBrowser implements Component {
         const s = r.session
         const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
         const desc = s.path === current ? t.fg("accent", s.description) : s.description
-        const where = flat ? " " + t.fg("muted", r.context.slug) : ""
-        name = indent + desc + label(s) + where
+        // Flat rows lead with the context, as the tmux window picker does.
+        const where = flat ? t.fg("muted", r.context.slug) + " " : ""
+        name = indent + where + desc + label(s)
         tail = s
       }
       const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)

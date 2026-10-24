@@ -9,6 +9,9 @@ import {
   artifactAddress,
   artifactFilename,
   collapseTree,
+  filterRecent,
+  pinnedFirst,
+  recencyIndex,
 } from "./model"
 
 const node = (context: string, extra: Record<string, unknown> = {}) => ({
@@ -151,5 +154,61 @@ describe("collapseTree", () => {
     expect(shown.map((r) => r.slug)).toEqual(["a", "b", "d", "e"])
     expect(hidden.get("org/repo/b")).toBe(1)
     expect(hidden.has("org/repo/e")).toBe(false)
+  })
+})
+
+describe("filterRecent", () => {
+  const DAY = 86400
+  const now = 100 * DAY
+  // root (old) > mid (old) > leaf (recent); root > stale (old); fresh (created recently, never logged)
+  const tree = () => parseContextTree(JSON.stringify({
+    roots: [
+      node("root", {
+        last_logged_at: 10 * DAY,
+        children: [
+          node("mid", { last_logged_at: 10 * DAY, children: [node("leaf", { last_logged_at: now - DAY })] }),
+          node("stale", { last_logged_at: 10 * DAY }),
+        ],
+      }),
+      node("busy", { last_logged_at: now, children: [node("quiet", { last_logged_at: 10 * DAY })] }),
+      node("fresh", { last_logged_at: null, created_at: now - 3600 }),
+      node("pin", { last_logged_at: 1, pinned: true }),
+      node("gone", { last_logged_at: 1 }),
+    ],
+  }))
+
+  test("keeps recent and pinned contexts plus all their ancestors", () => {
+    const rows = filterRecent(tree(), now, 3)
+    expect(rows.map((r) => r.slug)).toEqual(["root", "mid", "leaf", "busy", "fresh", "pin"])
+    expect(rows.filter((r) => r.ancestorOnly).map((r) => r.slug)).toEqual(["root", "mid"])
+  })
+
+  test("recomputes tree connectors after pruning", () => {
+    const rows = filterRecent(tree(), now, 3)
+    const mid = rows.find((r) => r.slug === "mid")!
+    expect(mid.isLast).toBe(true)
+    expect(rows.find((r) => r.slug === "pin")!.isLast).toBe(true)
+  })
+
+  test("extra activity counts like a log entry", () => {
+    const rows = filterRecent(tree(), now, 3, new Map([["org/repo/gone", now]]))
+    expect(rows.map((r) => r.slug)).toContain("gone")
+  })
+})
+
+describe("pinnedFirst", () => {
+  test("moves pinned siblings first, keeping order otherwise", () => {
+    const rows = parseContextTree(JSON.stringify({
+      roots: [node("a"), node("b", { pinned: true, children: [node("c"), node("d", { pinned: true })] }), node("e")],
+    }))
+    expect(pinnedFirst(rows).map((r) => r.slug)).toEqual(["b", "d", "c", "a", "e"])
+  })
+})
+
+describe("recencyIndex", () => {
+  test("maps stored days to a step, defaulting to 3 days", () => {
+    expect(recencyIndex(7)).toBe(3)
+    expect(recencyIndex(undefined)).toBe(2)
+    expect(recencyIndex(5)).toBe(2)
   })
 })

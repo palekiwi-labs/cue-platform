@@ -15,6 +15,10 @@ export interface ContextRow {
   pinned: boolean
   /** Unix seconds of the newest log entry, or null when never logged. */
   lastLoggedAt: number | null
+  /** Unix seconds of creation, or null when unknown. */
+  createdAt: number | null
+  /** Shown only because a descendant passed the recency filter. */
+  ancestorOnly?: boolean
   /** Absolute path of context.md. */
   path: string
   depth: number
@@ -72,6 +76,7 @@ export function parseContextTree(stdout: string): ContextRow[] {
       kind: str(n.kind),
       pinned: n.pinned === true,
       lastLoggedAt: num(n.last_logged_at),
+      createdAt: num(n.created_at),
       path: str(n.path) ?? "",
       depth,
       connectors,
@@ -247,4 +252,86 @@ export function collapseTree(
     i = j - 1
   }
   return { rows: out, hidden }
+}
+
+/** Recency windows in days, narrowest first. */
+export const RECENCY_STEPS = [1, 2, 3, 7, 14, 30] as const
+export const DEFAULT_RECENCY_DAYS = 3
+
+/** Step index for a stored day count; the default when unknown. */
+export function recencyIndex(days: number | undefined): number {
+  const i = (RECENCY_STEPS as readonly number[]).indexOf(days ?? DEFAULT_RECENCY_DAYS)
+  return i >= 0 ? i : (RECENCY_STEPS as readonly number[]).indexOf(DEFAULT_RECENCY_DAYS)
+}
+
+/** Newest activity of a context: its last log entry or its creation. */
+export const recency = (r: Pick<ContextRow, "lastLoggedAt" | "createdAt">): number | null =>
+  r.lastLoggedAt === null && r.createdAt === null
+    ? null
+    : Math.max(r.lastLoggedAt ?? 0, r.createdAt ?? 0)
+
+interface Node {
+  row: ContextRow
+  kids: Node[]
+}
+
+/** Rebuild the nesting of a pre-order flattened tree. */
+function toForest(rows: readonly ContextRow[]): Node[] {
+  const roots: Node[] = []
+  const stack: Node[] = []
+  for (const row of rows) {
+    const node = { row, kids: [] }
+    while (stack.length > row.depth) stack.pop()
+    ;(stack.length ? stack[stack.length - 1]!.kids : roots).push(node)
+    stack.push(node)
+  }
+  return roots
+}
+
+/** Flatten a forest back into rows, recomputing depth and connectors. */
+function fromForest(roots: Node[]): ContextRow[] {
+  const out: ContextRow[] = []
+  const visit = (n: Node, depth: number, connectors: boolean[], isLast: boolean) => {
+    out.push({ ...n.row, depth, connectors, isLast })
+    const next = depth > 0 ? [...connectors, !isLast] : [...connectors]
+    n.kids.forEach((k, i) => visit(k, depth + 1, next, i === n.kids.length - 1))
+  }
+  roots.forEach((r, i) => visit(r, 0, [], i === roots.length - 1))
+  return out
+}
+
+/** Pinned contexts first among their siblings; otherwise order is kept. */
+export function pinnedFirst(rows: readonly ContextRow[]): ContextRow[] {
+  const sort = (nodes: Node[]): Node[] => {
+    nodes.forEach((n) => (n.kids = sort(n.kids)))
+    return [...nodes.filter((n) => n.row.pinned), ...nodes.filter((n) => !n.row.pinned)]
+  }
+  return fromForest(sort(toForest(rows)))
+}
+
+/**
+ * Contexts active within `days` of `now`, or pinned, plus every ancestor
+ * of one up to its root. Ancestors kept only for a descendant are marked
+ * ancestorOnly. A passing parent does not keep its children. `extra`
+ * supplies other activity per address (e.g. newest session).
+ */
+export function filterRecent(
+  rows: readonly ContextRow[],
+  now: number,
+  days: number,
+  extra?: ReadonlyMap<string, number>,
+): ContextRow[] {
+  const since = now - days * 86400
+  const prune = (nodes: Node[]): Node[] => {
+    const out: Node[] = []
+    for (const n of nodes) {
+      const kids = prune(n.kids)
+      const t = Math.max(recency(n.row) ?? 0, extra?.get(n.row.address) ?? 0)
+      const passes = n.row.pinned || t >= since
+      if (!passes && kids.length === 0) continue
+      out.push({ row: { ...n.row, ancestorOnly: !passes }, kids })
+    }
+    return out
+  }
+  return fromForest(prune(toForest(rows)))
 }
