@@ -225,3 +225,26 @@ export function artifactFilename(input: string, asPath: boolean, markdown = true
   if (segs.length === 0 || segs.some((s) => s === "." || s === "..")) return undefined
   return markdown ? `${segs.join("/")}.md` : segs.join("/")
 }
+
+/**
+ * Hide the descendants of collapsed rows in a flattened tree. Rows are in
+ * pre-order, so a subtree is the run of rows deeper than its root.
+ * `hidden` maps each collapsed row that has children to their count.
+ */
+export function collapseTree(
+  rows: ContextRow[],
+  collapsed: ReadonlySet<string>,
+): { rows: ContextRow[]; hidden: Map<string, number> } {
+  const out: ContextRow[] = []
+  const hidden = new Map<string, number>()
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!
+    out.push(r)
+    if (!collapsed.has(r.address)) continue
+    let j = i + 1
+    while (j < rows.length && rows[j]!.depth > r.depth) j++
+    if (j > i + 1) hidden.set(r.address, j - i - 1)
+    i = j - 1
+  }
+  return { rows: out, hidden }
+}

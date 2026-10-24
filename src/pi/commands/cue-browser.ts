@@ -137,6 +137,12 @@ export async function openBrowser(
             ]),
           ),
         sessionAddress,
+        setPinned: async (address, pinned) => {
+          const r = await pi.exec("cue", ["context", pinned ? "pin" : "unpin", address], {
+            cwd: ctx.cwd,
+          })
+          return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${pinned ? "pin" : "unpin"} failed`
+        },
         link: (address) => linkContext(pi, address),
         editFile: (path) => editInTerminal(tui, path),
         openInTmux,

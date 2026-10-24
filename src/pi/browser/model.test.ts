@@ -8,6 +8,7 @@ import {
   treePrefix,
   artifactAddress,
   artifactFilename,
+  collapseTree,
 } from "./model"
 
 const node = (context: string, extra: Record<string, unknown> = {}) => ({
@@ -128,5 +129,27 @@ describe("artifactFilename", () => {
   test("rejects empty and escapes", () => {
     expect(artifactFilename("  ", false)).toBeUndefined()
     expect(artifactFilename("../x", true)).toBeUndefined()
+  })
+})
+
+describe("collapseTree", () => {
+  const rows = parseContextTree(JSON.stringify({
+    roots: [
+      node("a", { children: [node("b", { children: [node("c")] }), node("d")] }),
+      node("e"),
+    ],
+  }))
+
+  test("hides descendants of collapsed rows and counts them", () => {
+    const { rows: shown, hidden } = collapseTree(rows, new Set(["org/repo/a"]))
+    expect(shown.map((r) => r.slug)).toEqual(["a", "e"])
+    expect(hidden.get("org/repo/a")).toBe(3)
+  })
+
+  test("nested collapse counts only its own subtree", () => {
+    const { rows: shown, hidden } = collapseTree(rows, new Set(["org/repo/b"]))
+    expect(shown.map((r) => r.slug)).toEqual(["a", "b", "d", "e"])
+    expect(hidden.get("org/repo/b")).toBe(1)
+    expect(hidden.has("org/repo/e")).toBe(false)
   })
 })

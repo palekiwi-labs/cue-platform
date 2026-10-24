@@ -26,6 +26,7 @@ import {
   artifactFilename,
   type ArtifactRow,
   type ContextRow,
+  collapseTree,
   CREATE_TYPES,
   isFinished,
   relativeAge,
@@ -44,6 +45,8 @@ export interface BrowserDeps {
   loadArtifacts(address: string): Promise<ArtifactRow[]>
   /** Context linked to this session, if any. */
   sessionAddress(): string | undefined
+  /** Pin or unpin a context; returns an error message on failure. */
+  setPinned(address: string, pinned: boolean): Promise<string | undefined>
   /** Link a context to the session without telling the model. */
   link(address: string): Promise<void>
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
@@ -142,6 +145,10 @@ export class CueBrowser implements Component {
   private showPreview = true
   private stacked = false
   private wizard: Wizard | undefined
+  /** Contexts whose children are hidden; survives tab toggles. */
+  private collapsed = new Set<string>()
+  /** Slug column width; only grows, so tab and filtering never shift it. */
+  private slugWidth = 12
 
   constructor(
     private tui: TUI,
@@ -152,8 +159,14 @@ export class CueBrowser implements Component {
     start: BrowserStart,
   ) {
     this.input.focused = true
-    if (start.view === "contexts") this.pushContexts(true)
-    else this.pushArtifacts(start.context)
+    if (start.view === "contexts") {
+      this.pushContexts(true)
+      // Seed the width from the all view too, so the first tab keeps it.
+      void this.deps.loadContexts(false).then((rows) => {
+        this.growSlugWidth(rows)
+        this.tui.requestRender()
+      })
+    } else this.pushArtifacts(start.context)
   }
 
   private get view(): View {
@@ -178,15 +191,32 @@ export class CueBrowser implements Component {
     void this.loadArtifacts(v)
   }
 
-  private async loadContexts(v: ContextsView): Promise<void> {
+  /**
+   * Load rows, then select `keep` when it is shown, else the session's
+   * context.
+   */
+  private async loadContexts(v: ContextsView, keep?: string): Promise<void> {
     v.loading = true
     v.rows = await this.deps.loadContexts(v.pinnedOnly)
     v.loading = false
-    // Start on the session's context when it is listed.
-    const here = this.deps.sessionAddress()
-    const i = v.rows.findIndex((r) => r.address === here)
-    if (i >= 0 && v.query === "") v.selected = i
+    this.growSlugWidth(v.rows)
+    if (!(keep && this.selectContext(v, keep)) && v.query === "") {
+      const here = this.deps.sessionAddress()
+      if (here) this.selectContext(v, here)
+    }
     this.refresh()
+  }
+
+  private selectContext(v: ContextsView, address: string): boolean {
+    const i = this.shownContexts(v).findIndex((r) => r.address === address)
+    if (i >= 0) v.selected = i
+    return i >= 0
+  }
+
+  private growSlugWidth(rows: ContextRow[]): void {
+    const widths = rows.map((r) =>
+      visibleWidth(treePrefix(r) + r.slug) + (this.collapsed.has(r.address) ? 5 : 0))
+    this.slugWidth = Math.min(40, Math.max(this.slugWidth, ...widths))
   }
 
   private async loadArtifacts(v: ArtifactsView): Promise<void> {
@@ -204,6 +234,8 @@ export class CueBrowser implements Component {
   // ---- filtering -------------------------------------------------------
 
   private shownContexts(v: ContextsView): ContextRow[] {
+    // A query searches the whole tree, collapsed or not.
+    if (v.query.trim() === "") return collapseTree(v.rows, this.collapsed).rows
     return fuzzyFilter(v.rows, v.query, (r) => `${r.slug} ${r.title} ${r.scope}`)
   }
 
@@ -288,11 +320,14 @@ export class CueBrowser implements Component {
     if (matchesKey(data, "ctrl+s")) return this.onNewSession()
     if (v.kind === "contexts") {
       if (matchesKey(data, "tab")) {
+        const keep = this.selectedContext()?.address
         v.pinnedOnly = !v.pinnedOnly
         v.selected = 0
-        return void this.loadContexts(v)
+        return void this.loadContexts(v, keep)
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
+      if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
+      if (matchesKey(data, "alt+z")) return this.onToggleCollapse(v)
     } else {
       if (matchesKey(data, "alt+p")) {
         this.showPreview = !this.showPreview
@@ -435,6 +470,27 @@ export class CueBrowser implements Component {
     await this.onOpen(res.path)
   }
 
+  private async onTogglePin(v: ContextsView): Promise<void> {
+    const c = this.selectedContext()
+    if (!c) return
+    this.busy = true
+    const err = await this.deps.setPinned(c.address, !c.pinned)
+    this.busy = false
+    if (err) return this.notify(err)
+    this.notify(`${c.pinned ? "unpinned" : "pinned"} ${c.slug}`)
+    await this.loadContexts(v, c.address)
+  }
+
+  private onToggleCollapse(v: ContextsView): void {
+    const c = this.selectedContext()
+    if (!c || v.query.trim() !== "") return
+    if (this.collapsed.has(c.address)) this.collapsed.delete(c.address)
+    else this.collapsed.add(c.address)
+    this.growSlugWidth(v.rows)
+    this.selectContext(v, c.address)
+    this.refresh()
+  }
+
   private async onLink(): Promise<void> {
     const c = this.selectedContext()
     if (!c) return
@@ -535,9 +591,9 @@ export class CueBrowser implements Component {
     const title = v.kind === "contexts"
       ? `Cue contexts ${t.fg("muted", v.pinnedOnly ? "(pinned)" : "(all)")}`
       : `Cue artifacts ${t.fg("muted", v.context.address)}`
-    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `target: ${this.target}`)
-    const right = target + t.fg("dim", `  session: ${here ?? "none"}`)
-    const left = t.fg("accent", t.bold(title))
+    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const right = t.fg("dim", `session: ${here ?? "none"}`)
+    const left = t.fg("accent", t.bold(title)) + "  " + target
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
     return left + " ".repeat(gap) + right
   }
@@ -552,7 +608,8 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+l link", "ctrl+h address", "ctrl+y path", "tab pinned/all", esc]
+        "ctrl+l link", "alt+s pin", "alt+z fold", "ctrl+h address", "ctrl+y path",
+        "tab pinned/all", esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
@@ -576,10 +633,8 @@ export class CueBrowser implements Component {
     const tree = v.query.trim() === ""
     const here = this.deps.sessionAddress()
     const mixed = new Set(rows.map((r) => r.scope)).size > 1
-    const slugWidth = Math.min(
-      40,
-      Math.max(12, ...rows.map((r) => visibleWidth((tree ? treePrefix(r) : "") + r.slug))),
-    )
+    const hidden = tree ? collapseTree(v.rows, this.collapsed).hidden : new Map<string, number>()
+    const slugWidth = this.slugWidth
     const now = Math.floor(Date.now() / 1000)
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
@@ -588,7 +643,8 @@ export class CueBrowser implements Component {
       const sel = i === v.selected
       const pin = r.pinned ? t.fg("warning", "*") : " "
       const name = (tree ? t.fg("dim", treePrefix(r)) : "") +
-        (r.address === here ? t.fg("accent", r.slug) : r.slug)
+        (r.address === here ? t.fg("accent", r.slug) : r.slug) +
+        (hidden.has(r.address) ? t.fg("dim", ` +${hidden.get(r.address)}`) : "")
       const mode = r.mode
         ? t.fg(MODE_COLOR[r.mode] ?? "muted", pad(r.mode.toUpperCase(), 8))
         : t.fg("dim", pad("—", 8))
