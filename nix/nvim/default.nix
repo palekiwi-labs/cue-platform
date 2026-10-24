@@ -46,6 +46,13 @@ let
               },
             }
 
+            -- Buffer path copy utilities (ported from nix-config's
+            -- <leader>c family; leader here is ",").
+            local clipboard = require('cue.clipboard')
+            vim.keymap.set('n', '<leader>c', function() clipboard.copy_file_path(false) end, { desc = 'Copy file path' })
+            vim.keymap.set('n', '<leader>C', function() clipboard.copy_file_path(true) end, { desc = 'Copy file path with cursor' })
+            vim.keymap.set('v', '<leader>c', clipboard.copy_file_with_visual_range, { desc = 'Copy file path with visual range' })
+
             -- Match opencode's "github dark" markdown rendering.
             -- See .cue/master/task/match-opencode-markdown-scheme.md.
             -- This runs in luaConfigPost (after the colorscheme and
