@@ -9,6 +9,8 @@ export interface LogEntry {
   id: string
   /** Unix milliseconds (cue records nanoseconds). */
   timestamp: number
+  /** Exact nanosecond timestamp as printed, which names the entry file. */
+  stamp: string
   title: string
   /** Canonical address of a linked trace. */
   trace: string | null
@@ -23,8 +25,11 @@ const strings = (v: unknown): string[] =>
 /** Parse `cue log list` JSON; malformed entries are dropped. */
 export function parseLog(stdout: string): LogEntry[] {
   let parsed: unknown
+  // Nanosecond stamps exceed JS safe integers; capture the digits as a
+  // string before parsing so entryAddress can name the file precisely.
+  const exact = (stdout || "[]").replace(/"timestamp":\s*(\d+)/g, '"timestamp": $1, "stamp": "$1"')
   try {
-    parsed = JSON.parse(stdout || "[]")
+    parsed = JSON.parse(exact)
   } catch {
     return []
   }
@@ -37,6 +42,7 @@ export function parseLog(stdout: string): LogEntry[] {
       id: `${e.timestamp}:${i}`,
       // Nanoseconds lose precision as a double; milliseconds survive.
       timestamp: Math.floor(e.timestamp / 1e6),
+      stamp: typeof e.stamp === "string" ? e.stamp : String(e.timestamp),
       title: e.title.replace(/\s+/g, " ").trim(),
       trace: typeof e.trace === "string" && e.trace !== "" ? e.trace : null,
       found: strings(e.found),
@@ -84,6 +90,17 @@ export function logPreview(e: LogEntry, trace?: string | null): string {
     }
   }
   return md.trimEnd()
+}
+
+/** Canonical address of an entry: `<context>/log/<20-digit stamp>.json`. */
+export function entryAddress(e: LogEntry, contextAddress: string): string {
+  return `${contextAddress}/log/${e.stamp.padStart(20, "0")}.json`
+}
+
+/** Markdown link to an entry, titled by the entry. */
+export function entryLink(e: LogEntry, contextAddress: string): string {
+  const title = e.title.replace(/[[\]]/g, "\\$&")
+  return `[${title}](${entryAddress(e, contextAddress)})`
 }
 
 /** File of an entry's trace below a store root, when linked. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { fmtStamp, logPreview, parseLog, sortLog, tracePath } from "./log"
+import { entryAddress, entryLink, fmtStamp, logPreview, parseLog, sortLog, tracePath } from "./log"
 
 const raw = (over: Record<string, unknown> = {}) => ({
   timestamp: 1792854954237737617,
@@ -72,4 +72,15 @@ test("fmtStamp is fixed width with time this year and year before it", () => {
   const now = new Date(2026, 9, 24, 12, 0).getTime()
   expect(fmtStamp(new Date(2026, 9, 3, 9, 5).getTime(), now)).toBe("Oct  3 09:05")
   expect(fmtStamp(new Date(2025, 11, 31, 23, 59).getTime(), now)).toBe("Dec 31  2025")
+})
+
+test("entryAddress keeps the exact nanosecond stamp, zero-padded", () => {
+  const [e] = parseLog('[{"timestamp": 1792916036337401119, "title": "t"}]')
+  expect(e!.stamp).toBe("1792916036337401119")
+  expect(entryAddress(e!, "o/r/ctx")).toBe("o/r/ctx/log/01792916036337401119.json")
+})
+
+test("entryLink titles the address and escapes brackets", () => {
+  const [e] = parseLog('[{"timestamp": 1792916036337401119, "title": "a [b] \\"timestamp\\": 1"}]')
+  expect(entryLink(e!, "o/r/c")).toBe('[a \\[b\\] "timestamp": 1](o/r/c/log/01792916036337401119.json)')
 })

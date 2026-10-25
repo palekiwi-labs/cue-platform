@@ -32,7 +32,7 @@ import {
   fmtWhen,
   kindLabel,
 } from "./activity"
-import { fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
+import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -408,6 +408,26 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  /**
+   * ctrl+r/a/g outside the contexts view: sessions, activity or log of
+   * the view's context (the highlighted session's in the sessions view).
+   * Activity and log replace each other so esc returns past both.
+   */
+  private jumpTo(kind: "sessions" | "activity" | "log"): void {
+    const v = this.view
+    const context = v.kind === "sessions"
+      ? this.actionContext()
+      : v.kind === "contexts" ? undefined : v.context
+    if (!context) {
+      this.notify(v.kind === "sessions" ? "this session has no cue context" : "no context")
+      return this.tui.requestRender()
+    }
+    if (v.kind === "activity" || v.kind === "log") this.views.pop()
+    if (kind === "sessions") this.pushSessions(context)
+    else if (kind === "activity") this.pushActivity(context)
+    else this.pushLog(context)
+  }
+
   private pushActivity(context: ContextRef): void {
     const v: ActivityView = {
       kind: "activity", context, recent: true, rows: [], query: "", selected: 0,
@@ -645,6 +665,10 @@ export class CueBrowser implements Component {
       this.target = this.target === "here" ? "tmux" : "here"
       return this.tui.requestRender()
     }
+    if (v.kind === "log") {
+      if (matchesKey(data, "ctrl+y")) return void this.onCopyLog("address")
+      if (matchesKey(data, "ctrl+h")) return void this.onCopyLog("link")
+    }
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "ctrl+n")) {
@@ -715,7 +739,11 @@ export class CueBrowser implements Component {
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
         if (matchesKey(data, "alt+d")) return this.onDescribe()
       }
-      if (v.kind === "artifacts" && matchesKey(data, "ctrl+g")) return this.pushLog(v.context)
+    }
+    if (v.kind !== "contexts") {
+      if (matchesKey(data, "ctrl+r") && v.kind !== "sessions") return this.jumpTo("sessions")
+      if (matchesKey(data, "ctrl+a") && v.kind !== "activity") return this.jumpTo("activity")
+      if (matchesKey(data, "ctrl+g") && v.kind !== "log") return this.jumpTo("log")
     }
     if (v.kind !== "contexts") {
       if (matchesKey(data, "alt+p")) {
@@ -801,7 +829,19 @@ export class CueBrowser implements Component {
       : this.selectedSessionRow()?.kind === "session"
         ? this.selectedSession()?.path
         : this.selectedPath()
-    if (!text) return
+    if (text) await this.copyText(text)
+  }
+
+  /** Log view: the entry's address, or a markdown link titled by it. */
+  private async onCopyLog(what: "address" | "link"): Promise<void> {
+    const v = this.view
+    const e = this.selectedLog()
+    if (!e || v.kind !== "log") return
+    const ctx = v.context.address
+    await this.copyText(what === "address" ? entryAddress(e, ctx) : entryLink(e, ctx))
+  }
+
+  private async copyText(text: string): Promise<void> {
     try {
       await this.deps.copy(text)
       this.notify(`copied ${text}`)
@@ -1186,17 +1226,18 @@ export class CueBrowser implements Component {
         "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
+      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
-      hints = ["tab recent/all", "ctrl+up/down recency", "ctrl+h address", "alt+p preview", "alt+l layout",
+      hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h address",
+        "alt+p preview", "alt+l layout",
         ...this.previewHints(), esc]
     } else if (v.kind === "log") {
-      hints = ["enter/ctrl+e open trace", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
-        "ctrl+h address", "ctrl+y trace path", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
+      hints = ["enter/ctrl+e open trace", "ctrl+a activity", "ctrl+r sessions", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
+        "ctrl+y address", "ctrl+h link", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
     } else {
-      hints = ["enter open", "ctrl+e open", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
+      hints = ["enter open", "ctrl+e open", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
         "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
         ...this.previewHints(), esc]
     }
