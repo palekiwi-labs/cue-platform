@@ -1315,7 +1315,8 @@ export class CueBrowser implements Component {
       return `_cannot read ${path}_`
     }
     if (this.view.kind === "sessions") {
-      return transcript(text, this.selectedSession()?.description) || "_no messages_"
+      // The description shows in the list row; no heading in the preview.
+      return transcript(text) || "_no messages_"
     }
     return path.endsWith(".md") ? previewMarkdown(text) : "```\n" + text + "\n```"
   }
