@@ -91,9 +91,7 @@ export function fmtWhen(ms: number, now: number): string {
 export function eventSummary(e: ActivityEvent): string {
   const d = e.details
   if (e.kind === "git_commit" && typeof d.title === "string" && d.title !== "") {
-    const where = d.repo ?? (typeof d.root === "string" && d.root ? d.root.split("/").pop() : null)
-    const title = d.title.replace(/\s+/g, " ").trim()
-    return where ? `${where}: ${title}` : title
+    return d.title.replace(/\s+/g, " ").trim()
   }
   if (e.kind === "artifact_created") {
     const address = str(d.address) ?? str(d.type)

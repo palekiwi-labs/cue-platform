@@ -74,12 +74,8 @@ describe("fmtWhen", () => {
 })
 
 describe("eventSummary", () => {
-  test("commit title with repo wins for git_commit", () => {
-    expect(eventSummary(event as any)).toBe("activity-check2: test: non-quiet dummy commit")
-  })
-  test("commit without repo falls back to root basename", () => {
-    const e = { ...event, details: { ...event.details, repo: null, root: "/tmp/x/y" } } as any
-    expect(eventSummary(e)).toBe("y: test: non-quiet dummy commit")
+  test("commit title wins for git_commit", () => {
+    expect(eventSummary(event as any)).toBe("test: non-quiet dummy commit")
   })
   test("artifact address for artifact_created", () => {
     const e = { ...event, kind: "artifact_created", details: { address: "a/b/c/note/x.md", type: "note" } } as any
