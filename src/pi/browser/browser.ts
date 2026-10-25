@@ -695,7 +695,7 @@ export class CueBrowser implements Component {
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
       if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
       if (matchesKey(data, "alt+a")) return void this.onToggleArchive(v)
-      if (matchesKey(data, "alt+h")) {
+      if (matchesKey(data, "alt+v")) {
         this.showArchived = !this.showArchived
         return void this.loadContexts(v, this.selectedContext()?.address)
       }
@@ -1251,7 +1251,7 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+a archive", "alt+h show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
+        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
         "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
