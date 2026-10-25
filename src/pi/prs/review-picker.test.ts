@@ -7,7 +7,7 @@ import { type PickerResult, ReviewPicker } from "./review-picker"
 
 const row = (slug: string, depth = 0): ContextRow => ({
   address: `o/r/${slug}`, scope: "o/r", slug, title: slug, mode: null, kind: "work", pinned: false,
-  lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, path: "", depth, connectors: [], isLast: true,
+  lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
 function setup(extra: { link?: boolean; selected?: string } = {}) {

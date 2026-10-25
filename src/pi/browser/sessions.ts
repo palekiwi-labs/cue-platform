@@ -145,7 +145,7 @@ export function syntheticContext(address: string): ContextRow {
   const slug = address === NO_CONTEXT ? "(no context)" : address.split("/").pop() ?? address
   return {
     address, scope: address === NO_CONTEXT ? "" : scopeOf(address), slug, title: slug,
-    mode: null, kind: null, pinned: false, lastLoggedAt: null, createdAt: null, path: "",
+    mode: null, kind: null, pinned: false, lastLoggedAt: null, createdAt: null, archivedAt: null, path: "",
     depth: 0, connectors: [], isLast: true,
   }
 }

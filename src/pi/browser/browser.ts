@@ -66,8 +66,8 @@ export interface ContextRef {
 }
 
 export interface BrowserDeps {
-  /** The whole context tree, in subtree recency order. */
-  loadContexts(): Promise<ContextRow[]>
+  /** The whole context tree, in subtree recency order; archived ones on request. */
+  loadContexts(archived: boolean): Promise<ContextRow[]>
   /** Stored recency window in days for this repository, if any. */
   recencyDays(): number | undefined
   /** Remember the recency window for this repository. */
@@ -77,6 +77,8 @@ export interface BrowserDeps {
   sessionAddress(): string | undefined
   /** Pin or unpin a context; returns an error message on failure. */
   setPinned(address: string, pinned: boolean): Promise<string | undefined>
+  /** Archive or unarchive a context; returns an error message on failure. */
+  setArchived(address: string, archived: boolean): Promise<string | undefined>
   /** Link a context to the session without telling the model. */
   link(address: string): Promise<void>
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
@@ -264,6 +266,8 @@ export class CueBrowser implements Component {
   /** Sessions listed flat, newest first, instead of grouped by context. */
   private sessionsFlat = true
   private contextsFlat = false
+  /** Contexts view lists archived contexts too. */
+  private showArchived = false
 
   constructor(
     private tui: TUI,
@@ -316,7 +320,7 @@ export class CueBrowser implements Component {
    */
   private async loadContexts(v: ContextsView, keep?: string): Promise<void> {
     v.loading = true
-    v.rows = pinnedFirst(await this.deps.loadContexts())
+    v.rows = pinnedFirst(await this.deps.loadContexts(this.showArchived))
     v.loading = false
     this.growSlugWidth(v.rows)
     if (!(keep && this.selectContext(v, keep)) && v.query === "") this.selectHere(v)
@@ -376,7 +380,7 @@ export class CueBrowser implements Component {
     v.loading = true
     this.sessionsCache ??= this.deps.loadSessions()
     const [contexts, sessions] = await Promise.all([
-      this.deps.loadContexts().then(pinnedFirst),
+      this.deps.loadContexts(false).then(pinnedFirst),
       this.sessionsCache,
     ])
     v.contexts = contexts
@@ -690,6 +694,11 @@ export class CueBrowser implements Component {
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
       if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
+      if (matchesKey(data, "alt+a")) return void this.onToggleArchive(v)
+      if (matchesKey(data, "alt+h")) {
+        this.showArchived = !this.showArchived
+        return void this.loadContexts(v, this.selectedContext()?.address)
+      }
       if (matchesKey(data, "alt+t")) {
         const keep = this.selectedContext()?.address
         this.contextsFlat = !this.contextsFlat
@@ -920,6 +929,25 @@ export class CueBrowser implements Component {
     this.busy = false
     if (err) return this.notify(err)
     this.notify(`${c.pinned ? "unpinned" : "pinned"} ${c.slug}`)
+    await this.loadContexts(v, c.address)
+  }
+
+  private async onToggleArchive(v: ContextsView): Promise<void> {
+    const c = this.selectedContext()
+    if (!c) return
+    const archive = c.archivedAt === null
+    const index = v.selected
+    this.busy = true
+    const err = await this.deps.setArchived(c.address, archive)
+    this.busy = false
+    if (err) return this.notify(err)
+    this.notify(`${archive ? "archived" : "unarchived"} ${c.slug}`)
+    if (archive && !this.showArchived) {
+      // The row is gone: leave the cursor where it was, on the next row.
+      await this.loadContexts(v, "")
+      v.selected = index
+      return this.refresh()
+    }
     await this.loadContexts(v, c.address)
   }
 
@@ -1198,7 +1226,7 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
         ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
@@ -1223,8 +1251,8 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
-        "ctrl+up/down recency", "tab recent/all", esc]
+        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+a archive", "alt+h show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
+        "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",

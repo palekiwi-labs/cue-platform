@@ -17,6 +17,8 @@ export interface ContextRow {
   lastLoggedAt: number | null
   /** Unix seconds of creation, or null when unknown. */
   createdAt: number | null
+  /** Unix seconds of archival, or null when not archived. */
+  archivedAt: number | null
   /** Shown only because a descendant passed the recency filter. */
   ancestorOnly?: boolean
   /** Absolute path of context.md. */
@@ -77,6 +79,7 @@ export function parseContextTree(stdout: string): ContextRow[] {
       pinned: n.pinned === true,
       lastLoggedAt: num(n.last_logged_at),
       createdAt: num(n.created_at),
+      archivedAt: num(n.archived_at),
       path: str(n.path) ?? "",
       depth,
       connectors,

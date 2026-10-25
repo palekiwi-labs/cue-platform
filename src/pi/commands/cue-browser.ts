@@ -291,9 +291,11 @@ export async function openBrowser(
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const deps: BrowserDeps = {
-        loadContexts: async () =>
+        loadContexts: async (archived) =>
           parseContextTree(
-            await cueBestEffort(pi, ctx.cwd, ["context", "tree", "--sort", "recency", "--json"]),
+            await cueBestEffort(pi, ctx.cwd, [
+              "context", "tree", "--sort", "recency", "--json", ...(archived ? ["--archived"] : []),
+            ]),
           ),
         recencyDays: () => storedRecencyDays(ctx.cwd),
         saveRecencyDays: (days) => saveRecencyDays(ctx.cwd, days),
@@ -315,6 +317,11 @@ export async function openBrowser(
             cwd: ctx.cwd,
           })
           return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${pinned ? "pin" : "unpin"} failed`
+        },
+        setArchived: async (address, archived) => {
+          const cmd = archived ? "archive" : "unarchive"
+          const r = await pi.exec("cue", ["context", cmd, address], { cwd: ctx.cwd })
+          return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${cmd} failed`
         },
         link: (address) => linkContext(pi, ctx, address),
         editFile: (path) => editInTerminal(tui, path),

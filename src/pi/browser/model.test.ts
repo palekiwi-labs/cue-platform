@@ -42,6 +42,13 @@ describe("parseContextTree", () => {
     expect(rows[4]!).toMatchObject({ pinned: true, mode: null, lastLoggedAt: null })
   })
 
+  test("reads archived_at", () => {
+    const rows = parseContextTree(
+      JSON.stringify({ roots: [node("a", { archived_at: 42 }), node("b", { archived_at: null })] }),
+    )
+    expect(rows.map((r) => r.archivedAt)).toEqual([42, null])
+  })
+
   test("drops malformed nodes and survives bad JSON", () => {
     expect(parseContextTree("nope")).toEqual([])
     const rows = parseContextTree(

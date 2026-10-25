@@ -64,9 +64,11 @@ export interface ContextLineOpts {
 export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string {
   const pin = r.pinned ? t.fg("warning", "*") : " "
   const name = (o.tree ? t.fg("dim", treePrefix(r)) : "") +
-    (r.address === o.here ? t.fg("accent", r.slug) : r.ancestorOnly ? t.fg("dim", r.slug) : r.slug) +
+    (r.address === o.here ? t.fg("accent", r.slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", r.slug) : r.slug) +
     (o.hidden.has(r.address) ? t.fg("dim", ` +${o.hidden.get(r.address)}`) : "")
-  const mode = r.mode
+  const mode = r.archivedAt !== null
+    ? t.fg("dim", "ARCHIVED")
+    : r.mode
     ? t.fg(MODE_COLOR[r.mode] ?? "muted", pad(r.mode.toUpperCase(), 8))
     : t.fg("dim", pad("—", 8))
   const age = t.fg("muted", relativeAge(r.lastLoggedAt, o.now).padStart(4))
