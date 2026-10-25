@@ -22,7 +22,7 @@ import { cueBestEffort } from "./common"
 import { linkContext } from "./context-pins"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
-export const CONTEXTS_SHORTCUT = "alt+c"
+export const CONTEXTS_SHORTCUT = "ctrl+t"
 /** Open the artifacts of the session's (or the global) context. */
 export const ARTIFACTS_SHORTCUT = "alt+a"
 /** Open the sessions view (the resume picker). */
