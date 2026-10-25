@@ -1,3 +1,4 @@
+import { defaultTarget } from "../lib/default-target"
 import { spawn, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { readFile, unlink } from "node:fs/promises"
@@ -286,6 +287,7 @@ export async function openBrowser(
 ): Promise<void> {
   if (!ctx.hasUI) return
   const sessionAddress = () => currentContext(ctx.sessionManager.getBranch())
+  const target = defaultTarget(ctx.sessionManager.getEntries())
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const deps: BrowserDeps = {
@@ -344,7 +346,7 @@ export async function openBrowser(
         storeRoot: () => storeRoot(ctx.cwd),
         sessionFile,
       }
-      return new CueBrowser(tui, theme, kb, deps, () => done(), start)
+      return new CueBrowser(tui, theme, kb, deps, () => done(), start, target)
     },
     {
       overlay: true,

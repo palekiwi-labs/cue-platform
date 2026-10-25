@@ -1,3 +1,4 @@
+import type { Target } from "../lib/default-target"
 /**
  * Full-screen cue browser: a list of contexts, or a list of artifacts
  * with an optional markdown preview beside or below it. One component holds
@@ -119,8 +120,7 @@ export interface BrowserDeps {
   sessionFile(sessionId: string): string | undefined
 }
 
-/** Where open and new-session actions run. */
-export type Target = "here" | "tmux"
+export type { Target } from "../lib/default-target"
 
 /** Creation wizard: pick a type, then name the file. */
 interface Wizard {
@@ -239,7 +239,7 @@ export class CueBrowser implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private busy = false
-  private target: Target = "tmux"
+  private target: Target
   private showPreview = true
   /** View kinds whose preview sits below the list; alt+l toggles the current one. */
   private stacked = new Set<string>(["activity", "log"])
@@ -268,7 +268,9 @@ export class CueBrowser implements Component {
     private deps: BrowserDeps,
     private done: () => void,
     start: BrowserStart,
+    target: Target,
   ) {
+    this.target = target
     this.input.focused = true
     this.recencyStep = recencyIndex(deps.recencyDays())
     if (start.view === "contexts") this.pushContexts(true)

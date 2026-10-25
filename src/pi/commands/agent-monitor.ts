@@ -1,3 +1,4 @@
+import { defaultTarget } from "../lib/default-target"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -52,9 +53,10 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     openInTmux,
     newSession: (address, target, note) => newSession(pi, ctx, address, target, note),
   })
+  const target = defaultTarget(ctx.sessionManager.getEntries())
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) =>
-      new AgentMonitor(tui, theme, kb, deps(tui), () => done()),
+      new AgentMonitor(tui, theme, kb, deps(tui), () => done(), target),
     {
       overlay: true,
       overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },

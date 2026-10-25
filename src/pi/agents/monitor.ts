@@ -1,3 +1,4 @@
+import type { Target } from "../lib/default-target"
 /**
  * Full-screen cue-agent monitor: one row per run from `cue-agent ps --all`,
  * with the run's prompt or response beside it. Polls while open.
@@ -70,7 +71,7 @@ export function runSessionNote(r: RunRow): string {
   return `This session was started from cue-agent run ${id}`
 }
 
-export type Target = "here" | "tmux"
+export type { Target } from "../lib/default-target"
 
 type Subset = "running" | "all"
 type Pane = "prompt" | "response"
@@ -100,7 +101,7 @@ export class AgentMonitor implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
-  private target: Target = "tmux"
+  private target: Target
   private status = ""
   private busy = false
   /** Groups the operator folded or unfolded; others follow isFolded's default. */
@@ -112,7 +113,9 @@ export class AgentMonitor implements Component {
     private kb: KeybindingsManager,
     private deps: MonitorDeps,
     private done: () => void,
+    target: Target,
   ) {
+    this.target = target
     this.input.focused = true
     void this.reload(true)
     this.timer = setInterval(() => void this.reload(false), POLL_MS)
