@@ -105,6 +105,8 @@ export interface BrowserDeps {
   deleteSession(path: string): Promise<string>
   /** Clear every label in a session file. */
   clearLabels(path: string): void
+  /** Store a session description (the active session included). */
+  describeSession(path: string, text: string): Promise<void>
   /** Activity events of a context, newest first. */
   loadActivity(address: string): Promise<ActivityEvent[]>
   /** Log entries of a context, newest first. */
@@ -251,6 +253,8 @@ export class CueBrowser implements Component {
   /** Sessions loaded once per browser; deletes edit this copy. */
   private sessionsCache: Promise<SessionRow[]> | undefined
   private confirmDelete: SessionRow | undefined
+  /** Session being described, with its own prompt on the bottom line. */
+  private describing: { session: SessionRow; input: Input } | undefined
   /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
@@ -613,6 +617,7 @@ export class CueBrowser implements Component {
     if (this.busy) return
     if (this.wizard) return this.wizardInput(this.wizard, data)
     if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
+    if (this.describing) return this.describeInput(this.describing, data)
     const v = this.view
     const move = (delta: number) => {
       const n = this.shownCount()
@@ -698,6 +703,7 @@ export class CueBrowser implements Component {
         }
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
+        if (matchesKey(data, "alt+d")) return this.onDescribe()
       }
       if (v.kind === "artifacts" && matchesKey(data, "ctrl+g")) return this.pushLog(v.context)
     }
@@ -920,6 +926,42 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  private onDescribe(): void {
+    const r = this.selectedSessionRow()
+    if (r?.kind !== "session") return this.notify("select a session row to describe")
+    const input = new Input()
+    input.focused = true
+    input.setValue(r.session.description)
+    this.describing = { session: r.session, input }
+    this.tui.requestRender()
+  }
+
+  private describeInput(d: { session: SessionRow; input: Input }, data: string): void {
+    if (matchesKey(data, "escape")) {
+      this.describing = undefined
+      this.status = ""
+    } else if (matchesKey(data, "enter")) {
+      this.describing = undefined
+      const text = d.input.getValue().trim()
+      if (text && text !== d.session.description) void this.describeSession(d.session, text)
+    } else {
+      d.input.handleInput(data)
+    }
+    this.tui.requestRender()
+  }
+
+  private async describeSession(s: SessionRow, text: string): Promise<void> {
+    try {
+      await this.deps.describeSession(s.path, text)
+    } catch (e) {
+      return this.notify(`describe failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    // Rows are shared between the cache and views, so this updates both.
+    s.description = text
+    this.notify("description set")
+    this.refresh()
+  }
+
   private confirmInput(s: SessionRow, data: string): void {
     if (matchesKey(data, "enter") || data === "y" || data === "Y") {
       this.confirmDelete = undefined
@@ -988,7 +1030,10 @@ export class CueBrowser implements Component {
     const confirm = this.confirmDelete
       ? t.fg("error", `delete session "${this.confirmDelete.description}"? y/enter confirm, n/esc cancel`)
       : ""
-    lines.push(confirm || (this.status ? t.fg("warning", this.status) : ""))
+    const prompt = this.describing
+      ? t.fg("accent", "description: ") + (this.describing.input.render(Math.max(1, width - 13))[0] ?? "").replace(/^> /, "")
+      : ""
+    lines.push(confirm || prompt || (this.status ? t.fg("warning", this.status) : ""))
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
   }
 
@@ -1081,7 +1126,7 @@ export class CueBrowser implements Component {
         "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel",
+      hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {

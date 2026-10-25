@@ -320,6 +320,18 @@ export async function openBrowser(
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
         clearLabels: clearSessionLabels,
+        describeSession: async (path, text) => {
+          // The active session's live SessionManager would not see a
+          // write to its file, so go through pi like /describe does.
+          if (path === ctx.sessionManager.getSessionFile()) {
+            pi.appendEntry("session-description", { text })
+            if (process.env.TMUX && process.env.TMUX_PANE) {
+              await pi.exec("tmux", ["set-option", "-wq", "-t", process.env.TMUX_PANE, "@pi_desc", text]).catch(() => {})
+            }
+          } else {
+            SessionManager.open(path).appendCustomEntry("session-description", { text })
+          }
+        },
         loadActivity: async (address) =>
           sortActivity(
             parseActivity(
