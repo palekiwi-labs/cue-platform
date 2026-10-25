@@ -1380,7 +1380,15 @@ export class CueBrowser implements Component {
    * reaches, then cut to the pane by sliceAndClamp.
    */
   private renderPreview(md: string): string[] {
-    return new Markdown(md, 0, 0, getMarkdownTheme()).render(UNWRAPPED_WIDTH)
+    const t = this.theme
+    // Transcript role lines (`**you**` / `**agent**`) get their own colours.
+    return new Markdown(md, 0, 0, getMarkdownTheme()).render(UNWRAPPED_WIDTH).map((l) => {
+      // eslint-disable-next-line no-control-regex
+      const plain = l.replace(/\x1b\[[0-9;]*m/g, "").trimEnd()
+      if (plain === "you") return t.bold(t.fg("accent", "you"))
+      if (plain === "agent") return t.bold(t.fg("success", "agent"))
+      return l
+    })
   }
 
   private sliceAndClamp(lines: string[], width: number, height: number): string[] {
