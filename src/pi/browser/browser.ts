@@ -32,7 +32,7 @@ import {
   fmtWhen,
   kindLabel,
 } from "./activity"
-import { type LogEntry, logPreview, tracePath } from "./log"
+import { fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -1358,7 +1358,7 @@ export class CueBrowser implements Component {
     const out: string[] = []
     for (let i = a; i < b; i++) {
       const e = rows[i]!
-      const when = pad(fmtWhen(e.timestamp, now), 11)
+      const when = fmtStamp(e.timestamp, now)
       const trace = e.trace ? t.fg("warning", "◆") : " "
       const line = pad(`${when} ${trace} ${e.title}`, width)
       out.push(i === v.selected ? t.bg("selectedBg", line) : line)

@@ -47,6 +47,19 @@ export function parseLog(stdout: string): LogEntry[] {
   return out
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/**
+ * Fixed-width (12 columns) local timestamp, as `ls -l` prints it:
+ * `Oct 23 23:27` within the current year, `Oct 23  2025` before it.
+ */
+export function fmtStamp(ms: number, now: number): string {
+  const d = new Date(ms)
+  const day = `${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2, " ")}`
+  if (d.getFullYear() !== new Date(now).getFullYear()) return `${day}  ${d.getFullYear()}`
+  return `${day} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+
 /** Newest first, as the view lists them. */
 export function sortLog(entries: readonly LogEntry[]): LogEntry[] {
   return [...entries].sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))

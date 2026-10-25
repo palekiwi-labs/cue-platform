@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { logPreview, parseLog, sortLog, tracePath } from "./log"
+import { fmtStamp, logPreview, parseLog, sortLog, tracePath } from "./log"
 
 const raw = (over: Record<string, unknown> = {}) => ({
   timestamp: 1792854954237737617,
@@ -66,4 +66,10 @@ test("tracePath joins the store root", () => {
   expect(tracePath(e!, "/s")).toBe("/s/a/b/c/trace/h.md")
   const [n] = parseLog(JSON.stringify([raw()]))
   expect(tracePath(n!, "/s")).toBeNull()
+})
+
+test("fmtStamp is fixed width with time this year and year before it", () => {
+  const now = new Date(2026, 9, 24, 12, 0).getTime()
+  expect(fmtStamp(new Date(2026, 9, 3, 9, 5).getTime(), now)).toBe("Oct  3 09:05")
+  expect(fmtStamp(new Date(2025, 11, 31, 23, 59).getTime(), now)).toBe("Dec 31  2025")
 })
