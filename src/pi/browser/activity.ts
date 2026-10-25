@@ -91,7 +91,9 @@ export function fmtWhen(ms: number, now: number): string {
 export function eventSummary(e: ActivityEvent): string {
   const d = e.details
   if (e.kind === "git_commit" && typeof d.title === "string" && d.title !== "") {
-    return d.title.replace(/\s+/g, " ").trim()
+    const where = d.repo ?? (typeof d.root === "string" && d.root ? d.root.split("/").pop() : null)
+    const title = d.title.replace(/\s+/g, " ").trim()
+    return where ? `${where}: ${title}` : title
   }
   if (e.kind === "artifact_created") {
     const address = str(d.address) ?? str(d.type)
@@ -149,8 +151,13 @@ export function eventPreview(
   const record = "```json\n" + JSON.stringify(e.details, null, 2) + "\n```"
   const missing = (what: string) => `_${what}_\n\n${record}`
   if (e.kind === "git_commit") {
-    if (extras.gitShow) return "```diff\n" + capLines(extras.gitShow, 1000) + "\n```"
-    return commitDetails(e) ? missing("commit not found on this host") : record
+    const c = commitDetails(e)
+    if (extras.gitShow && c) {
+      const where = c.repo ?? (c.root ? c.root.split("/").pop() : null)
+      const head = `**${where ?? "unknown repo"}** \`${c.branch || "?"}\` \`${c.hash}\`${c.root ? ` — ${c.root}` : ""}`
+      return `${head}\n\n\`\`\`diff\n${capLines(extras.gitShow, 1000)}\n\`\`\``
+    }
+    return c ? missing("commit not found on this host") : record
   }
   if (e.kind === "artifact_created" && str(e.details.address)) {
     const text = extras.artifact
