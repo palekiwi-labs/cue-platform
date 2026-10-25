@@ -70,8 +70,6 @@ export interface PrDeps {
   link(branch: string, slug: string, create?: { parent?: string }): Promise<Outcome>
   /** Start a pi session in a context, the note after the orientation; error text on failure. */
   startSession(slug: string, target: Target, note: string): string | undefined
-  /** The session's working directory. */
-  cwd: string
   /** Where sessions open first. */
   target: Target
 }
@@ -449,7 +447,7 @@ export class PrBrowser implements Component {
       return o
     })
     if (!path) return
-    const err = this.deps.startSession(slug, this.target, prNote(pr, path, this.deps.cwd))
+    const err = this.deps.startSession(slug, this.target, prNote(pr, path))
     if (err) return this.notice(err, "error")
     if (this.target === "here") return this.close()
     this.notice(`started a session for ${slug} in tmux`, "success")

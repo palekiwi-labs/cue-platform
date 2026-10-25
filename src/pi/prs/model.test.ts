@@ -182,10 +182,7 @@ test("branchLinks keeps dotted branch names", () => {
   expect([...branchLinks(out)]).toEqual([["master", "shared"], ["feat/v1.2", "feat-v1.2"]])
 })
 
-test("prNote flags a checkout outside the session cwd", () => {
+test("prNote", () => {
   const p = pr({ number: 9, headRef: "feat", baseRef: "master" })
-  expect(prNote(p, "/r", "/r")).not.toContain("not in this session")
-  const note = prNote(p, "/r/worktrees/feat", "/r")
-  expect(note).toContain("checkout: /r/worktrees/feat")
-  expect(note).toContain("not in this session")
+  expect(prNote(p, "/r/worktrees/feat")).toContain("checkout: /r/worktrees/feat")
 })

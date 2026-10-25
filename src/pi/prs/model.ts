@@ -234,13 +234,9 @@ export function branchLinks(out: string): Map<string, string> {
 /** Default slug for a PR's own context: its head ref. */
 export const prContext = (pr: Pr): string => slugify(pr.headRef)
 
-/**
- * The PR block appended to a PR session's orientation. The session runs
- * in `cwd`, whose git block describes that tree; when the PR is checked
- * out elsewhere (a worktree), the block says so.
- */
-export function prNote(pr: Pr, checkout: string, cwd: string): string {
-  const lines = [
+/** The PR block appended to a PR session's orientation. */
+export function prNote(pr: Pr, checkout: string): string {
+  return [
     "<pr>",
     `number: ${pr.number}`,
     `title: ${pr.title}`,
@@ -250,13 +246,5 @@ export function prNote(pr: Pr, checkout: string, cwd: string): string {
     `base: ${pr.baseRef}`,
     `checkout: ${checkout}`,
     "</pr>",
-  ]
-  if (checkout !== cwd) {
-    lines.push(
-      "",
-      `The PR's code is checked out at ${checkout}, not in this session's ` +
-        "working directory; the git block above describes the latter.",
-    )
-  }
-  return lines.join("\n")
+  ].join("\n")
 }

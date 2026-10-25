@@ -179,7 +179,6 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
       return newSession(pi, ctx, `${scope}/${slug}`, target, note)
     },
     target: defaultTarget(ctx.sessionManager.getEntries()),
-    cwd,
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
