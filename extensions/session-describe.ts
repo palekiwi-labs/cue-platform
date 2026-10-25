@@ -22,6 +22,12 @@ async function publishDesc(pi: ExtensionAPI, text: string): Promise<void> {
 export default function (pi: ExtensionAPI) {
 	// /describe <text>: persist a description with this session and
 	// publish it to the tmux window (@pi_desc, shown by the C-f picker).
+	const describe = async (text: string, ctx: { ui: { notify: (m: string, l: "info") => void } }) => {
+		pi.appendEntry(DESCRIPTION_TYPE, { text });
+		await publishDesc(pi, text);
+		ctx.ui.notify(`Description set: ${truncateToWidth(text, 50, "…")}`, "info");
+	};
+
 	pi.registerCommand("describe", {
 		description: "Set this session's description (shown in pickers)",
 		handler: async (args, ctx) => {
@@ -30,9 +36,17 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("usage: /describe <description>", "warning");
 				return;
 			}
-			pi.appendEntry(DESCRIPTION_TYPE, { text });
-			await publishDesc(pi, text);
-			ctx.ui.notify(`Description set: ${truncateToWidth(text, 50, "…")}`, "info");
+			await describe(text, ctx);
+		},
+	});
+
+	// alt+d: prompt for the description (overrides the editor's
+	// delete-word-forward on alt+d; alt+delete still does that).
+	pi.registerShortcut("alt+d", {
+		description: "Set this session's description",
+		handler: async (ctx) => {
+			const text = (await ctx.ui.input("Session description"))?.trim();
+			if (text) await describe(text, ctx);
 		},
 	});
 
