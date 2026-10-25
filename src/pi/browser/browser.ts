@@ -318,11 +318,11 @@ export class CueBrowser implements Component {
     if (here) this.selectContext(v, here)
   }
 
-  /** Widen (+1) or narrow (-1) the recency window, kept per repository. */
+  /** Widen (+1) or narrow (-1) the recency window, wrapping; kept per repository. */
   private stepRecency(delta: number): void {
     const v = this.view
-    const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.recencyStep + delta))
-    if (next === this.recencyStep) return this.notify(`recency window at ${this.recencyDays}d`)
+    const n = RECENCY_STEPS.length
+    const next = (this.recencyStep + delta + n) % n
     const keep = v.kind === "contexts" ? this.selectedContext()?.address : undefined
     this.recencyStep = next
     this.deps.saveRecencyDays(this.recencyDays)
