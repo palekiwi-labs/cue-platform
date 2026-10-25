@@ -728,8 +728,8 @@ export class CueBrowser implements Component {
       }
       if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
       if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "home")) return this.scrollTo(0)
-      if (this.showPreview && matchesKey(data, "end")) return this.scrollTo(Number.MAX_SAFE_INTEGER)
+      if (this.showPreview && matchesKey(data, "ctrl+home")) return this.scrollTo(0)
+      if (this.showPreview && matchesKey(data, "ctrl+end")) return this.scrollTo(Number.MAX_SAFE_INTEGER)
     }
 
     const before = this.input.getValue()
@@ -1204,7 +1204,7 @@ export class CueBrowser implements Component {
   }
 
   private previewHints(): string[] {
-    return this.showPreview ? ["ctrl+d/u scroll", "home/end top/bottom"] : []
+    return this.showPreview ? ["ctrl+d/u scroll", "ctrl+home/end top/bottom"] : []
   }
 
   /** Window of `count` rows keeping `selected` visible. */
