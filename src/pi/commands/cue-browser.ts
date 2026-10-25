@@ -408,9 +408,9 @@ export function registerCueBrowser(pi: ExtensionAPI): void {
   pi.registerCommand("resume-open", {
     description: "Internal: switch to or start a session for the cue browser",
     handler: async (args, ctx) => {
-      const [verb, ...rest] = args.trim().split(/\s+/)
+      // Keep the inject args verbatim: a note may span lines.
+      const [, verb = "", inject = ""] = /^\s*(\S*)\s*([\s\S]*?)\s*$/.exec(args)!
       if (verb === "new") {
-        const inject = rest.join(" ")
         if (!inject) return
         await ctx.newSession({
           withSession: async (nctx) => {

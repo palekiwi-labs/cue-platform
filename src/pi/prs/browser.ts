@@ -25,6 +25,7 @@ import {
   type Preset,
   PRESETS,
   prContext,
+  prNote,
   reviewContext,
   reviewRequested,
   type Row,
@@ -67,8 +68,10 @@ export interface PrDeps {
   links(): Promise<Map<string, string>>
   /** Link a branch to a context, creating the context first when asked. */
   link(branch: string, slug: string, create?: { parent?: string }): Promise<Outcome>
-  /** Start a pi session in a context; error text on failure. */
-  startSession(slug: string, target: Target): string | undefined
+  /** Start a pi session in a context, the note after the orientation; error text on failure. */
+  startSession(slug: string, target: Target, note: string): string | undefined
+  /** The session's working directory. */
+  cwd: string
   /** Where sessions open first. */
   target: Target
 }
@@ -89,6 +92,8 @@ export type CheckoutTarget = "root" | "worktree"
 export interface Outcome {
   ok: boolean
   text: string
+  /** Checkout: where the PR's branch is checked out. */
+  path?: string
 }
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
@@ -437,14 +442,14 @@ export class PrBrowser implements Component {
   }
 
   private async startOn(pr: Pr, slug: string): Promise<void> {
-    let ok = false
+    let path: string | undefined
     await this.run(`checking out #${pr.number} (${this.mode})`, async () => {
       const o = await this.deps.checkout(pr, this.mode)
-      ok = o.ok
+      if (o.ok) path = o.path
       return o
     })
-    if (!ok) return
-    const err = this.deps.startSession(slug, this.target)
+    if (!path) return
+    const err = this.deps.startSession(slug, this.target, prNote(pr, path, this.deps.cwd))
     if (err) return this.notice(err, "error")
     if (this.target === "here") return this.close()
     this.notice(`started a session for ${slug} in tmux`, "success")

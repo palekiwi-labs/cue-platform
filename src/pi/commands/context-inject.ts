@@ -16,13 +16,13 @@ export function parseAddress(args: string): string | undefined {
 }
 
 /**
- * Split `<address> [note]`: the first word is the address, the rest an
- * optional note appended to the injected orientation.
+ * Split `<address> [note]`: the first word is the address, the rest
+ * (verbatim) an optional note appended to the injected orientation.
  */
 export function parseInjectArgs(args: string): { address?: string; note?: string } {
-  const [first = "", ...rest] = args.trim().split(/\s+/)
-  const note = rest.join(" ").trim()
-  return { address: parseAddress(first), note: note || undefined }
+  // The note keeps its line breaks: PR sessions pass a multi-line block.
+  const m = /^\s*(\S*)\s*([\s\S]*?)\s*$/.exec(args)!
+  return { address: parseAddress(m[1]!), note: m[2] || undefined }
 }
 
 /** Every context address in the store, for argument completion. */

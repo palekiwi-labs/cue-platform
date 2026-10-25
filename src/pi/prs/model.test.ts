@@ -13,6 +13,7 @@ import {
   stackRepo,
   worktreeFor,
   branchLinks,
+  prNote,
 } from "./model"
 
 const pr = (o: Partial<Pr>): Pr => ({
@@ -179,4 +180,12 @@ test("isContextAddress", () => {
 test("branchLinks keeps dotted branch names", () => {
   const out = "branch.master.cue-context shared\nbranch.feat/v1.2.cue-context feat-v1.2\n"
   expect([...branchLinks(out)]).toEqual([["master", "shared"], ["feat/v1.2", "feat-v1.2"]])
+})
+
+test("prNote flags a checkout outside the session cwd", () => {
+  const p = pr({ number: 9, headRef: "feat", baseRef: "master" })
+  expect(prNote(p, "/r", "/r")).not.toContain("not in this session")
+  const note = prNote(p, "/r/worktrees/feat", "/r")
+  expect(note).toContain("checkout: /r/worktrees/feat")
+  expect(note).toContain("not in this session")
 })

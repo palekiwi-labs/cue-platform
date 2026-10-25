@@ -75,19 +75,19 @@ async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget):
   const list = await exec("git", ["worktree", "list", "--porcelain"], { cwd: root })
   if (list.code !== 0) return failed("git worktree list", list)
   const existing = worktreeFor(list.stdout, pr.headRef)
-  if (existing) return { ok: true, text: `${pr.headRef} is already checked out in ${existing}` }
+  if (existing) return { ok: true, text: `${pr.headRef} is already checked out in ${existing}`, path: existing }
   if (where === "root") {
     const st = await exec("git", ["status", "--porcelain"], { cwd: root })
     if (st.code !== 0) return failed("git status", st)
     if (st.stdout.trim()) return { ok: false, text: `${root} has uncommitted changes; not checking out #${pr.number}` }
     const r = await exec("gh", ["pr", "checkout", String(pr.number)], { cwd: root })
-    return r.code === 0 ? { ok: true, text: `checked out #${pr.number} (${pr.headRef}) in ${root}` } : failed("gh pr checkout", r)
+    return r.code === 0 ? { ok: true, text: `checked out #${pr.number} (${pr.headRef}) in ${root}`, path: root } : failed("gh pr checkout", r)
   }
   const fetch = await exec("git", ["fetch", "origin", `pull/${pr.number}/head:${pr.headRef}`], { cwd: root })
   if (fetch.code !== 0) return failed("git fetch", fetch)
   const path = join(root, "worktrees", pr.headRef)
   const add = await exec("git", ["worktree", "add", path, pr.headRef], { cwd: root })
-  return add.code === 0 ? { ok: true, text: `worktree for #${pr.number} at ${path}` } : failed("git worktree add", add)
+  return add.code === 0 ? { ok: true, text: `worktree for #${pr.number} at ${path}`, path } : failed("git worktree add", add)
 }
 
 async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: string }> {
@@ -173,12 +173,13 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     copy: copyToClipboard,
     links: () => links(exec, cwd),
     link: (branch, slug, create) => link(exec, cwd, branch, slug, create),
-    startSession: (slug, target) => {
+    startSession: (slug, target, note) => {
       const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
       if (!scope) return "no cue scope (origin remote missing)"
-      return newSession(pi, ctx, `${scope}/${slug}`, target)
+      return newSession(pi, ctx, `${scope}/${slug}`, target, note)
     },
     target: defaultTarget(ctx.sessionManager.getEntries()),
+    cwd,
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),

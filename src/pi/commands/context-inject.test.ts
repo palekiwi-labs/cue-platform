@@ -23,7 +23,8 @@ describe("parseAddress", () => {
 describe("parseInjectArgs", () => {
   test("first word is the address, the rest an optional note", () => {
     expect(parseInjectArgs(" a/b/c ")).toEqual({ address: "a/b/c", note: undefined })
-    expect(parseInjectArgs("a/b/c  see  run 1 ")).toEqual({ address: "a/b/c", note: "see run 1" })
+    expect(parseInjectArgs("a/b/c  see run 1 ")).toEqual({ address: "a/b/c", note: "see run 1" })
+    expect(parseInjectArgs("a/b/c <pr>\nnumber: 1\n</pr>").note).toBe("<pr>\nnumber: 1\n</pr>")
     expect(parseInjectArgs("slug note").address).toBeUndefined()
   })
 })
