@@ -1,7 +1,12 @@
 /**
- * Review launch for one PR: pick the parent from the repo's context tree
- * (as the cue browser lists it), with the review context name and the
- * manifest as side settings. The PR browser hosts it full screen.
+ * Context picker for one PR, over the repo's context tree (as the cue
+ * browser lists it). The PR browser hosts it full screen in two modes:
+ *
+ * - review: pick the parent of the review context; the context name and
+ *   the manifest are side settings.
+ * - link: pick the context the PR branch links to. Enter on a context
+ *   links it; enter on the first row creates the named context without a
+ *   parent; ctrl+n creates it under the highlighted context.
  */
 
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
@@ -19,12 +24,20 @@ export interface PickerInit {
   /** The repo's context tree, pinned first. */
   rows: ContextRow[]
   recencyDays: number | undefined
+  /** Link mode instead of review mode. */
+  link?: boolean
+  /** Address of the context to highlight first. */
+  selected?: string
 }
 
 export interface PickerResult {
+  /** Review: the review context. Link: the slug to link (and create). */
   context: string
   parent?: string
-  manifest: string
+  /** Review mode only. */
+  manifest?: string
+  /** Link mode: create the context before linking. */
+  create?: boolean
 }
 
 export interface PickerHost {
@@ -63,6 +76,18 @@ export class ReviewPicker {
     this.step = recencyIndex(init.recencyDays)
     this.query.focused = true
     this.slugWidth = slugWidthFor(init.rows, NONE, 12)
+    if (init.selected) this.preselect(init.selected)
+  }
+
+  /** Highlight a context, widening to all contexts when the window hides it. */
+  private preselect(address: string): void {
+    let i = this.shown().findIndex((r) => r.address === address)
+    if (i < 0) {
+      this.recent = false
+      i = this.shown().findIndex((r) => r.address === address)
+      if (i < 0) this.recent = true
+    }
+    this.selected = i + 1
   }
 
   private get days(): number {
@@ -100,7 +125,8 @@ export class ReviewPicker {
     if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
     if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
     if (matchesKey(data, "enter")) return this.submit()
-    if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
+    if (this.init.link && matchesKey(data, "ctrl+n")) return this.submit(true)
+    if (!this.init.link && (matchesKey(data, "tab") || matchesKey(data, "shift+tab"))) {
       const d = matchesKey(data, "tab") ? 1 : -1
       const k = this.init.manifests.length
       this.manifest = (this.manifest + d + k) % k
@@ -162,8 +188,15 @@ export class ReviewPicker {
     this.tui.requestRender()
   }
 
-  private submit(): void {
-    const parent = this.selected > 0 ? this.shown()[this.selected - 1]?.address : undefined
+  /** Link mode: `create` makes a new context under the highlighted one. */
+  private submit(create = false): void {
+    const row = this.selected > 0 ? this.shown()[this.selected - 1] : undefined
+    const name = this.name.getValue().trim()
+    if (this.init.link) {
+      if (row && !create) return this.host.submit({ context: row.slug })
+      return this.host.submit({ context: name, create: true, ...(row ? { parent: row.address } : {}) })
+    }
+    const parent = row?.address
     this.host.submit({
       context: this.name.getValue().trim(),
       manifest: this.init.manifests[this.manifest]!,
@@ -199,16 +232,23 @@ export class ReviewPicker {
       ? (this.name.render(nameW)[0] ?? "")
       : t.fg("accent", truncateToWidth(this.name.getValue(), nameW, "…"))
     const scope = this.recent ? `recent ${this.days}d` : "all"
+    const link = this.init.link
     const hints = this.editing
       ? ["enter keep", "esc undo"]
-      : ["enter start", "tab manifest", "ctrl+e context", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+      : link
+        ? ["enter link", "ctrl+n new under", "ctrl+e new name", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+        : ["enter start", "tab manifest", "ctrl+e context", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+    const head = link
+      ? t.fg("accent", t.bold(`link #${pr.number}`)) + "  " + pr.title + "  " +
+        t.fg("muted", `pick the context for ${pr.headRef} (${scope})`)
+      : t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
+        t.fg("muted", `pick the parent (${scope})`)
+    const settings = link
+      ? label("new context") + name
+      : label("context") + name + "   " + label("manifest") + manifests
     const lines = [
-      truncateToWidth(
-        t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
-          t.fg("muted", `pick the parent (${scope})`),
-        width,
-      ),
-      truncateToWidth(label("context") + name + "   " + label("manifest") + manifests, width),
+      truncateToWidth(head, width),
+      truncateToWidth(settings, width),
       truncateToWidth(t.fg("dim", hints.join(" • ")), width, "…"),
       this.query.render(width)[0] ?? "",
       t.fg("border", "─".repeat(width)),
@@ -229,7 +269,7 @@ export class ReviewPicker {
     const hidden = tree ? collapseTree(this.tree(), NONE).hidden : new Map<string, number>()
     const now = this.now()
     const all = [
-      pad(t.fg("dim", `  ${NO_PARENT}`), width),
+      pad(t.fg("dim", this.init.link ? `  (new: ${this.name.getValue().trim()}, no parent)` : `  ${NO_PARENT}`), width),
       ...rows.map((r) =>
         contextLine(t, r, { tree, here: undefined, mixed, hidden, slugWidth: this.slugWidth, now, width })),
     ]

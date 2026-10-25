@@ -12,6 +12,7 @@ import {
   searchString,
   stackRepo,
   worktreeFor,
+  branchLinks,
 } from "./model"
 
 const pr = (o: Partial<Pr>): Pr => ({
@@ -174,3 +175,8 @@ test("isContextAddress", () => {
   expect(isContextAddress("a/b/c/d")).toBe(false)
 })
 
+
+test("branchLinks keeps dotted branch names", () => {
+  const out = "branch.master.cue-context shared\nbranch.feat/v1.2.cue-context feat-v1.2\n"
+  expect([...branchLinks(out)]).toEqual([["master", "shared"], ["feat/v1.2", "feat-v1.2"]])
+})

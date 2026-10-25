@@ -24,6 +24,7 @@ import {
   type Pr,
   type Preset,
   PRESETS,
+  prContext,
   reviewContext,
   reviewRequested,
   type Row,
@@ -31,6 +32,7 @@ import {
 } from "./model"
 import { ReviewPicker } from "./review-picker"
 import type { ContextRow } from "../browser/model"
+import type { Target } from "../lib/default-target"
 
 export interface Loaded {
   prs: Pr[]
@@ -61,6 +63,14 @@ export interface PrDeps {
   launchReview(req: ReviewRequest): Promise<Outcome>
   /** Copy text to system clipboard. */
   copy(text: string): Promise<void>
+  /** Branch -> linked context slug (branch.<b>.cue-context). */
+  links(): Promise<Map<string, string>>
+  /** Link a branch to a context, creating the context first when asked. */
+  link(branch: string, slug: string, create?: { parent?: string }): Promise<Outcome>
+  /** Start a pi session in a context; error text on failure. */
+  startSession(slug: string, target: Target): string | undefined
+  /** Where sessions open first. */
+  target: Target
 }
 
 export interface ReviewRequest {
@@ -109,6 +119,9 @@ export class PrBrowser implements Component {
   protected status: { text: string; tone: Tone } = { text: "", tone: "muted" }
   protected folded = new Set<string>()
   protected selectedId: string | undefined
+  protected links = new Map<string, string>()
+  protected mode: CheckoutTarget = "worktree"
+  protected target: Target
 
   constructor(
     protected tui: TUI,
@@ -118,8 +131,15 @@ export class PrBrowser implements Component {
     protected done: () => void,
   ) {
     this.view = deps.view
+    this.target = deps.target
     this.input.focused = true
     void this.reload()
+    void this.loadLinks()
+  }
+
+  protected async loadLinks(): Promise<void> {
+    this.links = await this.deps.links()
+    this.tui.requestRender()
   }
 
   close(): void {
@@ -250,13 +270,22 @@ export class PrBrowser implements Component {
 
   /** Hook for action keys; true when the key was consumed. */
   protected handleAction(data: string): boolean {
-    const where = matchesKey(data, "enter") || matchesKey(data, "alt+w")
-      ? "worktree"
-      : matchesKey(data, "alt+o")
-        ? "root"
-        : undefined
-    if (where) {
-      this.onCheckout(where)
+    if (matchesKey(data, "enter")) {
+      void this.onOpen()
+      return true
+    }
+    if (matchesKey(data, "ctrl+n")) {
+      void this.openLink()
+      return true
+    }
+    if (matchesKey(data, "alt+w")) {
+      this.mode = this.mode === "worktree" ? "root" : "worktree"
+      this.tui.requestRender()
+      return true
+    }
+    if (matchesKey(data, "ctrl+t")) {
+      this.target = this.target === "here" ? "tmux" : "here"
+      this.tui.requestRender()
       return true
     }
     if (matchesKey(data, "alt+r")) {
@@ -296,6 +325,12 @@ export class PrBrowser implements Component {
 
   protected picker: ReviewPicker | undefined
 
+  /** Address of a linked slug, looked up in the loaded context rows. */
+  private linkedAddress(pr: Pr, rows: ContextRow[]): string | undefined {
+    const slug = this.links.get(pr.headRef)
+    return slug ? rows.find((r) => r.slug === slug)?.address : undefined
+  }
+
   private async openPicker(): Promise<void> {
     const pr = this.actionablePr()
     if (!pr || this.busy) return
@@ -305,6 +340,7 @@ export class PrBrowser implements Component {
       .finally(() => (this.busy = false))
     if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
     const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
+    const linked = this.linkedAddress(pr, rows)
     this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
       pr,
       context: reviewContext(pr),
@@ -312,12 +348,13 @@ export class PrBrowser implements Component {
       manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
       rows,
       recencyDays: this.deps.recencyDays(),
+      ...(linked ? { selected: linked } : {}),
     }, {
       cancel: () => this.closePicker(),
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
       submit: (r) => {
         this.closePicker()
-        const req: ReviewRequest = { pr, ...r }
+        const req: ReviewRequest = { pr, context: r.context, manifest: r.manifest ?? DEFAULT_MANIFEST, ...(r.parent ? { parent: r.parent } : {}) }
         void this.run(`starting review of #${pr.number}`, () => this.deps.launchReview(req))
       },
     })
@@ -347,10 +384,70 @@ export class PrBrowser implements Component {
     }
   }
 
-  private onCheckout(where: CheckoutTarget): void {
+  /**
+   * Link the PR branch to a context (ctrl+n). `then` runs after a
+   * successful link: enter on an unlinked PR continues into the session.
+   */
+  private async openLink(then?: (pr: Pr, slug: string) => void): Promise<void> {
+    const pr = this.actionablePr()
+    if (!pr || this.busy) return
+    this.busy = true
+    this.notice("loading contexts\u2026", "dim")
+    const rows = await this.deps.contexts().finally(() => (this.busy = false))
+    const linked = this.linkedAddress(pr, rows)
+    this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
+      pr,
+      context: prContext(pr),
+      manifests: [],
+      manifest: 0,
+      rows,
+      recencyDays: this.deps.recencyDays(),
+      link: true,
+      ...(linked ? { selected: linked } : {}),
+    }, {
+      cancel: () => this.closePicker(),
+      saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
+      submit: (r) => {
+        this.closePicker()
+        const create = r.create ? (r.parent ? { parent: r.parent } : {}) : undefined
+        void (async () => {
+          let ok = false
+          await this.run(`linking ${pr.headRef} to ${r.context}`, async () => {
+            const o = await this.deps.link(pr.headRef, r.context, create)
+            ok = o.ok
+            return o
+          })
+          if (!ok) return
+          this.links.set(pr.headRef, r.context)
+          then?.(pr, r.context)
+        })()
+      },
+    })
+    this.input.focused = false
+    this.notice("")
+  }
+
+  /** Enter: link if needed, check out in the current mode, start a session. */
+  private async onOpen(): Promise<void> {
     const pr = this.actionablePr()
     if (!pr) return
-    void this.run(`checking out #${pr.number} (${where})`, () => this.deps.checkout(pr, where))
+    const slug = this.links.get(pr.headRef)
+    if (!slug) return void this.openLink((p, s) => void this.startOn(p, s))
+    await this.startOn(pr, slug)
+  }
+
+  private async startOn(pr: Pr, slug: string): Promise<void> {
+    let ok = false
+    await this.run(`checking out #${pr.number} (${this.mode})`, async () => {
+      const o = await this.deps.checkout(pr, this.mode)
+      ok = o.ok
+      return o
+    })
+    if (!ok) return
+    const err = this.deps.startSession(slug, this.target)
+    if (err) return this.notice(err, "error")
+    if (this.target === "here") return this.close()
+    this.notice(`started a session for ${slug} in tmux`, "success")
   }
 
   protected helpHints(): string[] {
@@ -359,8 +456,10 @@ export class PrBrowser implements Component {
       "alt+v view",
       "alt+z fold",
       "ctrl+up/down repo",
-      "enter worktree",
-      "alt+o root",
+      "enter session",
+      "ctrl+n link",
+      `alt+w ${this.mode}`,
+      `ctrl+t ${this.target}`,
       "alt+r review",
       "ctrl+y url",
       "ctrl+h title",
@@ -485,7 +584,8 @@ export class PrBrowser implements Component {
         ? t.fg("warning", pr.title)
         : pr.title
     const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
-    const branch = t.fg("dim", `(${pr.headRef})`)
+    const linked = this.links.get(pr.headRef)
+    const branch = t.fg("dim", `(${pr.headRef})`) + (linked ? " " + t.fg("accent", `@${linked}`) : "")
     return pad(
       [indent + state, num, age, author, checks, title, branch + labels].join(" "),
       width,

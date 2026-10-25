@@ -216,3 +216,20 @@ export function worktreeFor(porcelain: string, branch: string): string | undefin
 /** Canonical context address check, `<org>/<repo>/<context>`. */
 export const isContextAddress = (s: string): boolean => /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s)
 
+
+/**
+ * Branch -> context slug from `git config --get-regexp
+ * '^branch\..*\.cue-context$'` output. Branch names may contain dots, so
+ * the key is cut at both ends rather than split.
+ */
+export function branchLinks(out: string): Map<string, string> {
+  const links = new Map<string, string>()
+  for (const line of out.split("\n")) {
+    const m = /^branch\.(.+)\.cue-context\s+(\S+)\s*$/.exec(line)
+    if (m) links.set(m[1]!, m[2]!)
+  }
+  return links
+}
+
+/** Default slug for a PR's own context: its head ref. */
+export const prContext = (pr: Pr): string => slugify(pr.headRef)

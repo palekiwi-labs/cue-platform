@@ -9,6 +9,7 @@ import {
   type ReviewRequest,
 } from "../prs/browser"
 import {
+  branchLinks,
   PAGE,
   parseSearch,
   type Pr,
@@ -20,7 +21,9 @@ import {
   worktreeFor,
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
-import { saveRecencyDays, storedRecencyDays } from "./cue-browser"
+import { newSession, saveRecencyDays, storedRecencyDays } from "./cue-browser"
+import { scopeOfRemote } from "../browser/sessions"
+import { defaultTarget } from "../lib/default-target"
 
 /** Open the GitHub PR browser. */
 export const PRS_SHORTCUT = "alt+p"
@@ -61,14 +64,18 @@ const failed = (what: string, r: { stdout: string; stderr: string; code: number 
 })
 
 /**
- * Root: `gh pr checkout`, refused on a dirty tree. Worktree: reuse the one
- * holding the branch, else fetch the PR head into a local branch and add
+ * Reuse any checkout (root or worktree) already holding the branch. Else
+ * root: `gh pr checkout`, refused on a dirty tree; worktree: fetch the PR head into a local branch and add
  * `worktrees/<headRef>` under the repo root.
  */
 async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget): Promise<Outcome> {
   const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd })
   if (top.code !== 0) return failed("not a git checkout", top)
   const root = top.stdout.trim()
+  const list = await exec("git", ["worktree", "list", "--porcelain"], { cwd: root })
+  if (list.code !== 0) return failed("git worktree list", list)
+  const existing = worktreeFor(list.stdout, pr.headRef)
+  if (existing) return { ok: true, text: `${pr.headRef} is already checked out in ${existing}` }
   if (where === "root") {
     const st = await exec("git", ["status", "--porcelain"], { cwd: root })
     if (st.code !== 0) return failed("git status", st)
@@ -76,10 +83,6 @@ async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget):
     const r = await exec("gh", ["pr", "checkout", String(pr.number)], { cwd: root })
     return r.code === 0 ? { ok: true, text: `checked out #${pr.number} (${pr.headRef}) in ${root}` } : failed("gh pr checkout", r)
   }
-  const list = await exec("git", ["worktree", "list", "--porcelain"], { cwd: root })
-  if (list.code !== 0) return failed("git worktree list", list)
-  const existing = worktreeFor(list.stdout, pr.headRef)
-  if (existing) return { ok: true, text: `${pr.headRef} is already checked out in ${existing}` }
   const fetch = await exec("git", ["fetch", "origin", `pull/${pr.number}/head:${pr.headRef}`], { cwd: root })
   if (fetch.code !== 0) return failed("git fetch", fetch)
   const path = join(root, "worktrees", pr.headRef)
@@ -123,6 +126,29 @@ async function launchReview(exec: Exec, cwd: string, req: ReviewRequest): Promis
   return { ok: true, text: `review of #${req.pr.number} started (${req.context}, ${req.manifest})${out ? `: ${out}` : ""}` }
 }
 
+/** Branch -> context slug links of the repo. */
+async function links(exec: Exec, cwd: string): Promise<Map<string, string>> {
+  const r = await exec("git", ["config", "--local", "--get-regexp", "^branch\\..*\\.cue-context$"], { cwd })
+  return r.code === 0 ? branchLinks(r.stdout) : new Map()
+}
+
+/**
+ * Link a PR branch to a context, creating the context first when asked.
+ * The operator triggers this from the browser, so writing the branch
+ * association (operator state) is intended. The branch need not exist
+ * locally yet: checkout creates it under the same name.
+ */
+async function link(exec: Exec, cwd: string, branch: string, slug: string, create?: { parent?: string }): Promise<Outcome> {
+  if (create) {
+    const args = ["context", "create", slug]
+    if (create.parent) args.push("--parent", create.parent)
+    const r = await exec("cue", args, { cwd })
+    if (r.code !== 0) return failed("cue context create", r)
+  }
+  const r = await exec("cue", ["context", "switch", slug, "--branch", branch], { cwd })
+  return r.code === 0 ? { ok: true, text: `linked ${branch} to ${slug}` } : failed("cue context switch", r)
+}
+
 async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   const exec: Exec = (cmd, args, opts) => pi.exec(cmd, args, opts)
@@ -145,6 +171,14 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     saveRecencyDays: (d) => saveRecencyDays(cwd, d),
     launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
+    links: () => links(exec, cwd),
+    link: (branch, slug, create) => link(exec, cwd, branch, slug, create),
+    startSession: (slug, target) => {
+      const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
+      if (!scope) return "no cue scope (origin remote missing)"
+      return newSession(pi, ctx, `${scope}/${slug}`, target)
+    },
+    target: defaultTarget(ctx.sessionManager.getEntries()),
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),

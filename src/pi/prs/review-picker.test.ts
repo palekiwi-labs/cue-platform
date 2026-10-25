@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup() {
+function setup(extra: { link?: boolean; selected?: string } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -24,6 +24,7 @@ function setup() {
     manifest: 0,
     rows: [row("alpha"), row("beta")],
     recencyDays: undefined,
+    ...extra,
   }, {
     submit: (r) => results.push(r),
     cancel: () => (cancelled = true),
@@ -74,5 +75,31 @@ describe("ReviewPicker", () => {
     const s = setup()
     s.p.handleInput("\x1b")
     expect(s.cancelled()).toBe(true)
+  })
+
+  test("link: enter on a context links it", () => {
+    const s = setup({ link: true })
+    s.type("bet")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "beta" }])
+  })
+
+  test("link: first row creates the named context without a parent", () => {
+    const s = setup({ link: true })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "review-t", create: true }])
+  })
+
+  test("link: ctrl+n creates under the highlighted context", () => {
+    const s = setup({ link: true })
+    s.p.handleInput("\x1b[B")
+    s.p.handleInput("\x0e")
+    expect(s.results).toEqual([{ context: "review-t", create: true, parent: "o/r/alpha" }])
+  })
+
+  test("selected preselects a context", () => {
+    const s = setup({ selected: "o/r/beta" })
+    s.p.handleInput("\r")
+    expect(s.results[0]!.parent).toBe("o/r/beta")
   })
 })
