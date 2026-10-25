@@ -90,6 +90,17 @@ Instead, cue folds what is outstanding (open tasks, unfinished children) and
 displays it without asserting completion. A context with nothing outstanding
 is quiet, not complete. Reference contexts never count as outstanding.
 
+### Archived Contexts
+
+A context may carry `archived_at` (Unix timestamp) in `context.md`. Archived
+contexts are left out of `cue context list` and `cue context tree`, the
+pinned views included, unless `--archived` is given. Archiving never moves a
+context: its address still resolves for `parent:`, `refs:`, `--context`,
+status, render and log.
+
+When a context or reference you expect is missing from a listing, retry with
+`--archived` before concluding it does not exist.
+
 ### The `repo` Context Convention
 
 Each scope may hold an ordinary context named `repo` (`kind: reference`),

@@ -58,6 +58,20 @@ Lists context slugs in the current repository scope.
 ```bash
 cue context list
 cue context list --json
+cue context list --archived
+```
+
+Archived contexts are left out unless `--archived` is given. The same flag
+applies to `cue context tree`.
+
+#### `cue context archive` / `cue context unarchive`
+Sets or removes `archived_at` on each named context (slug or
+`<org>/<repo>/<slug>`). Archiving an archived context keeps its stamp. The
+directory, address, pins and branch associations are unchanged.
+
+```bash
+cue context archive <CONTEXT>...
+cue context unarchive <CONTEXT>...
 ```
 
 #### `cue context switch`
