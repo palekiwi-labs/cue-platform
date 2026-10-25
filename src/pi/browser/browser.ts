@@ -106,6 +106,8 @@ export interface BrowserDeps {
   deleteSession(path: string): Promise<string>
   /** Clear every label in a session file. */
   clearLabels(path: string): void
+  /** Create a child context; resolves to an error message on failure. */
+  createContext(parent: string, slug: string): Promise<string | undefined>
   /** Store a session description (the active session included). */
   describeSession(path: string, text: string): Promise<void>
   /** Activity events of a context, newest first. */
@@ -255,6 +257,8 @@ export class CueBrowser implements Component {
   private confirmDelete: SessionRow | undefined
   /** Session being described, with its own prompt on the bottom line. */
   private describing: { session: SessionRow; input: Input } | undefined
+  /** Creating a child of this context, with its own prompt on the bottom line. */
+  private creating: { parent: ContextRef; input: Input } | undefined
   /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
@@ -620,6 +624,7 @@ export class CueBrowser implements Component {
     if (this.wizard) return this.wizardInput(this.wizard, data)
     if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
     if (this.describing) return this.describeInput(this.describing, data)
+    if (this.creating) return this.creatingInput(this.creating, data)
     const v = this.view
     const move = (delta: number) => {
       const n = this.shownCount()
@@ -642,7 +647,10 @@ export class CueBrowser implements Component {
     }
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
-    if (matchesKey(data, "ctrl+n")) return this.startWizard()
+    if (matchesKey(data, "ctrl+n")) {
+      if (v.kind === "contexts") return this.startCreateContext()
+      return this.startWizard()
+    }
     if (matchesKey(data, "ctrl+s")) return this.onNewSession()
     if (v.kind !== "artifacts") {
       if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
@@ -928,6 +936,45 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  private startCreateContext(): void {
+    const c = this.selectedContext()
+    if (!c) return this.notify("select a parent context")
+    const input = new Input()
+    input.focused = true
+    this.creating = { parent: { address: c.address, slug: c.slug }, input }
+    this.status = ""
+    this.tui.requestRender()
+  }
+
+  private creatingInput(d: { parent: ContextRef; input: Input }, data: string): void {
+    if (matchesKey(data, "escape")) {
+      this.creating = undefined
+      this.status = ""
+    } else if (matchesKey(data, "enter")) {
+      this.creating = undefined
+      const slug = d.input.getValue().trim()
+      if (slug) void this.createContext(d.parent, slug)
+    } else {
+      d.input.handleInput(data)
+    }
+    this.tui.requestRender()
+  }
+
+  private async createContext(parent: ContextRef, slug: string): Promise<void> {
+    let err: string | undefined
+    try {
+      err = await this.deps.createContext(parent.address, slug)
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e)
+    }
+    if (err) return this.notify(`create failed: ${err}`)
+    const v = this.view
+    const address = `${parent.address}/${slug}`
+    this.notify(`created context ${slug}`)
+    if (v.kind === "contexts") void this.loadContexts(v, address)
+    else this.refresh()
+  }
+
   private onDescribe(): void {
     const r = this.selectedSessionRow()
     if (r?.kind !== "session") return this.notify("select a session row to describe")
@@ -1034,7 +1081,10 @@ export class CueBrowser implements Component {
       : ""
     const prompt = this.describing
       ? t.fg("accent", "description: ") + (this.describing.input.render(Math.max(1, width - 13))[0] ?? "").replace(/^> /, "")
-      : ""
+      : this.creating
+        ? t.fg("accent", `context under ${this.creating.parent.slug}: `) +
+          (this.creating.input.render(Math.max(1, width - this.creating.parent.slug.length - 11))[0] ?? "").replace(/^> /, "")
+        : ""
     lines.push(confirm || prompt || (this.status ? t.fg("warning", this.status) : ""))
     return lines.slice(0, height).map((l) => truncateToWidth(l, width))
   }
@@ -1124,8 +1174,8 @@ export class CueBrowser implements Component {
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
+      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
+        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+z fold", "alt+t tree/flat", "ctrl+h address", "ctrl+y path",
         "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",

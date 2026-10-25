@@ -304,6 +304,12 @@ export async function openBrowser(
             ]),
           ),
         sessionAddress,
+        createContext: async (parent, slug) => {
+          const r = await pi.exec("cue", ["context", "create", "--parent", parent, slug], {
+            cwd: ctx.cwd,
+          })
+          return r.code === 0 ? undefined : r.stderr.trim() || "cue context create failed"
+        },
         setPinned: async (address, pinned) => {
           const r = await pi.exec("cue", ["context", pinned ? "pin" : "unpin", address], {
             cwd: ctx.cwd,
