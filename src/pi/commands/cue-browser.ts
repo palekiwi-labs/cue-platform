@@ -27,6 +27,8 @@ export const CONTEXTS_SHORTCUT = "ctrl+t"
 export const ARTIFACTS_SHORTCUT = "alt+a"
 /** Open the sessions view (the resume picker). */
 export const SESSIONS_SHORTCUT = "ctrl+r"
+/** Open the activity of the session's context. */
+export const ACTIVITY_SHORTCUT = "ctrl+a"
 
 const editorCommand = (): string =>
   process.env.VISUAL || process.env.EDITOR || "nvim"
@@ -388,6 +390,21 @@ async function openArtifacts(
   })
 }
 
+async function openActivity(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): Promise<void> {
+  const address = await resolveContext(pi, ctx)
+  if (!address) {
+    ctx.ui.notify("cue: this session has no context", "error")
+    return
+  }
+  return openBrowser(pi, ctx, {
+    view: "activity",
+    context: { address, slug: slugOf(address) },
+  })
+}
+
 /** Register the browser commands and their shortcuts. */
 export function registerCueBrowser(pi: ExtensionAPI): void {
   pi.registerCommand("cue:browse", {
@@ -429,6 +446,14 @@ export function registerCueBrowser(pi: ExtensionAPI): void {
       const path = args.trim()
       if (path) await ctx.switchSession(path)
     },
+  })
+  pi.registerCommand("cue:activity", {
+    description: "Browse activity of the session context",
+    handler: async (_args, ctx) => openActivity(pi, ctx),
+  })
+  pi.registerShortcut(ACTIVITY_SHORTCUT, {
+    description: "Browse activity of the session context",
+    handler: async (ctx) => openActivity(pi, ctx),
   })
   pi.registerShortcut(ARTIFACTS_SHORTCUT, {
     description: "Browse artifacts of the session context (or the global one)",
