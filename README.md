@@ -1,18 +1,25 @@
 # cue-platform
 
-The cue-centered agent environment for cast containers.
+The cue-centered agent environment: the tools inside cast containers,
+and cast with its terminal UI on the host.
 
-cue-platform ships in two parts:
+cue-platform ships in three parts:
 
 - **The flake** builds the tools: pi, cue, cue-agent, cast-mcp-client,
   cue-review, gh, jq, the container tmux (with its window picker) and the
   nvf-based nvim. `packages.<system>.default` bundles all of them; each
   is also exported on its own.
+- **The host tools**: cast (re-exported from the cast flake) and
+  cast-tui (`cast-tui/`), the terminal UI that bare `cast` opens.
+  `packages.<system>.host` bundles both; each is also exported on its
+  own.
 - **The pi package** (this repository: `extensions/`, `src/pi/`,
   `skills/`, `prompts/`) adds cue integration to pi. It is installed with
   pi's own package manager, not through nix.
 
-Everything runs inside cast containers; nothing is meant for the host.
+The container bundle and the pi package run inside cast containers;
+the host bundle runs on the machine that starts them. The cast version
+is the one in cue-platform's lock file.
 
 ## Install
 
@@ -56,6 +63,12 @@ nix flake update cue-platform
 pi update --extension git:github.com/palekiwi-labs/cue-platform
 ```
 `~/.pi` is shared by every cast sandbox, so this is done once.
+
+### 3. Host tools
+
+Install `inputs.cue-platform.packages.${system}.host` on the host (for
+example in home-manager's `home.packages`). It provides `cast` and
+`cast-tui`; running `cast` with no command opens cast-tui.
 
 ## Developing cue-platform
 
@@ -116,6 +129,7 @@ pin its types to the packaged version.
 ```sh
 nix flake check
 nix build .#default --no-link
+nix build .#host --no-link   # also runs the cast-tui tests
 nix develop --command bun install --frozen-lockfile
 nix develop --command bun run typecheck
 nix develop --command bun test ./src
