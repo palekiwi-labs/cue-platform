@@ -691,6 +691,7 @@ export class CueBrowser implements Component {
       return this.startWizard()
     }
     if (matchesKey(data, "ctrl+s")) return this.onNewSession()
+    if (matchesKey(data, "alt+r")) return this.reload()
     if (v.kind !== "artifacts") {
       if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
       if (matchesKey(data, "ctrl+down")) return this.stepRecency(-1)
@@ -793,6 +794,20 @@ export class CueBrowser implements Component {
       this.previewScroll = this.previewStart()
       this.refresh()
     }
+  }
+
+  /** alt+r: reread the view's rows from cue (and previews), keeping the selection. */
+  private reload(): void {
+    const v = this.view
+    this.notify("reloaded")
+    if (v.kind === "contexts") return void this.loadContexts(v, this.selectedContext()?.address)
+    if (v.kind === "sessions") {
+      this.sessionsCache = undefined
+      return void this.loadSessions(v)
+    }
+    if (v.kind === "activity") return void this.loadActivity(v)
+    if (v.kind === "log") return void this.loadLog(v)
+    return void this.loadArtifacts(v)
   }
 
   /** Reload the shown contexts or sessions when alt+s changed the scope since. */
@@ -1283,22 +1298,22 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
+        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
         "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
-        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
+        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
       hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h address",
-        "alt+p preview", "alt+l layout",
+        "alt+r reload", "alt+p preview", "alt+l layout",
         ...this.previewHints(), esc]
     } else if (v.kind === "log") {
       hints = ["enter/ctrl+e open trace", "ctrl+a activity", "ctrl+r sessions", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
-        "ctrl+y address", "ctrl+h link", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
+        "ctrl+y address", "ctrl+h link", "alt+r reload", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
     } else {
       hints = ["enter open", "ctrl+e open", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+h address", "ctrl+y path", "alt+p preview", "alt+l layout",
+        "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview", "alt+l layout",
         ...this.previewHints(), esc]
     }
     return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
