@@ -95,7 +95,7 @@ export class AgentMonitor implements Component {
   private error = ""
   private subset: Subset = "running"
   private pane: Pane = "prompt"
-  private stacked = false
+  private stacked = true
   private preview = true
   private selectedId: string | undefined
   private previewScroll = 0
