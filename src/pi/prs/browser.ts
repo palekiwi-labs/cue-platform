@@ -33,6 +33,7 @@ import {
 } from "./model"
 import { ReviewPicker } from "./review-picker"
 import type { ContextRow } from "../browser/model"
+import type { SessionRow } from "../browser/sessions"
 import type { Target } from "../lib/default-target"
 
 export interface Loaded {
@@ -70,6 +71,12 @@ export interface PrDeps {
   link(branch: string, slug: string, create?: { parent?: string }): Promise<Outcome>
   /** Start a pi session in a context, the note after the orientation; error text on failure. */
   startSession(slug: string, target: Target, note: string): string | undefined
+  /** Newest session per context slug of this repo's scope. */
+  latestSessions(): Promise<Map<string, SessionRow>>
+  /** Resume a session; error text on failure. */
+  resume(session: SessionRow, target: Target): string | undefined
+  /** Path of the session this browser runs in. */
+  currentSession(): string | undefined
   /** Where sessions open first. */
   target: Target
 }
@@ -123,6 +130,7 @@ export class PrBrowser implements Component {
   protected folded = new Set<string>()
   protected selectedId: string | undefined
   protected links = new Map<string, string>()
+  protected sessions = new Map<string, SessionRow>()
   protected mode: CheckoutTarget = "worktree"
   protected target: Target
 
@@ -138,6 +146,12 @@ export class PrBrowser implements Component {
     this.input.focused = true
     void this.reload()
     void this.loadLinks()
+    void this.loadSessions()
+  }
+
+  protected async loadSessions(): Promise<void> {
+    this.sessions = await this.deps.latestSessions()
+    this.tui.requestRender()
   }
 
   protected async loadLinks(): Promise<void> {
@@ -205,6 +219,12 @@ export class PrBrowser implements Component {
       return undefined
     }
     return r.pr
+  }
+
+  /** Hint state: enter resumes on the highlighted row (no notices). */
+  private selectedPrResumable(): boolean {
+    const r = this.selectedRow()
+    return r?.kind === "pr" && r.pr.repo === this.deps.localRepo && this.resumable(r.pr) !== undefined
   }
 
   protected toggleFold(): void {
@@ -275,6 +295,10 @@ export class PrBrowser implements Component {
   protected handleAction(data: string): boolean {
     if (matchesKey(data, "enter")) {
       void this.onOpen()
+      return true
+    }
+    if (matchesKey(data, "ctrl+s")) {
+      void this.onNewSession()
       return true
     }
     if (matchesKey(data, "ctrl+n")) {
@@ -430,8 +454,28 @@ export class PrBrowser implements Component {
     this.notice("")
   }
 
-  /** Enter: link if needed, check out in the current mode, start a session. */
+  /** Newest session of the PR's linked context, if any. */
+  private resumable(pr: Pr): SessionRow | undefined {
+    const slug = this.links.get(pr.headRef)
+    return slug ? this.sessions.get(slug) : undefined
+  }
+
+  /** Enter: resume the linked context's newest session, else as ctrl+s. */
   private async onOpen(): Promise<void> {
+    const pr = this.actionablePr()
+    if (!pr) return
+    const s = this.resumable(pr)
+    if (!s) return this.onNewSession()
+    if (s.path === this.deps.currentSession()) return this.notice("already in this session")
+    if (!(await this.checkoutPr(pr))) return
+    const err = this.deps.resume(s, this.target)
+    if (err) return this.notice(err, "error")
+    if (this.target === "here") return this.close()
+    this.notice(`resumed ${s.description.slice(0, 40)} in tmux`, "success")
+  }
+
+  /** Ctrl+s: link if needed, check out in the current mode, start a session. */
+  private async onNewSession(): Promise<void> {
     const pr = this.actionablePr()
     if (!pr) return
     const slug = this.links.get(pr.headRef)
@@ -439,13 +483,19 @@ export class PrBrowser implements Component {
     await this.startOn(pr, slug)
   }
 
-  private async startOn(pr: Pr, slug: string): Promise<void> {
+  /** Check the PR out in the current mode; the checkout path on success. */
+  private async checkoutPr(pr: Pr): Promise<string | undefined> {
     let path: string | undefined
     await this.run(`checking out #${pr.number} (${this.mode})`, async () => {
       const o = await this.deps.checkout(pr, this.mode)
       if (o.ok) path = o.path
       return o
     })
+    return path
+  }
+
+  private async startOn(pr: Pr, slug: string): Promise<void> {
+    const path = await this.checkoutPr(pr)
     if (!path) return
     const err = this.deps.startSession(slug, this.target, prNote(pr, path))
     if (err) return this.notice(err, "error")
@@ -459,7 +509,8 @@ export class PrBrowser implements Component {
       "alt+v view",
       "alt+z fold",
       "ctrl+up/down repo",
-      "enter session",
+      this.selectedPrResumable() ? "enter resume" : "enter session",
+      "ctrl+s new session",
       "ctrl+n link",
       `alt+w ${this.mode}`,
       "ctrl+t target",

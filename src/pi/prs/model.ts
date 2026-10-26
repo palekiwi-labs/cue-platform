@@ -8,6 +8,8 @@
  * a row shows, so nothing is fetched per PR.
  */
 
+import type { SessionRow } from "../browser/sessions"
+
 export type View = "repo" | "org"
 export type Preset = "all" | "mine" | "review"
 export const PRESETS: Preset[] = ["all", "mine", "review"]
@@ -247,4 +249,18 @@ export function prNote(pr: Pr, checkout: string): string {
     `checkout: ${checkout}`,
     "</pr>",
   ].join("\n")
+}
+
+/** Newest session per context slug within one scope. */
+export function latestBySlug(sessions: SessionRow[], scope: string): Map<string, SessionRow> {
+  const out = new Map<string, SessionRow>()
+  const prefix = `${scope}/`
+  for (const s of sessions) {
+    if (!s.address?.startsWith(prefix)) continue
+    const slug = s.address.slice(prefix.length)
+    if (slug.includes("/")) continue
+    const prev = out.get(slug)
+    if (!prev || s.modified > prev.modified) out.set(slug, s)
+  }
+  return out
 }

@@ -3,6 +3,7 @@ import {
   applyPreset,
   buildRows,
   fmtAge,
+  latestBySlug,
   isContextAddress,
   parseSearch,
   type Pr,
@@ -185,4 +186,18 @@ test("branchLinks keeps dotted branch names", () => {
 test("prNote", () => {
   const p = pr({ number: 9, headRef: "feat", baseRef: "master" })
   expect(prNote(p, "/r/worktrees/feat")).toContain("checkout: /r/worktrees/feat")
+})
+
+describe("latestBySlug", () => {
+  const row = (address: string | undefined, modified: number, path = `${address}@${modified}`) =>
+    ({ path, cwd: "/", address, description: "", tokens: null, modified })
+
+  test("keeps the newest session per slug of the scope", () => {
+    const m = latestBySlug(
+      [row("o/r/a", 1), row("o/r/a", 3), row("o/r/a", 2), row("o/r/b", 5), row("o/other/a", 9), row(undefined, 9)],
+      "o/r",
+    )
+    expect([...m.keys()].sort()).toEqual(["a", "b"])
+    expect(m.get("a")?.modified).toBe(3)
+  })
 })

@@ -10,6 +10,7 @@ import {
 } from "../prs/browser"
 import {
   branchLinks,
+  latestBySlug,
   PAGE,
   parseSearch,
   type Pr,
@@ -21,7 +22,7 @@ import {
   worktreeFor,
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
-import { newSession, saveRecencyDays, storedRecencyDays } from "./cue-browser"
+import { loadSessions, newSession, resumeSession, saveRecencyDays, storedRecencyDays } from "./cue-browser"
 import { scopeOfRemote } from "../browser/sessions"
 import { defaultTarget } from "../lib/default-target"
 
@@ -159,6 +160,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   ])
   const localRepo = origin[0] ? repoOfRemote(origin[0]) : undefined
   const { orgs, view } = resolveScope(ghOrgs, localRepo)
+  const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
   const deps: PrDeps = {
     load: (v) => search(exec, cwd, v, v === "repo" ? (localRepo ? [localRepo] : []) : orgs),
     localRepo,
@@ -173,8 +175,10 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     copy: copyToClipboard,
     links: () => links(exec, cwd),
     link: (branch, slug, create) => link(exec, cwd, branch, slug, create),
+    latestSessions: async () => (scope ? latestBySlug(await loadSessions(pi, cwd), scope) : new Map()),
+    resume: (session, target) => resumeSession(pi, ctx, session, target),
+    currentSession: () => ctx.sessionManager.getSessionFile(),
     startSession: (slug, target, note) => {
-      const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
       if (!scope) return "no cue scope (origin remote missing)"
       return newSession(pi, ctx, `${scope}/${slug}`, target, note)
     },

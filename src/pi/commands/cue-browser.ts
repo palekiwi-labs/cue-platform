@@ -92,7 +92,7 @@ export function newSession(
 }
 
 /** Resume a session here (via /resume-open) or in a new tmux window. */
-function resumeSession(
+export function resumeSession(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   session: SessionRow,
@@ -159,7 +159,7 @@ export function saveRecencyDays(cwd: string, days: number): void {
 }
 
 /** Every pi session in the scopes of this repository's context tree. */
-async function loadSessions(pi: ExtensionAPI, cwd: string): Promise<SessionRow[]> {
+export async function loadSessions(pi: ExtensionAPI, cwd: string): Promise<SessionRow[]> {
   const [tree, infos] = await Promise.all([
     cueBestEffort(pi, cwd, ["context", "tree", "--json"]),
     SessionManager.listAll(),
