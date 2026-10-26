@@ -1258,9 +1258,9 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}${this.showArchived ? t.fg("muted", " +archived") : ""}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : v.kind === "log"
