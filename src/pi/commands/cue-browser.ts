@@ -159,9 +159,13 @@ export function saveRecencyDays(cwd: string, days: number): void {
 }
 
 /** Every pi session in the scopes of this repository's context tree. */
-export async function loadSessions(pi: ExtensionAPI, cwd: string): Promise<SessionRow[]> {
+export async function loadSessions(
+  pi: ExtensionAPI,
+  cwd: string,
+  repoScope = false,
+): Promise<SessionRow[]> {
   const [tree, infos] = await Promise.all([
-    cueBestEffort(pi, cwd, ["context", "tree", "--json"]),
+    cueBestEffort(pi, cwd, ["context", "tree", "--json", ...(repoScope ? ["--scope", "repo"] : [])]),
     SessionManager.listAll(),
   ])
   const scopes = new Set(parseContextTree(tree).map((c) => c.scope))
@@ -283,10 +287,11 @@ export async function openBrowser(
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const deps: BrowserDeps = {
-        loadContexts: async (archived) =>
+        loadContexts: async (archived, repoScope) =>
           parseContextTree(
             await cueBestEffort(pi, ctx.cwd, [
               "context", "tree", "--sort", "recency", "--json", ...(archived ? ["--archived"] : []),
+              ...(repoScope ? ["--scope", "repo"] : []),
             ]),
           ),
         recencyDays: () => storedRecencyDays(ctx.cwd),
@@ -322,7 +327,7 @@ export async function openBrowser(
         create: (address, type, filename) =>
           createArtifact(pi, ctx.cwd, address, type, filename),
         newSession: (address, target) => newSession(pi, ctx, address, target),
-        loadSessions: () => loadSessions(pi, ctx.cwd),
+        loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
         currentSession: () => ctx.sessionManager.getSessionFile(),
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
