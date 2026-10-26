@@ -312,6 +312,16 @@ export function pinnedFirst(rows: readonly ContextRow[]): ContextRow[] {
   return fromForest(sort(toForest(rows)))
 }
 
+/** Flat order: pinned first, then newest activity, never-logged last. */
+export function sortFlatContexts(rows: readonly ContextRow[]): ContextRow[] {
+  return [...rows].sort(
+    (a, b) =>
+      Number(b.pinned) - Number(a.pinned) ||
+      (recency(b) ?? -Infinity) - (recency(a) ?? -Infinity) ||
+      a.address.localeCompare(b.address),
+  )
+}
+
 /**
  * Contexts active within `days` of `now`, or pinned, plus every ancestor
  * of one up to its root. Ancestors kept only for a descendant are marked

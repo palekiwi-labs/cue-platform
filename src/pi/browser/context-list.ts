@@ -5,7 +5,7 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent"
 import { fuzzyFilter, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { collapseTree, type ContextRow, filterRecent, relativeAge, treePrefix } from "./model"
+import { collapseTree, type ContextRow, filterRecent, relativeAge, sortFlatContexts, treePrefix } from "./model"
 
 export const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
   research: "accent",
@@ -24,7 +24,9 @@ export function treeRows(rows: ContextRow[], recent: boolean, now: number, days:
 
 /**
  * Rows to show: the folded tree, or with a query, fuzzy matches over the
- * whole list, folded, old or not.
+ * same set — folded, old or not only when the recency window is off.
+ * Ancestor-only scaffolding is dropped before matching; flat lists sort
+ * by recency.
  */
 export function shownContexts(
   rows: ContextRow[],
@@ -33,10 +35,13 @@ export function shownContexts(
   collapsed: ReadonlySet<string>,
   flat = false,
 ): ContextRow[] {
+  const candidates = tree.filter((r) => !r.ancestorOnly)
   if (query.trim() === "") {
-    return flat ? tree.filter((r) => !r.ancestorOnly) : collapseTree(tree, collapsed).rows
+    return flat
+      ? sortFlatContexts(candidates)
+      : collapseTree(tree, collapsed).rows
   }
-  return fuzzyFilter(rows, query, (r) => `${r.slug} ${r.title} ${r.scope}`)
+  return fuzzyFilter(candidates, query, (r) => `${r.slug} ${r.title} ${r.scope}`)
 }
 
 /** Slug column width fitting `rows`, never below `min`, at most 40. */
