@@ -56,6 +56,8 @@ export interface ContextLineOpts {
   tree: boolean
   /** The session's context, highlighted. */
   here: string | undefined
+  /** A context marked with a dot in the pin column (e.g. a branch link). */
+  marked?: string
   /** Rows span several scopes: show the scope in place of the title. */
   mixed: boolean
   /** Folded rows and how many descendants they hide. */
@@ -67,7 +69,7 @@ export interface ContextLineOpts {
 
 /** One context row: pin, tree and slug, age, mode, title. */
 export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string {
-  const pin = r.pinned ? t.fg("warning", "*") : " "
+  const pin = r.address === o.marked ? t.fg("accent", "●") : r.pinned ? t.fg("warning", "*") : " "
   const name = (o.tree ? t.fg("dim", treePrefix(r)) : "") +
     (r.address === o.here ? t.fg("accent", r.slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", r.slug) : r.slug) +
     (o.hidden.has(r.address) ? t.fg("dim", ` +${o.hidden.get(r.address)}`) : "")

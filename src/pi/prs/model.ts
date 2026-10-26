@@ -251,16 +251,24 @@ export function prNote(pr: Pr, checkout: string): string {
   ].join("\n")
 }
 
-/** Newest session per context slug within one scope. */
-export function latestBySlug(sessions: SessionRow[], scope: string): Map<string, SessionRow> {
-  const out = new Map<string, SessionRow>()
-  const prefix = `${scope}/`
+/** Newest session of a context. */
+export function latestSession(sessions: SessionRow[], address: string): SessionRow | undefined {
+  let best: SessionRow | undefined
   for (const s of sessions) {
-    if (!s.address?.startsWith(prefix)) continue
-    const slug = s.address.slice(prefix.length)
-    if (slug.includes("/")) continue
-    const prev = out.get(slug)
-    if (!prev || s.modified > prev.modified) out.set(slug, s)
+    if (s.address === address && (!best || s.modified > best.modified)) best = s
   }
-  return out
+  return best
+}
+
+/** A branch link value as an address: slugs resolve in the repo scope. */
+export function linkAddress(value: string, scope: string | undefined): string | undefined {
+  if (value.includes("/")) return value
+  return scope ? `${scope}/${value}` : undefined
+}
+
+/** The branch link value for an address: a slug within the repo scope. */
+export function linkValue(address: string, scope: string): string {
+  const prefix = `${scope}/`
+  const rest = address.startsWith(prefix) ? address.slice(prefix.length) : ""
+  return rest && !rest.includes("/") ? rest : address
 }

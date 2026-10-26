@@ -66,8 +66,11 @@ export interface ContextRef {
 }
 
 export interface BrowserDeps {
-  /** The whole context tree, in subtree recency order; archived ones on request. */
-  loadContexts(archived: boolean): Promise<ContextRow[]>
+  /**
+   * The whole context tree, in subtree recency order; archived ones on
+   * request; only the repository's own scope when `repoScope`.
+   */
+  loadContexts(archived: boolean, repoScope: boolean): Promise<ContextRow[]>
   /** Stored recency window in days for this repository, if any. */
   recencyDays(): number | undefined
   /** Remember the recency window for this repository. */
@@ -98,8 +101,8 @@ export interface BrowserDeps {
    * new tmux window; returns an error message on failure.
    */
   newSession(address: string, target: Target): string | undefined
-  /** Sessions in the browser's scopes. */
-  loadSessions(): Promise<SessionRow[]>
+  /** Sessions in the browser's scopes (only the repository's when `repoScope`). */
+  loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
   currentSession(): string | undefined
   /** Resume a session here or in tmux; returns an error message on failure. */
@@ -145,6 +148,8 @@ export type BrowserStart =
 
 interface ContextsView {
   kind: "contexts"
+  /** The scope the rows were loaded with, to reload when it changed. */
+  repoScope: boolean
   /** Recent contexts only, or the whole tree. */
   recent: boolean
   rows: ContextRow[]
@@ -170,6 +175,8 @@ interface SessionsView {
   /** Only this context's subtree, when opened from a context. */
   context?: ContextRef
   subset: SessionSubset
+  /** The scope the rows were loaded with, to reload when it changed. */
+  repoScope: boolean
   contexts: ContextRow[]
   sessions: SessionRow[]
   query: string
@@ -268,6 +275,8 @@ export class CueBrowser implements Component {
   private contextsFlat = false
   /** Contexts view lists archived contexts too. */
   private showArchived = false
+  /** alt+s: only the repository's own scope (cue --scope repo). */
+  private repoScope = false
 
   constructor(
     private tui: TUI,
@@ -298,7 +307,7 @@ export class CueBrowser implements Component {
 
   private pushContexts(recent: boolean): void {
     const v: ContextsView = {
-      kind: "contexts", recent, rows: [], query: "", selected: 0, loading: true,
+      kind: "contexts", repoScope: this.repoScope, recent, rows: [], query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -320,7 +329,8 @@ export class CueBrowser implements Component {
    */
   private async loadContexts(v: ContextsView, keep?: string): Promise<void> {
     v.loading = true
-    v.rows = pinnedFirst(await this.deps.loadContexts(this.showArchived))
+    v.repoScope = this.repoScope
+    v.rows = pinnedFirst(await this.deps.loadContexts(this.showArchived, this.repoScope))
     v.loading = false
     this.growSlugWidth(v.rows)
     if (!(keep && this.selectContext(v, keep)) && v.query === "") this.selectHere(v)
@@ -366,7 +376,7 @@ export class CueBrowser implements Component {
 
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
-      kind: "sessions", context,
+      kind: "sessions", repoScope: this.repoScope, context,
       // A context's own sessions may be old, so that view starts on all.
       subset: context ? "all" : "recent", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
@@ -378,9 +388,10 @@ export class CueBrowser implements Component {
 
   private async loadSessions(v: SessionsView, focus = false): Promise<void> {
     v.loading = true
-    this.sessionsCache ??= this.deps.loadSessions()
+    v.repoScope = this.repoScope
+    this.sessionsCache ??= this.deps.loadSessions(this.repoScope)
     const [contexts, sessions] = await Promise.all([
-      this.deps.loadContexts(false).then(pinnedFirst),
+      this.deps.loadContexts(false, this.repoScope).then(pinnedFirst),
       this.sessionsCache,
     ])
     v.contexts = contexts
@@ -693,7 +704,7 @@ export class CueBrowser implements Component {
         return this.refresh()
       }
       if (matchesKey(data, "ctrl+l")) return void this.onLink()
-      if (matchesKey(data, "alt+s")) return void this.onTogglePin(v)
+      if (matchesKey(data, "alt+f")) return void this.onTogglePin(v)
       if (matchesKey(data, "alt+a")) return void this.onToggleArchive(v)
       if (matchesKey(data, "alt+v")) {
         this.showArchived = !this.showArchived
@@ -749,6 +760,10 @@ export class CueBrowser implements Component {
         if (matchesKey(data, "alt+d")) return this.onDescribe()
       }
     }
+    if ((v.kind === "contexts" || v.kind === "sessions") && matchesKey(data, "alt+s")) {
+      this.repoScope = !this.repoScope
+      return this.reloadIfScopeChanged()
+    }
     if (v.kind !== "contexts") {
       if (matchesKey(data, "ctrl+r") && v.kind !== "sessions") return this.jumpTo("sessions")
       if (matchesKey(data, "ctrl+a") && v.kind !== "activity") return this.jumpTo("activity")
@@ -780,11 +795,22 @@ export class CueBrowser implements Component {
     }
   }
 
+  /** Reload the shown contexts or sessions when alt+s changed the scope since. */
+  private reloadIfScopeChanged(): void {
+    const v = this.view
+    if ((v.kind !== "contexts" && v.kind !== "sessions") || v.repoScope === this.repoScope) return
+    if (v.kind === "contexts") return void this.loadContexts(v, this.selectedContext()?.address)
+    this.sessionsCache = undefined
+    v.selected = 0
+    void this.loadSessions(v)
+  }
+
   private back(): void {
     if (this.views.length > 1) {
       this.views.pop()
       this.input.setValue(this.view.query)
       this.status = ""
+      this.reloadIfScopeChanged()
       this.refresh()
       return
     }
@@ -1221,14 +1247,20 @@ export class CueBrowser implements Component {
     return out.slice(0, height)
   }
 
+  private scopeTag(): string {
+    const k = this.view.kind
+    const scoped = this.repoScope && (k === "contexts" || k === "sessions")
+    return scoped ? this.theme.fg("warning", " scope:repo") : ""
+  }
+
   private headerLine(width: number): string {
     const t = this.theme
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}${this.showArchived ? t.fg("muted", " +archived") : ""}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : v.kind === "log"
@@ -1236,7 +1268,7 @@ export class CueBrowser implements Component {
           : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
-    const left = t.fg("accent", t.bold(title)) + "  " + target
+    const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
     return left + " ".repeat(gap) + right
   }
@@ -1251,10 +1283,10 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+s pin", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
+        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "ctrl+h address",
         "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe",
+      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {

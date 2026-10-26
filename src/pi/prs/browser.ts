@@ -65,14 +65,19 @@ export interface PrDeps {
   launchReview(req: ReviewRequest): Promise<Outcome>
   /** Copy text to system clipboard. */
   copy(text: string): Promise<void>
-  /** Branch -> linked context slug (branch.<b>.cue-context). */
+  /** The session repo's cue scope (`org/repo`); new contexts land here. */
+  scope: string | undefined
+  /** Branch -> address of its linked context (branch.<b>.cue-context). */
   links(): Promise<Map<string, string>>
-  /** Link a branch to a context, creating the context first when asked. */
-  link(branch: string, slug: string, create?: { parent?: string }): Promise<Outcome>
+  /**
+   * Link a branch to a context: an address, or with `create` a slug to
+   * create in the repo scope first. The outcome carries the linked address.
+   */
+  link(branch: string, context: string, create?: { parent?: string }): Promise<Outcome>
   /** Start a pi session in a context, the note after the orientation; error text on failure. */
-  startSession(slug: string, target: Target, note: string): string | undefined
-  /** Newest session per context slug of this repo's scope. */
-  latestSessions(): Promise<Map<string, SessionRow>>
+  startSession(address: string, target: Target, note: string): string | undefined
+  /** Newest session of a context, read when needed. */
+  latestSession(address: string): Promise<SessionRow | undefined>
   /** Resume a session; error text on failure. */
   resume(session: SessionRow, target: Target): string | undefined
   /** Path of the session this browser runs in. */
@@ -99,6 +104,8 @@ export interface Outcome {
   text: string
   /** Checkout: where the PR's branch is checked out. */
   path?: string
+  /** Link: the linked context's address. */
+  address?: string
 }
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
@@ -130,7 +137,6 @@ export class PrBrowser implements Component {
   protected folded = new Set<string>()
   protected selectedId: string | undefined
   protected links = new Map<string, string>()
-  protected sessions = new Map<string, SessionRow>()
   protected mode: CheckoutTarget = "worktree"
   protected target: Target
 
@@ -146,12 +152,6 @@ export class PrBrowser implements Component {
     this.input.focused = true
     void this.reload()
     void this.loadLinks()
-    void this.loadSessions()
-  }
-
-  protected async loadSessions(): Promise<void> {
-    this.sessions = await this.deps.latestSessions()
-    this.tui.requestRender()
   }
 
   protected async loadLinks(): Promise<void> {
@@ -219,12 +219,6 @@ export class PrBrowser implements Component {
       return undefined
     }
     return r.pr
-  }
-
-  /** Hint state: enter resumes on the highlighted row (no notices). */
-  private selectedPrResumable(): boolean {
-    const r = this.selectedRow()
-    return r?.kind === "pr" && r.pr.repo === this.deps.localRepo && this.resumable(r.pr) !== undefined
   }
 
   protected toggleFold(): void {
@@ -301,6 +295,10 @@ export class PrBrowser implements Component {
       void this.onNewSession()
       return true
     }
+    if (matchesKey(data, "ctrl+o")) {
+      void this.onCheckout()
+      return true
+    }
     if (matchesKey(data, "ctrl+n")) {
       void this.openLink()
       return true
@@ -352,10 +350,10 @@ export class PrBrowser implements Component {
 
   protected picker: ReviewPicker | undefined
 
-  /** Address of a linked slug, looked up in the loaded context rows. */
+  /** Address the PR branch links to, if it is among the listed contexts. */
   private linkedAddress(pr: Pr, rows: ContextRow[]): string | undefined {
-    const slug = this.links.get(pr.headRef)
-    return slug ? rows.find((r) => r.slug === slug)?.address : undefined
+    const a = this.links.get(pr.headRef)
+    return a && rows.some((r) => r.address === a) ? a : undefined
   }
 
   private async openPicker(): Promise<void> {
@@ -411,17 +409,27 @@ export class PrBrowser implements Component {
     }
   }
 
-  /**
-   * Link the PR branch to a context (ctrl+n). `then` runs after a
-   * successful link: enter on an unlinked PR continues into the session.
-   */
-  private async openLink(then?: (pr: Pr, slug: string) => void): Promise<void> {
+  /** Link the branch; the linked address, or undefined after a failure notice. */
+  private async linkTo(pr: Pr, context: string, create?: { parent?: string }): Promise<string | undefined> {
+    let address: string | undefined
+    await this.run(`linking ${pr.headRef} to ${context}`, async () => {
+      const o = await this.deps.link(pr.headRef, context, create)
+      if (o.ok) address = o.address
+      return o
+    })
+    if (address) this.links.set(pr.headRef, address)
+    return address
+  }
+
+  /** Link the PR branch to a context of your choice (ctrl+n). */
+  private async openLink(): Promise<void> {
     const pr = this.actionablePr()
     if (!pr || this.busy) return
     this.busy = true
     this.notice("loading contexts\u2026", "dim")
     const rows = await this.deps.contexts().finally(() => (this.busy = false))
-    const linked = this.linkedAddress(pr, rows)
+    const linked = this.links.get(pr.headRef)
+    const shown = this.linkedAddress(pr, rows)
     this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
       pr,
       context: prContext(pr),
@@ -430,57 +438,67 @@ export class PrBrowser implements Component {
       rows,
       recencyDays: this.deps.recencyDays(),
       link: true,
-      ...(linked ? { selected: linked } : {}),
+      ...(this.deps.scope ? { scope: this.deps.scope } : {}),
+      ...(linked ? { linked } : {}),
+      ...(shown ? { selected: shown } : {}),
     }, {
       cancel: () => this.closePicker(),
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
       submit: (r) => {
         this.closePicker()
         const create = r.create ? (r.parent ? { parent: r.parent } : {}) : undefined
-        void (async () => {
-          let ok = false
-          await this.run(`linking ${pr.headRef} to ${r.context}`, async () => {
-            const o = await this.deps.link(pr.headRef, r.context, create)
-            ok = o.ok
-            return o
-          })
-          if (!ok) return
-          this.links.set(pr.headRef, r.context)
-          then?.(pr, r.context)
-        })()
+        void this.linkTo(pr, r.context, create)
       },
     })
     this.input.focused = false
     this.notice("")
   }
 
-  /** Newest session of the PR's linked context, if any. */
-  private resumable(pr: Pr): SessionRow | undefined {
-    const slug = this.links.get(pr.headRef)
-    return slug ? this.sessions.get(slug) : undefined
+  /**
+   * The PR branch's context, linking it first when needed: to the repo
+   * scope's context named after the branch, created when missing.
+   */
+  private async ensureLinked(pr: Pr): Promise<string | undefined> {
+    const linked = this.links.get(pr.headRef)
+    if (linked) return linked
+    const slug = prContext(pr)
+    const rows = await this.deps.contexts()
+    const existing = rows.find((r) => r.scope === this.deps.scope && r.slug === slug)
+    return existing ? this.linkTo(pr, existing.address) : this.linkTo(pr, slug, {})
   }
 
-  /** Enter: resume the linked context's newest session, else as ctrl+s. */
+  /** Enter: work on the PR. Check out, then resume its context's newest session or start one. */
   private async onOpen(): Promise<void> {
     const pr = this.actionablePr()
-    if (!pr) return
-    const s = this.resumable(pr)
-    if (!s) return this.onNewSession()
+    if (!pr || this.busy) return
+    const address = await this.ensureLinked(pr)
+    if (!address) return
+    const session = this.deps.latestSession(address)
+    const path = await this.checkoutPr(pr)
+    const s = await session
+    if (!path) return
+    if (!s) return this.start(pr, address, path)
     if (s.path === this.deps.currentSession()) return this.notice("already in this session")
-    if (!(await this.checkoutPr(pr))) return
     const err = this.deps.resume(s, this.target)
     if (err) return this.notice(err, "error")
     if (this.target === "here") return this.close()
     this.notice(`resumed ${s.description.slice(0, 40)} in tmux`, "success")
   }
 
-  /** Ctrl+s: link if needed, check out in the current mode, start a session. */
+  /** Ctrl+s: check out and start a new session in the PR's context. */
   private async onNewSession(): Promise<void> {
     const pr = this.actionablePr()
-    if (!pr) return
-    const slug = this.links.get(pr.headRef)
-    if (!slug) return void this.openLink((p, s) => void this.startOn(p, s))
-    await this.startOn(pr, slug)
+    if (!pr || this.busy) return
+    const address = await this.ensureLinked(pr)
+    if (!address) return
+    const path = await this.checkoutPr(pr)
+    if (path) this.start(pr, address, path)
+  }
+
+  /** Ctrl+o: check out only. */
+  private async onCheckout(): Promise<void> {
+    const pr = this.actionablePr()
+    if (pr && !this.busy) await this.checkoutPr(pr)
   }
 
   /** Check the PR out in the current mode; the checkout path on success. */
@@ -494,13 +512,11 @@ export class PrBrowser implements Component {
     return path
   }
 
-  private async startOn(pr: Pr, slug: string): Promise<void> {
-    const path = await this.checkoutPr(pr)
-    if (!path) return
-    const err = this.deps.startSession(slug, this.target, prNote(pr, path))
+  private start(pr: Pr, address: string, path: string): void {
+    const err = this.deps.startSession(address, this.target, prNote(pr, path))
     if (err) return this.notice(err, "error")
     if (this.target === "here") return this.close()
-    this.notice(`started a session for ${slug} in tmux`, "success")
+    this.notice(`started a session for ${address} in tmux`, "success")
   }
 
   protected helpHints(): string[] {
@@ -509,8 +525,9 @@ export class PrBrowser implements Component {
       "alt+v view",
       "alt+z fold",
       "ctrl+up/down repo",
-      this.selectedPrResumable() ? "enter resume" : "enter session",
+      "enter session",
       "ctrl+s new session",
+      "ctrl+o checkout",
       "ctrl+n link",
       `alt+w ${this.mode}`,
       "ctrl+t target",
@@ -579,6 +596,7 @@ export class PrBrowser implements Component {
       t.fg("accent", `(${PRESET_LABEL[this.preset]})`),
       t.fg(d?.truncated ? "warning" : "muted", counts),
       this.loading ? t.fg("dim", "loading…") : "",
+      this.busy ? t.fg("warning", "working…") : "",
     ]
     return truncateToWidth(parts.filter(Boolean).join("  "), width)
   }
@@ -639,8 +657,7 @@ export class PrBrowser implements Component {
         ? t.fg("warning", pr.title)
         : pr.title
     const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
-    const linked = this.links.get(pr.headRef)
-    const branch = t.fg("dim", `(${pr.headRef})`) + (linked ? " " + t.fg("accent", `@${linked}`) : "")
+    const branch = t.fg("dim", `(${pr.headRef})`)
     return pad(
       [indent + state, num, age, author, checks, title, branch + labels].join(" "),
       width,
