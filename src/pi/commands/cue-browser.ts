@@ -23,7 +23,7 @@ import { linkContext } from "./context-pins"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
 export const CONTEXTS_SHORTCUT = "ctrl+t"
-/** Open the artifacts of the session's (or the global) context. */
+/** Open the artifacts of the session's context. */
 export const ARTIFACTS_SHORTCUT = "alt+a"
 /** Open the sessions view (the resume picker). */
 export const SESSIONS_SHORTCUT = "ctrl+r"
@@ -265,22 +265,12 @@ async function createArtifact(
   return { path: out }
 }
 
-/** The session's linked context, else the global (branch/env) one. */
-async function resolveContext(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-): Promise<string | undefined> {
-  const linked = currentContext(ctx.sessionManager.getBranch())
-  if (linked) return linked
-  try {
-    const status = JSON.parse(
-      await cueBestEffort(pi, ctx.cwd, ["status", "--json"], "{}"),
-    ) as { address?: unknown }
-    return typeof status.address === "string" ? status.address : undefined
-  } catch {
-    return undefined
-  }
-}
+/**
+ * The context pi linked to this session. A session is a pi concept, so
+ * cue's ambient resolution ($CUE_CONTEXT, branch config) does not count.
+ */
+const sessionContext = (ctx: ExtensionContext): string | undefined =>
+  currentContext(ctx.sessionManager.getBranch())
 
 export async function openBrowser(
   pi: ExtensionAPI,
@@ -379,9 +369,9 @@ async function openArtifacts(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {
-  const address = await resolveContext(pi, ctx)
+  const address = sessionContext(ctx)
   if (!address) {
-    ctx.ui.notify("cue: no session or global context; opening contexts", "info")
+    ctx.ui.notify("cue: this session has no context; opening contexts", "info")
     return openBrowser(pi, ctx, { view: "contexts" })
   }
   return openBrowser(pi, ctx, {
@@ -394,7 +384,7 @@ async function openActivity(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {
-  const address = await resolveContext(pi, ctx)
+  const address = sessionContext(ctx)
   if (!address) {
     ctx.ui.notify("cue: this session has no context", "error")
     return
@@ -412,7 +402,7 @@ export function registerCueBrowser(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => openBrowser(pi, ctx, { view: "contexts" }),
   })
   pi.registerCommand("cue:artifacts", {
-    description: "Browse artifacts of the session context (or the global one)",
+    description: "Browse artifacts of the session context",
     handler: async (_args, ctx) => openArtifacts(pi, ctx),
   })
   pi.registerShortcut(CONTEXTS_SHORTCUT, {
@@ -456,7 +446,7 @@ export function registerCueBrowser(pi: ExtensionAPI): void {
     handler: async (ctx) => openActivity(pi, ctx),
   })
   pi.registerShortcut(ARTIFACTS_SHORTCUT, {
-    description: "Browse artifacts of the session context (or the global one)",
+    description: "Browse artifacts of the session context",
     handler: async (ctx) => openArtifacts(pi, ctx),
   })
 }
