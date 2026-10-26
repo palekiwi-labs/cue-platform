@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { shownContexts } from "./context-list"
+import { visibleWidth } from "@earendil-works/pi-tui"
+import { contextLine, shownContexts } from "./context-list"
 import { parseContextTree, sortFlatContexts } from "./model"
 
 const rows = parseContextTree(JSON.stringify({ roots: [{
@@ -27,4 +28,17 @@ test("flat lists sort by pinned then recency, never-logged last", () => {
     ({ ...rows[1]!, slug, address: `org/repo/${slug}`, pinned, lastLoggedAt }) as typeof rows[number]
   const list = [mk("old", 100), mk("never", null), mk("new", 300), mk("pinned", 50, true)]
   expect(sortFlatContexts(list).map(r => r.slug)).toEqual(["pinned", "new", "old", "never"])
+})
+
+test("a cut slug emits no ANSI reset, so the selection background survives", () => {
+  const theme = { fg: (_: string, s: string) => `\x1b[2m${s}\x1b[22m` } as never
+  const long = { ...rows[1]!, slug: "a-very-long-context-slug-that-does-not-fit" }
+  const opts = { tree: true, here: undefined, mixed: false, hidden: new Map(), now: 0 }
+  const line = contextLine(theme, long, { ...opts, slugWidth: 60, width: 80 })
+  expect(line).not.toContain("\x1b[0m")
+  expect(line).toContain("…")
+  expect(visibleWidth(line)).toBe(80)
+  // Wide rows lift the 40-column cap: the slug fits at 45% of 120.
+  const wide = contextLine(theme, long, { ...opts, slugWidth: 50, width: 120 })
+  expect(wide).toContain(long.slug)
 })

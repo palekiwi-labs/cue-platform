@@ -4,7 +4,7 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent"
-import { fuzzyFilter, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { fuzzyFilter, sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { collapseTree, type ContextRow, filterRecent, relativeAge, sortFlatContexts, treePrefix } from "./model"
 
 export const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
@@ -16,6 +16,20 @@ export const MODE_COLOR: Record<string, Parameters<Theme["fg"]>[0]> = {
 }
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)
+
+/**
+ * Pad or cut to `w` columns. Unlike truncateToWidth it emits no ANSI
+ * reset when cutting, so a row's selection background survives.
+ */
+const clip = (s: string, w: number): string => {
+  if (w <= 0) return ""
+  const sw = visibleWidth(s)
+  if (sw <= w) return s + " ".repeat(w - sw)
+  return sliceByColumn(s, 0, w - 1, true) + "…"
+}
+
+/** Widest slug column a row of `width` gets: 40, or 45% of wide rows. */
+const slugCap = (width: number): number => Math.max(40, Math.floor(width * 0.45))
 
 /** The tree before folding: recent contexts (with ancestors), or all. */
 export function treeRows(rows: ContextRow[], recent: boolean, now: number, days: number): ContextRow[] {
@@ -44,11 +58,11 @@ export function shownContexts(
   return fuzzyFilter(candidates, query, (r) => `${r.slug} ${r.title} ${r.scope}`)
 }
 
-/** Slug column width fitting `rows`, never below `min`, at most 40. */
+/** Slug column width fitting `rows`, never below `min`; contextLine caps it to the row width. */
 export function slugWidthFor(rows: ContextRow[], collapsed: ReadonlySet<string>, min: number): number {
   const widths = rows.map((r) =>
     visibleWidth(treePrefix(r) + r.slug) + (collapsed.has(r.address) ? 5 : 0))
-  return Math.min(40, Math.max(min, ...widths))
+  return Math.max(min, ...widths)
 }
 
 export interface ContextLineOpts {
@@ -70,9 +84,15 @@ export interface ContextLineOpts {
 /** One context row: pin, tree and slug, age, mode, title. */
 export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string {
   const pin = r.address === o.marked ? t.fg("accent", "●") : r.pinned ? t.fg("warning", "*") : " "
-  const name = (o.tree ? t.fg("dim", treePrefix(r)) : "") +
-    (r.address === o.here ? t.fg("accent", r.slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", r.slug) : r.slug) +
-    (o.hidden.has(r.address) ? t.fg("dim", ` +${o.hidden.get(r.address)}`) : "")
+  // Cut the plain slug before styling: cutting styled text would reset
+  // the selection background for the rest of the row.
+  const slugW = Math.min(o.slugWidth, slugCap(o.width))
+  const prefix = o.tree ? treePrefix(r) : ""
+  const marker = o.hidden.has(r.address) ? ` +${o.hidden.get(r.address)}` : ""
+  const room = slugW - visibleWidth(prefix) - visibleWidth(marker)
+  const slug = visibleWidth(r.slug) > room ? clip(r.slug, room) : r.slug
+  const styled = r.address === o.here ? t.fg("accent", slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", slug) : slug
+  const name = clip(t.fg("dim", prefix) + styled + t.fg("dim", marker), slugW)
   const mode = r.archivedAt !== null
     ? t.fg("dim", "ARCHIVED")
     : r.mode
@@ -81,5 +101,5 @@ export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string
   const age = t.fg("muted", relativeAge(r.lastLoggedAt, o.now).padStart(4))
   // Cross-repo lists show the scope in place of the title, as cue.nvim does.
   const rest = o.mixed ? t.fg("muted", r.scope) : t.fg("muted", r.title)
-  return pad(`${pin} ${pad(name, o.slugWidth)} ${age} ${mode} ${rest}`, o.width)
+  return clip(`${pin} ${name} ${age} ${mode} ${rest}`, o.width)
 }
