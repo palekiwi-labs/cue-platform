@@ -231,13 +231,13 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "ctrl+r")) return void this.reload(false)
+    if (matchesKey(data, "alt+r")) return void this.reload(false)
     if (matchesKey(data, "enter")) return void this.onOpen()
     if (matchesKey(data, "ctrl+t")) {
       this.target = this.target === "here" ? "tmux" : "here"
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "alt+r")) {
+    if (matchesKey(data, "ctrl+r")) {
       this.pane = this.pane === "prompt" ? "response" : "prompt"
       this.previewScroll = 0
       return this.tui.requestRender()
@@ -376,8 +376,8 @@ export class AgentMonitor implements Component {
       "tab running/all",
       `enter open ${this.pane}`,
       "ctrl+t target",
-      `alt+r ${this.pane === "prompt" ? "response" : "prompt"}`,
-      "ctrl+r refresh",
+      `ctrl+r ${this.pane === "prompt" ? "response" : "prompt"}`,
+      "alt+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold",
       "ctrl+s session",

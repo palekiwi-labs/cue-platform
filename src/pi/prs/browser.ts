@@ -274,7 +274,7 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "ctrl+up")) return this.hopRepo(rows, -1)
     if (matchesKey(data, "ctrl+down")) return this.hopRepo(rows, 1)
     if (matchesKey(data, "alt+z")) return this.toggleFold()
-    if (matchesKey(data, "ctrl+r")) return void this.reload()
+    if (matchesKey(data, "alt+r")) return void this.reload()
     if (this.handleAction(data)) return
 
     const before = this.input.getValue()
@@ -313,7 +313,7 @@ export class PrBrowser implements Component {
       this.tui.requestRender()
       return true
     }
-    if (matchesKey(data, "alt+r")) {
+    if (matchesKey(data, "ctrl+r")) {
       void this.openPicker()
       return true
     }
@@ -531,10 +531,10 @@ export class PrBrowser implements Component {
       "ctrl+n link",
       `alt+w ${this.mode}`,
       "ctrl+t target",
-      "alt+r review",
+      "ctrl+r review",
       "ctrl+y url",
       "ctrl+h title",
-      "ctrl+r refresh",
+      "alt+r refresh",
       "esc close",
     ]
   }
