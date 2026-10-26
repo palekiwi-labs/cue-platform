@@ -43,16 +43,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1792577042,
-        "narHash": "sha256-5R/7yTDlv6jOQS+gHfuq/CvMnFxk2g3HncAwyIzXp/Q=",
+        "lastModified": 1792943325,
+        "narHash": "sha256-M2E36Gwgw1jGHpDLpZ1wRk9+K/TExk8ZdliPMuE8Lzs=",
         "owner": "palekiwi-labs",
         "repo": "cast",
-        "rev": "f637d407d398abaf022674006b7c192ff941c02b",
+        "rev": "4c39fb90983e4164a588927ad9cb247dec02d693",
         "type": "github"
       },
       "original": {
         "owner": "palekiwi-labs",
-        "ref": "spike/herdr-service-pivot",
+        "ref": "feat/cast-tui",
         "repo": "cast",
         "type": "github"
       }
