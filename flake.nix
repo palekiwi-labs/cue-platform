@@ -14,7 +14,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     cast = {
-      url = "github:palekiwi-labs/cast/spike/herdr-service-pivot";
+      url = "github:palekiwi-labs/cast/feat/cast-tui";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -34,9 +34,19 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf cue cast; };
+        # Host side: cast and its TUI. Kept out of the container bundle.
+        host = {
+          inherit (cast.packages.${system}) cast;
+          cast-tui = import ./nix/cast-tui.nix { inherit pkgs; };
+        };
       in
       {
-        packages = platform // {
+        packages = platform // host // {
+          host = pkgs.symlinkJoin {
+            name = "cue-platform-host";
+            paths = builtins.attrValues host;
+            meta.mainProgram = "cast";
+          };
           # Everything above in one package, so consumers add a single
           # entry and pick up new tools without editing their flake.
           default = pkgs.buildEnv {
