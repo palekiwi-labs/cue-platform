@@ -3,7 +3,9 @@
  * browser lists it). The PR browser hosts it full screen in two modes:
  *
  * - review: pick the parent of the review context; the context name and
- *   the manifest are side settings.
+ *   the manifest are side settings. When the named context already exists
+ *   in the repo scope its parent is kept: the first row starts under it
+ *   and other parents are refused (cue has no reparent).
  * - link: pick the context the PR branch links to. Enter on a context
  *   links it. The first row depends on the named context: when it exists
  *   in the repo scope it links it, else it creates it at the top level;
@@ -30,7 +32,7 @@ export interface PickerInit {
   link?: boolean
   /** Address of the context to highlight first. */
   selected?: string
-  /** Link mode: the session repo's scope, where new contexts land. */
+  /** The session repo's scope, where new contexts land. */
   scope?: string
   /** Link mode: address the branch links to now. */
   linked?: string
@@ -82,7 +84,7 @@ export class ReviewPicker {
     this.step = recencyIndex(init.recencyDays)
     this.query.focused = true
     this.slugWidth = slugWidthFor(init.rows, NONE, 12)
-    if (init.selected) this.preselect(init.selected)
+    if (init.selected && !(!init.link && this.existing())) this.preselect(init.selected)
   }
 
   /** Highlight a context, widening to all contexts when the window hides it. */
@@ -96,7 +98,7 @@ export class ReviewPicker {
     this.selected = i < 0 ? 0 : i + this.offset()
   }
 
-  /** Link mode: an existing context in the repo scope named like the name. */
+  /** An existing context in the repo scope named like the name. */
   private existing(): ContextRow | undefined {
     const name = this.name.getValue().trim()
     return this.init.rows.find((r) => r.scope === this.init.scope && r.slug === name)
@@ -240,7 +242,11 @@ export class ReviewPicker {
       if (e) return this.host.submit({ context: e.address })
       return this.host.submit({ context: name, create: true })
     }
-    const parent = row?.address
+    const e = this.existing()
+    if (e && row) {
+      return this.say(`${name} exists ${under(e)}; ctrl+e picks another name`, "error")
+    }
+    const parent = e ? e.parent : row?.address
     this.host.submit({
       context: this.name.getValue().trim(),
       manifest: this.init.manifests[this.manifest]!,
@@ -289,7 +295,7 @@ export class ReviewPicker {
         t.fg("muted", `pick the parent (${scope})`)
     const settings = link
       ? this.linkState() + "   " + label("new context") + name
-      : label("context") + name + "   " + label("manifest") + manifests
+      : label("context") + name + this.existsNote() + "   " + label("manifest") + manifests
     const lines = [
       truncateToWidth(head, width),
       truncateToWidth(settings, width),
@@ -323,11 +329,20 @@ export class ReviewPicker {
       (parent ? t.fg("muted", ` under ${parent.address}`) : "")
   }
 
+  /** Review mode: flags a named context that already exists. */
+  private existsNote(): string {
+    const e = this.init.link ? undefined : this.existing()
+    return e ? " " + this.theme.fg("warning", `exists ${under(e)}`) : ""
+  }
+
   private firstLine(): string | undefined {
     const t = this.theme
     const name = this.name.getValue().trim()
     switch (this.first()) {
-      case "none-parent": return t.fg("dim", `  ${NO_PARENT}`)
+      case "none-parent": {
+        const e = this.existing()
+        return e ? t.fg("dim", `  (keep: ${under(e)})`) : t.fg("dim", `  ${NO_PARENT}`)
+      }
       case "existing": return t.fg("dim", "  (link existing: ") + this.existing()!.address + t.fg("dim", ")")
       case "create": return t.fg("dim", `  (new: ${name}, top level)`)
       default: return undefined
@@ -357,5 +372,7 @@ export class ReviewPicker {
       start + i === this.selected ? t.bg("selectedBg", pad(l, width)) : l)
   }
 }
+
+const under = (r: ContextRow): string => (r.parent ? `under ${r.parent}` : "with no parent")
 
 const pad = (s: string, w: number): string => truncateToWidth(s, w, "…", true)

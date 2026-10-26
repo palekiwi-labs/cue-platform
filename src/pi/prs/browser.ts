@@ -373,6 +373,7 @@ export class PrBrowser implements Component {
       manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
       rows,
       recencyDays: this.deps.recencyDays(),
+      ...(this.deps.scope ? { scope: this.deps.scope } : {}),
       ...(linked ? { selected: linked } : {}),
     }, {
       cancel: () => this.closePicker(),

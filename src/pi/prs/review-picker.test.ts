@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { link?: boolean; selected?: string; scope?: string; linked?: string; context?: string } = {}) {
+function setup(extra: { link?: boolean; selected?: string; scope?: string; linked?: string; context?: string; rows?: ContextRow[] } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -69,6 +69,24 @@ describe("ReviewPicker", () => {
     s.p.handleInput("\r")
     expect(s.results[0]!.context).toBe("review-t-2")
     expect(s.cancelled()).toBe(false)
+  })
+
+  test("an existing review context keeps its parent; others are refused", () => {
+    const rows = [row("alpha"), row("beta"), { ...row("review-t"), parent: "o/r/alpha" }]
+    const s = setup({ rows, scope: "o/r", selected: "o/r/beta" })
+    expect(s.p.render(120).join("\n")).toContain("exists under o/r/alpha")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default", parent: "o/r/alpha" }])
+    s.p.handleInput("\x1b[B")
+    s.p.handleInput("\r")
+    expect(s.results).toHaveLength(1)
+    expect(s.p.render(120).at(-1)).toContain("ctrl+e")
+  })
+
+  test("an existing review context without a parent starts with none", () => {
+    const s = setup({ rows: [row("alpha"), row("review-t")], scope: "o/r" })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
 
   test("esc goes back", () => {
