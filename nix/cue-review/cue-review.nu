@@ -164,9 +164,18 @@ def slugify [name: string] {
   | str trim -c '-'
 }
 
-# Create the review context if missing.
+# Create the review context if missing; an existing one must keep its parent.
 def ensure-context [repo: path, slug: string, title: string, parent: any] {
-  if ((do { ^cue status -C $repo --context $slug } | complete).exit_code != 0) {
+  let status = (do { ^cue status -C $repo --context $slug --json } | complete)
+  if $status.exit_code == 0 {
+    # cue has no reparent: refuse a parent the existing context lacks
+    # rather than silently ignoring it.
+    let current = ($status.stdout | from json | get -o parent)
+    if $parent != null and $parent != $current {
+      let under = if $current == null { "no parent" } else { $current }
+      die $"context ($slug) exists under ($under), not ($parent); pass --context with another name"
+    }
+  } else {
     let args = if $parent == null { [] } else { [--parent $parent] }
     let created = (do { ^cue context create $slug --title $title --mode review -C $repo ...$args } | complete)
     if $created.exit_code != 0 { die $created.stderr }
