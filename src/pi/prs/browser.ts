@@ -221,12 +221,6 @@ export class PrBrowser implements Component {
     return r.pr
   }
 
-  /** Hint state: enter resumes on the highlighted row (no notices). */
-  private selectedPrResumable(): boolean {
-    const r = this.selectedRow()
-    return r?.kind === "pr" && r.pr.repo === this.deps.localRepo && this.resumable(r.pr) !== undefined
-  }
-
   protected toggleFold(): void {
     if (this.view !== "org") return
     const r = this.selectedRow()
@@ -509,7 +503,7 @@ export class PrBrowser implements Component {
       "alt+v view",
       "alt+z fold",
       "ctrl+up/down repo",
-      this.selectedPrResumable() ? "enter resume" : "enter session",
+      "enter session",
       "ctrl+s new session",
       "ctrl+n link",
       `alt+w ${this.mode}`,
