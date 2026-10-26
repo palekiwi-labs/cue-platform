@@ -462,7 +462,7 @@ export class PrBrowser implements Component {
       "enter session",
       "ctrl+n link",
       `alt+w ${this.mode}`,
-      `ctrl+t ${this.target}`,
+      "ctrl+t target",
       "alt+r review",
       "ctrl+y url",
       "ctrl+h title",
@@ -522,6 +522,7 @@ export class PrBrowser implements Component {
       : ""
     const parts = [
       t.fg("accent", t.bold("pull requests")),
+      t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`),
       t.fg("warning", `[${this.view}]`),
       t.fg("muted", scope),
       t.fg("accent", `(${PRESET_LABEL[this.preset]})`),
