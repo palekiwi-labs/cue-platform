@@ -346,12 +346,6 @@ export class PrBrowser implements Component {
 
   protected picker: ReviewPicker | undefined
 
-  /** Address the PR branch links to, if it is among the listed contexts. */
-  private linkedAddress(pr: Pr, rows: ContextRow[]): string | undefined {
-    const a = this.links.get(pr.headRef)
-    return a && rows.some((r) => r.address === a) ? a : undefined
-  }
-
   private async openPicker(): Promise<void> {
     const pr = this.actionablePr()
     if (!pr || this.busy) return
@@ -361,7 +355,6 @@ export class PrBrowser implements Component {
       .finally(() => (this.busy = false))
     if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
     const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
-    const linked = this.linkedAddress(pr, rows)
     this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
       pr,
       context: reviewContext(pr),
@@ -370,7 +363,7 @@ export class PrBrowser implements Component {
       rows,
       recencyDays: this.deps.recencyDays(),
       ...(this.deps.scope ? { scope: this.deps.scope } : {}),
-      ...(linked ? { linked } : {}),
+      branch: prContext(pr),
     }, {
       cancel: () => this.closePicker(),
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),

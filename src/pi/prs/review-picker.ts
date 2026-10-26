@@ -1,10 +1,10 @@
 /**
  * Review context picker for one PR, over the repo's context tree (as the
  * cue browser lists it), hosted full screen by the PR browser. Enter on a
- * context reviews into it. The first row is the named context: reuse it
- * when it exists, else create it at the top level. ctrl+n edits a new name
- * (prefilled with the named context) and creates it under the highlighted
- * context; existing names are refused. tab cycles the manifest.
+ * context reviews into it; the highlight starts on review-<branch>, else
+ * <branch>, else the top. ctrl+n edits a new name (prefilled with
+ * review-<branch>) and creates it under the highlighted context; existing
+ * names are refused. tab cycles the manifest.
  */
 
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
@@ -24,14 +24,14 @@ export interface PickerInit {
   recencyDays: number | undefined
   /** The session repo's scope, where new contexts land. */
   scope?: string
-  /** Address of the PR branch's linked context, highlighted when the named context does not exist. */
-  linked?: string
+  /** Branch context slug, highlighted when the review context does not exist. */
+  branch?: string
 }
 
 export interface PickerResult {
   /** Slug of the context to review into. */
   context: string
-  /** Set when the context is created: its parent's address. */
+  /** Set when the context is created: its parent's address, if any. */
   parent?: string
   manifest: string
 }
@@ -54,7 +54,7 @@ export class ReviewPicker {
   private manifest: number
   private recent = true
   private step: number
-  /** Index into the list: the first row, then shown contexts. */
+  /** Index into the shown contexts. */
   private selected = 0
   private message: { text: string; tone: "error" | "muted" } = { text: "", tone: "muted" }
   private slugWidth: number
@@ -70,7 +70,8 @@ export class ReviewPicker {
     this.step = recencyIndex(init.recencyDays)
     this.query.focused = true
     this.slugWidth = slugWidthFor(init.rows, NONE, 12)
-    if (!this.existing(init.context) && init.linked) this.preselect(init.linked)
+    const start = this.existing(init.context) ?? (init.branch ? this.existing(init.branch) : undefined)
+    if (start) this.preselect(start.address)
   }
 
   /** Highlight a context, widening to all contexts when the window hides it. */
@@ -81,7 +82,7 @@ export class ReviewPicker {
       i = this.shown().findIndex((r) => r.address === address)
       if (i < 0) this.recent = true
     }
-    this.selected = i < 0 ? 0 : i + 1
+    this.selected = Math.max(0, i)
   }
 
   /** An existing context in the repo scope with this slug. */
@@ -112,12 +113,12 @@ export class ReviewPicker {
 
   private highlighted(): ContextRow | undefined {
     this.clamp()
-    return this.selected >= 1 ? this.shown()[this.selected - 1] : undefined
+    return this.shown()[this.selected]
   }
 
   handleInput(data: string): void {
     if (this.editing) return this.handleEdit(data)
-    const n = this.shown().length + 1
+    const n = this.shown().length
     const move = (d: number) => {
       this.selected = Math.max(0, Math.min(n - 1, this.selected + d))
       this.tui.requestRender()
@@ -164,7 +165,7 @@ export class ReviewPicker {
     this.query.handleInput(data)
     if (this.query.getValue() !== before) {
       // Searching lands on the best match rather than the first row.
-      this.selected = this.query.getValue().trim() ? 1 : 0
+      this.selected = 0
       this.message = { text: "", tone: "muted" }
     }
     this.tui.requestRender()
@@ -196,17 +197,17 @@ export class ReviewPicker {
 
   /** Keep the selection inside the list. */
   private clamp(): void {
-    this.selected = Math.max(0, Math.min(this.selected, this.shown().length))
+    this.selected = Math.max(0, Math.min(this.selected, this.shown().length - 1))
   }
 
   private manifestName(): string {
     return this.init.manifests[this.manifest]!
   }
 
-  /** Review into the highlighted context, or the named one from the first row. */
   private submit(): void {
     const row = this.highlighted()
-    this.host.submit({ context: row ? row.slug : this.init.context, manifest: this.manifestName() })
+    if (!row) return this.say("no context: ctrl+n creates one", "error")
+    this.host.submit({ context: row.slug, manifest: this.manifestName() })
   }
 
   // ---- rendering -------------------------------------------------------
@@ -255,15 +256,6 @@ export class ReviewPicker {
     return lines.slice(0, this.height()).map((l) => truncateToWidth(l, width))
   }
 
-  private firstLine(): string {
-    const t = this.theme
-    const name = this.init.context
-    const e = this.existing(name)
-    return e
-      ? t.fg("dim", "  (existing: ") + e.address + t.fg("dim", ")")
-      : t.fg("dim", `  (new: ${name}, top level)`)
-  }
-
   private listLines(width: number, height: number): string[] {
     const t = this.theme
     const rows = this.shown()
@@ -273,11 +265,8 @@ export class ReviewPicker {
     const mixed = new Set(rows.map((r) => r.scope)).size > 1
     const hidden = tree ? collapseTree(this.tree(), NONE).hidden : new Map<string, number>()
     const now = this.now()
-    const all = [
-      pad(this.firstLine(), width),
-      ...rows.map((r) =>
-        contextLine(t, r, { tree, here: this.init.linked, marked: this.init.linked, mixed, hidden, slugWidth: this.slugWidth, now, width })),
-    ]
+    const all = rows.map((r) =>
+      contextLine(t, r, { tree, here: undefined, mixed, hidden, slugWidth: this.slugWidth, now, width }))
     if (rows.length === 0) {
       all.push(t.fg("warning", q ? "no matching contexts" : `no contexts active in ${this.days}d (alt+a: all)`))
     }

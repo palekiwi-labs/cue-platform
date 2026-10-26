@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { scope?: string; linked?: string; context?: string; rows?: ContextRow[] } = {}) {
+function setup(extra: { scope?: string; branch?: string; context?: string; rows?: ContextRow[] } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -35,11 +35,10 @@ function setup(extra: { scope?: string; linked?: string; context?: string; rows?
 }
 
 describe("ReviewPicker", () => {
-  test("enter on the first row reviews into the named context", () => {
+  test("without a match the highlight starts at the top", () => {
     const s = setup()
-    expect(s.p.render(100).join("\n")).toContain("(new: review-t, top level)")
     s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
+    expect(s.results).toEqual([{ context: "alpha", manifest: "default" }])
   })
 
   test("enter on a context reviews into it; tab cycles the manifest", () => {
@@ -50,37 +49,27 @@ describe("ReviewPicker", () => {
     expect(s.results).toEqual([{ context: "beta", manifest: "quick" }])
   })
 
-  test("an existing named context is highlighted over the linked one", () => {
-    const s = setup({ rows: [row("alpha"), row("review-t")], scope: "o/r", linked: "o/r/alpha" })
-    expect(s.p.render(100).join("\n")).toContain("(existing: o/r/review-t)")
+  test("review-<branch> is highlighted over <branch>", () => {
+    const s = setup({ rows: [row("alpha"), row("t"), row("review-t")], scope: "o/r", branch: "t" })
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
 
-  test("without the named context the linked one is highlighted", () => {
-    const s = setup({ scope: "o/r", linked: "o/r/beta" })
+  test("without review-<branch> the branch context is highlighted", () => {
+    const s = setup({ scope: "o/r", branch: "beta" })
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "beta", manifest: "default" }])
   })
 
-  test("ctrl+n edits a prefilled name and creates under the highlighted context", () => {
-    const s = setup({ scope: "o/r", linked: "o/r/alpha" })
-    s.p.handleInput("\x0e")
-    expect(s.results).toEqual([])
-    s.type("-2")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "review-t-2", manifest: "default", parent: "o/r/alpha" }])
-  })
-
-  test("ctrl+n on the first row creates at the top level; esc backs out", () => {
-    const s = setup()
+  test("ctrl+n edits a prefilled name and creates under the highlighted context; esc backs out", () => {
+    const s = setup({ scope: "o/r", branch: "beta" })
     s.p.handleInput("\x0e")
     s.p.handleInput("\x1b")
-    expect(s.results).toEqual([])
     expect(s.cancelled()).toBe(false)
     s.p.handleInput("\x0e")
+    s.type("-2")
     s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
+    expect(s.results).toEqual([{ context: "review-t-2", manifest: "default", parent: "o/r/beta" }])
   })
 
   test("ctrl+n refuses existing names and non-slugs", () => {
@@ -92,6 +81,15 @@ describe("ReviewPicker", () => {
     s.p.handleInput("\r")
     expect(s.p.render(100).at(-1)).toContain("slug")
     expect(s.results).toEqual([])
+  })
+
+  test("with no contexts ctrl+n creates at the top level", () => {
+    const s = setup({ rows: [] })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([])
+    s.p.handleInput("\x0e")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
 
   test("esc goes back", () => {
