@@ -1248,7 +1248,9 @@ export class CueBrowser implements Component {
   }
 
   private scopeTag(): string {
-    return this.repoScope ? this.theme.fg("warning", " scope:repo") : ""
+    const k = this.view.kind
+    const scoped = this.repoScope && (k === "contexts" || k === "sessions")
+    return scoped ? this.theme.fg("warning", " scope:repo") : ""
   }
 
   private headerLine(width: number): string {
@@ -1256,9 +1258,9 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}${this.showArchived ? t.fg("muted", " +archived") : ""}${this.scopeTag()}`
+      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${this.contextsFlat ? t.fg("muted", " flat") : ""}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}${this.scopeTag()}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}${!this.sessionsFlat && v.subset !== "labeled" ? ", tree" : ""})${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : v.kind === "log"
@@ -1266,7 +1268,7 @@ export class CueBrowser implements Component {
           : `Cue artifacts ${t.fg("muted", v.context.address)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
-    const left = t.fg("accent", t.bold(title)) + "  " + target
+    const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
     return left + " ".repeat(gap) + right
   }
