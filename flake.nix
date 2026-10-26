@@ -10,7 +10,7 @@
     };
     nvf.url = "github:NotAShelf/nvf";
     cue = {
-      url = "git+file:///home/pl/code/palekiwi-labs/cue?ref=cue-agent-prototype";
+      url = "github:palekiwi-labs/cue/cue-agent-prototype";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     cast = {

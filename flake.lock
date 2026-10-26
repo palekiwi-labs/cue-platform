@@ -68,16 +68,16 @@
       "locked": {
         "lastModified": 1792942915,
         "narHash": "sha256-+5aJmXzGTK98v317rP6cetrJyZMKWUvkb8s/qYEkX/k=",
-        "ref": "cue-agent-prototype",
+        "owner": "palekiwi-labs",
+        "repo": "cue",
         "rev": "09d35c2b30139a2a8e41d96763d2e3d5553a04ed",
-        "revCount": 553,
-        "type": "git",
-        "url": "file:///home/pl/code/palekiwi-labs/cue"
+        "type": "github"
       },
       "original": {
+        "owner": "palekiwi-labs",
         "ref": "cue-agent-prototype",
-        "type": "git",
-        "url": "file:///home/pl/code/palekiwi-labs/cue"
+        "repo": "cue",
+        "type": "github"
       }
     },
     "fenix": {
