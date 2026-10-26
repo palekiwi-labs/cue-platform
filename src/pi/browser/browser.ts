@@ -1445,8 +1445,8 @@ export class CueBrowser implements Component {
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()
-    // when(11) badge(9) who(13), each followed by a space
-    const summaryWidth = Math.max(10, width - (11 + 1) - (9 + 1) - (13 + 1))
+    // when(11) badge(9), each followed by a space
+    const summaryWidth = Math.max(10, width - (11 + 1) - (9 + 1))
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
     for (let i = a; i < b; i++) {
@@ -1454,8 +1454,7 @@ export class CueBrowser implements Component {
       const sel = i === v.selected
       const when = pad(fmtWhen(e.timestamp, now), 11)
       const badge = t.fg(kindLabel(e.kind).color, pad(kindLabel(e.kind).label, 9))
-      const who = t.fg("dim", pad(`${e.harness ?? "?"}@${e.host ?? "?"}`, 13))
-      const line = pad(`${when} ${badge} ${who} ${pad(eventSummary(e), summaryWidth)}`, width)
+      const line = pad(`${when} ${badge} ${pad(eventSummary(e), summaryWidth)}`, width)
       out.push(sel ? t.bg("selectedBg", line) : line)
     }
     return out
