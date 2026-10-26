@@ -5,8 +5,10 @@
  * - review: pick the parent of the review context; the context name and
  *   the manifest are side settings.
  * - link: pick the context the PR branch links to. Enter on a context
- *   links it; enter on the first row creates the named context without a
- *   parent; ctrl+n creates it under the highlighted context.
+ *   links it. The first row depends on the named context: when it exists
+ *   in the repo scope it links it, else it creates it at the top level;
+ *   while the branch is linked and the name is untouched there is no
+ *   first row. ctrl+n creates the named context under the highlighted one.
  */
 
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
@@ -21,17 +23,21 @@ export interface PickerInit {
   context: string
   manifests: string[]
   manifest: number
-  /** The repo's context tree, pinned first. */
+  /** The context tree as the cue browser lists it, pinned first. */
   rows: ContextRow[]
   recencyDays: number | undefined
   /** Link mode instead of review mode. */
   link?: boolean
   /** Address of the context to highlight first. */
   selected?: string
+  /** Link mode: the session repo's scope, where new contexts land. */
+  scope?: string
+  /** Link mode: address the branch links to now. */
+  linked?: string
 }
 
 export interface PickerResult {
-  /** Review: the review context. Link: the slug to link (and create). */
+  /** Review: the review context. Link: the address to link, or with create the slug to create. */
   context: string
   parent?: string
   /** Review mode only. */
@@ -59,7 +65,7 @@ export class ReviewPicker {
   private manifest: number
   private recent = true
   private step: number
-  /** 0 is "no parent"; i > 0 is shown context i - 1. */
+  /** Index into the list: the first row (if any), then shown contexts. */
   private selected = 0
   private message: { text: string; tone: "error" | "muted" } = { text: "", tone: "muted" }
   private slugWidth: number
@@ -87,7 +93,25 @@ export class ReviewPicker {
       i = this.shown().findIndex((r) => r.address === address)
       if (i < 0) this.recent = true
     }
-    this.selected = i + 1
+    this.selected = i < 0 ? 0 : i + this.offset()
+  }
+
+  /** Link mode: an existing context in the repo scope named like the name. */
+  private existing(): ContextRow | undefined {
+    const name = this.name.getValue().trim()
+    return this.init.rows.find((r) => r.scope === this.init.scope && r.slug === name)
+  }
+
+  /** The first row: no parent (review), link existing / create (link), or none. */
+  private first(): "none-parent" | "existing" | "create" | undefined {
+    if (!this.init.link) return "none-parent"
+    const e = this.existing()
+    if (this.init.linked && (!e || e.address === this.init.linked) && this.name.getValue().trim() === this.init.context) return undefined
+    return e ? "existing" : "create"
+  }
+
+  private offset(): number {
+    return this.first() ? 1 : 0
   }
 
   private get days(): number {
@@ -113,7 +137,7 @@ export class ReviewPicker {
 
   handleInput(data: string): void {
     if (this.editing) return this.handleEdit(data)
-    const n = this.shown().length + 1
+    const n = this.shown().length + this.offset()
     const move = (d: number) => {
       this.selected = Math.max(0, Math.min(n - 1, this.selected + d))
       this.tui.requestRender()
@@ -139,17 +163,19 @@ export class ReviewPicker {
       this.name.focused = true
       // setValue leaves the cursor at the start; edits append.
       this.name.handleInput("\x05")
-      return this.say("editing the review context: enter keep, esc undo")
+      return this.say(`editing the ${this.init.link ? "new" : "review"} context: enter keep, esc undo`)
     }
     if (matchesKey(data, "alt+a")) {
       this.recent = !this.recent
       this.selected = 0
+      this.clamp()
       return this.say(this.recent ? `recent: ${this.days}d and pinned` : "all contexts")
     }
     if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
       const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.step + (matchesKey(data, "ctrl+up") ? 1 : -1)))
       this.recent = true
       this.selected = 0
+      this.clamp()
       if (next !== this.step) {
         this.step = next
         this.host.saveRecencyDays(this.days)
@@ -159,8 +185,8 @@ export class ReviewPicker {
     const before = this.query.getValue()
     this.query.handleInput(data)
     if (this.query.getValue() !== before) {
-      // Searching lands on the best match rather than "no parent".
-      this.selected = this.query.getValue().trim() ? 1 : 0
+      // Searching lands on the best match rather than the first row.
+      this.selected = this.query.getValue().trim() ? this.offset() : 0
       this.message = { text: "", tone: "muted" }
     }
     this.tui.requestRender()
@@ -175,6 +201,7 @@ export class ReviewPicker {
     if (matchesKey(data, "escape")) {
       this.name.setValue(this.saved)
       stop()
+      this.selected = 0
       return this.say("")
     }
     if (matchesKey(data, "enter")) {
@@ -182,19 +209,36 @@ export class ReviewPicker {
       if (!SLUG.test(v)) return this.say("context must be a slug (letters, digits, . _ -)", "error")
       this.name.setValue(v)
       stop()
-      return this.say("")
+      this.selected = 0
+      return this.say(this.init.link && this.existing() ? `${v} exists: enter links it` : "")
     }
     this.name.handleInput(data)
     this.tui.requestRender()
   }
 
+  /** Keep the selection inside the list when the first row comes and goes. */
+  private clamp(): void {
+    this.selected = Math.max(0, Math.min(this.selected, this.shown().length + this.offset() - 1))
+  }
+
   /** Link mode: `create` makes a new context under the highlighted one. */
   private submit(create = false): void {
-    const row = this.selected > 0 ? this.shown()[this.selected - 1] : undefined
+    this.clamp()
+    const off = this.offset()
+    const row = this.selected >= off ? this.shown()[this.selected - off] : undefined
     const name = this.name.getValue().trim()
     if (this.init.link) {
-      if (row && !create) return this.host.submit({ context: row.slug })
-      return this.host.submit({ context: name, create: true, ...(row ? { parent: row.address } : {}) })
+      const e = this.existing()
+      if (create) {
+        if (e) return this.say(`${name} exists; ctrl+e picks another name`, "error")
+        return this.host.submit({ context: name, create: true, ...(row ? { parent: row.address } : {}) })
+      }
+      if (row) {
+        if (row.address === this.init.linked) return this.say("already linked")
+        return this.host.submit({ context: row.address })
+      }
+      if (e) return this.host.submit({ context: e.address })
+      return this.host.submit({ context: name, create: true })
     }
     const parent = row?.address
     this.host.submit({
@@ -240,11 +284,11 @@ export class ReviewPicker {
         : ["enter start", "tab manifest", "ctrl+e context", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
     const head = link
       ? t.fg("accent", t.bold(`link #${pr.number}`)) + "  " + pr.title + "  " +
-        t.fg("muted", `pick the context for ${pr.headRef} (${scope})`)
+        t.fg("muted", `${pr.headRef} (${scope})`)
       : t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
         t.fg("muted", `pick the parent (${scope})`)
     const settings = link
-      ? label("new context") + name
+      ? this.linkState() + "   " + label("new context") + name
       : label("context") + name + "   " + label("manifest") + manifests
     const lines = [
       truncateToWidth(head, width),
@@ -259,19 +303,51 @@ export class ReviewPicker {
     return lines.slice(0, this.height()).map((l) => truncateToWidth(l, width))
   }
 
+  /** Where the branch links now, with the linked context's parent. */
+  private linkState(): string {
+    const t = this.theme
+    const linked = this.init.linked
+    if (!linked) return t.fg("warning", "not linked")
+    const rows = this.init.rows
+    const i = rows.findIndex((r) => r.address === linked)
+    let parent: ContextRow | undefined
+    if (i >= 0) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (rows[j]!.depth < rows[i]!.depth) {
+          parent = rows[j]
+          break
+        }
+      }
+    }
+    return t.fg("muted", "linked ") + t.fg("accent", linked) +
+      (parent ? t.fg("muted", ` under ${parent.address}`) : "")
+  }
+
+  private firstLine(): string | undefined {
+    const t = this.theme
+    const name = this.name.getValue().trim()
+    switch (this.first()) {
+      case "none-parent": return t.fg("dim", `  ${NO_PARENT}`)
+      case "existing": return t.fg("dim", "  (link existing: ") + this.existing()!.address + t.fg("dim", ")")
+      case "create": return t.fg("dim", `  (new: ${name}, top level)`)
+      default: return undefined
+    }
+  }
+
   private listLines(width: number, height: number): string[] {
     const t = this.theme
     const rows = this.shown()
-    this.selected = Math.min(this.selected, rows.length)
+    this.clamp()
     const q = this.query.getValue().trim()
     const tree = q === ""
     const mixed = new Set(rows.map((r) => r.scope)).size > 1
     const hidden = tree ? collapseTree(this.tree(), NONE).hidden : new Map<string, number>()
     const now = this.now()
+    const first = this.firstLine()
     const all = [
-      pad(t.fg("dim", this.init.link ? `  (new: ${this.name.getValue().trim()}, no parent)` : `  ${NO_PARENT}`), width),
+      ...(first ? [pad(first, width)] : []),
       ...rows.map((r) =>
-        contextLine(t, r, { tree, here: undefined, mixed, hidden, slugWidth: this.slugWidth, now, width })),
+        contextLine(t, r, { tree, here: this.init.linked, marked: this.init.linked, mixed, hidden, slugWidth: this.slugWidth, now, width })),
     ]
     if (rows.length === 0) {
       all.push(t.fg("warning", q ? "no matching contexts" : `no contexts active in ${this.days}d (alt+a: all)`))

@@ -10,7 +10,9 @@ import {
 } from "../prs/browser"
 import {
   branchLinks,
-  latestBySlug,
+  linkAddress,
+  linkValue,
+  latestSession,
   PAGE,
   parseSearch,
   type Pr,
@@ -103,9 +105,12 @@ async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: s
   }
 }
 
-/** The session repo's context tree, pinned first; empty when cue fails. */
+/**
+ * The context tree as the cue browser lists it (the configured scope,
+ * cross-repo included), pinned first; empty when cue fails.
+ */
 async function contexts(exec: Exec, cwd: string): Promise<ContextRow[]> {
-  const r = await exec("cue", ["context", "tree", "--scope", "repo", "--sort", "recency", "--json"], { cwd })
+  const r = await exec("cue", ["context", "tree", "--sort", "recency", "--json"], { cwd })
   if (r.code !== 0) return []
   try {
     return pinnedFirst(parseContextTree(r.stdout))
@@ -127,10 +132,16 @@ async function launchReview(exec: Exec, cwd: string, req: ReviewRequest): Promis
   return { ok: true, text: `review of #${req.pr.number} started (${req.context}, ${req.manifest})${out ? `: ${out}` : ""}` }
 }
 
-/** Branch -> context slug links of the repo. */
-async function links(exec: Exec, cwd: string): Promise<Map<string, string>> {
+/** Branch -> linked context address; slugs resolve in the repo scope. */
+async function links(exec: Exec, cwd: string, scope: string | undefined): Promise<Map<string, string>> {
   const r = await exec("git", ["config", "--local", "--get-regexp", "^branch\\..*\\.cue-context$"], { cwd })
-  return r.code === 0 ? branchLinks(r.stdout) : new Map()
+  if (r.code !== 0) return new Map()
+  const out = new Map<string, string>()
+  for (const [branch, value] of branchLinks(r.stdout)) {
+    const address = linkAddress(value, scope)
+    if (address) out.set(branch, address)
+  }
+  return out
 }
 
 /**
@@ -139,15 +150,29 @@ async function links(exec: Exec, cwd: string): Promise<Map<string, string>> {
  * association (operator state) is intended. The branch need not exist
  * locally yet: checkout creates it under the same name.
  */
-async function link(exec: Exec, cwd: string, branch: string, slug: string, create?: { parent?: string }): Promise<Outcome> {
+async function link(
+  exec: Exec,
+  cwd: string,
+  scope: string | undefined,
+  branch: string,
+  context: string,
+  create?: { parent?: string },
+): Promise<Outcome> {
+  if (!scope) return { ok: false, text: "no cue scope (origin remote missing)" }
   if (create) {
-    const args = ["context", "create", slug]
+    const args = ["context", "create", context]
     if (create.parent) args.push("--parent", create.parent)
     const r = await exec("cue", args, { cwd })
     if (r.code !== 0) return failed("cue context create", r)
   }
-  const r = await exec("cue", ["context", "switch", slug, "--branch", branch], { cwd })
-  return r.code === 0 ? { ok: true, text: `linked ${branch} to ${slug}` } : failed("cue context switch", r)
+  const address = create ? `${scope}/${context}` : context
+  // Same-scope links stay slugs, as `cue context switch` writes them; cue
+  // also accepts a full address, which cross-scope contexts need.
+  const value = linkValue(address, scope)
+  const r = await exec("cue", ["context", "switch", value, "--branch", branch], { cwd })
+  return r.code === 0
+    ? { ok: true, text: `${create ? "created and linked" : "linked"} ${branch} to ${address}`, address }
+    : failed("cue context switch", r)
 }
 
 async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
@@ -173,15 +198,13 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     saveRecencyDays: (d) => saveRecencyDays(cwd, d),
     launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
-    links: () => links(exec, cwd),
-    link: (branch, slug, create) => link(exec, cwd, branch, slug, create),
-    latestSessions: async () => (scope ? latestBySlug(await loadSessions(pi, cwd), scope) : new Map()),
+    scope,
+    links: () => links(exec, cwd, scope),
+    link: (branch, context, create) => link(exec, cwd, scope, branch, context, create),
+    latestSession: async (address) => latestSession(await loadSessions(pi, cwd), address),
     resume: (session, target) => resumeSession(pi, ctx, session, target),
     currentSession: () => ctx.sessionManager.getSessionFile(),
-    startSession: (slug, target, note) => {
-      if (!scope) return "no cue scope (origin remote missing)"
-      return newSession(pi, ctx, `${scope}/${slug}`, target, note)
-    },
+    startSession: (address, target, note) => newSession(pi, ctx, address, target, note),
     target: defaultTarget(ctx.sessionManager.getEntries()),
   }
   await ctx.ui.custom<void>(

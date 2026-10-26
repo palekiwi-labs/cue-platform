@@ -3,7 +3,9 @@ import {
   applyPreset,
   buildRows,
   fmtAge,
-  latestBySlug,
+  latestSession,
+  linkAddress,
+  linkValue,
   isContextAddress,
   parseSearch,
   type Pr,
@@ -188,16 +190,26 @@ test("prNote", () => {
   expect(prNote(p, "/r/worktrees/feat")).toContain("checkout: /r/worktrees/feat")
 })
 
-describe("latestBySlug", () => {
-  const row = (address: string | undefined, modified: number, path = `${address}@${modified}`) =>
-    ({ path, cwd: "/", address, description: "", tokens: null, modified })
+describe("latestSession", () => {
+  const row = (address: string | undefined, modified: number) =>
+    ({ path: `${address}@${modified}`, cwd: "/", address, description: "", tokens: null, modified })
 
-  test("keeps the newest session per slug of the scope", () => {
-    const m = latestBySlug(
-      [row("o/r/a", 1), row("o/r/a", 3), row("o/r/a", 2), row("o/r/b", 5), row("o/other/a", 9), row(undefined, 9)],
-      "o/r",
-    )
-    expect([...m.keys()].sort()).toEqual(["a", "b"])
-    expect(m.get("a")?.modified).toBe(3)
+  test("newest session of the address", () => {
+    const rows = [row("o/r/a", 1), row("o/r/a", 3), row("o/other/a", 9), row(undefined, 9)]
+    expect(latestSession(rows, "o/r/a")?.modified).toBe(3)
+    expect(latestSession(rows, "o/r/b")).toBeUndefined()
+  })
+})
+
+describe("branch link values", () => {
+  test("slugs resolve in the repo scope, addresses pass through", () => {
+    expect(linkAddress("a", "o/r")).toBe("o/r/a")
+    expect(linkAddress("x/y/a", "o/r")).toBe("x/y/a")
+    expect(linkAddress("a", undefined)).toBeUndefined()
+  })
+
+  test("same-scope addresses are written as slugs", () => {
+    expect(linkValue("o/r/a", "o/r")).toBe("a")
+    expect(linkValue("x/y/a", "o/r")).toBe("x/y/a")
   })
 })

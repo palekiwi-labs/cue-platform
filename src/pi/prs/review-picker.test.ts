@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { link?: boolean; selected?: string } = {}) {
+function setup(extra: { link?: boolean; selected?: string; scope?: string; linked?: string; context?: string } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -81,7 +81,7 @@ describe("ReviewPicker", () => {
     const s = setup({ link: true })
     s.type("bet")
     s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "beta" }])
+    expect(s.results).toEqual([{ context: "o/r/beta" }])
   })
 
   test("link: first row creates the named context without a parent", () => {
@@ -95,6 +95,32 @@ describe("ReviewPicker", () => {
     s.p.handleInput("\x1b[B")
     s.p.handleInput("\x0e")
     expect(s.results).toEqual([{ context: "review-t", create: true, parent: "o/r/alpha" }])
+  })
+
+  test("link: an existing context named like the branch is linked, not created", () => {
+    const s = setup({ link: true, scope: "o/r", context: "beta" })
+    expect(s.p.render(100).join("\n")).toContain("link existing: o/r/beta")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "o/r/beta" }])
+  })
+
+  test("link: ctrl+n refuses a name that exists", () => {
+    const s = setup({ link: true, scope: "o/r", context: "beta" })
+    s.p.handleInput("\x0e")
+    expect(s.results).toEqual([])
+    expect(s.p.render(100).at(-1)).toContain("exists")
+  })
+
+  test("link: a linked branch shows its link and has no create row", () => {
+    const s = setup({ link: true, scope: "o/r", context: "beta", linked: "o/r/beta", selected: "o/r/beta" })
+    const out = s.p.render(100).join("\n")
+    expect(out).toContain("linked o/r/beta")
+    expect(out).not.toContain("(new:")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([])
+    s.p.handleInput("\x1b[A")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "o/r/alpha" }])
   })
 
   test("selected preselects a context", () => {
