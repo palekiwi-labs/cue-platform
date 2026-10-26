@@ -364,6 +364,7 @@ export class PrBrowser implements Component {
       recencyDays: this.deps.recencyDays(),
       ...(this.deps.scope ? { scope: this.deps.scope } : {}),
       branch: prContext(pr),
+      ...(this.links.get(pr.headRef) ? { linked: this.links.get(pr.headRef)! } : {}),
     }, {
       cancel: () => this.closePicker(),
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),

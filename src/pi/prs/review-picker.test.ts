@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { scope?: string; branch?: string; context?: string; rows?: ContextRow[] } = {}) {
+function setup(extra: { scope?: string; branch?: string; linked?: string; context?: string; rows?: ContextRow[] } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -59,6 +59,16 @@ describe("ReviewPicker", () => {
     const s = setup({ scope: "o/r", branch: "beta" })
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "beta", manifest: "default" }])
+  })
+
+  test("review-<linked> comes before the linked context, which comes before <branch>", () => {
+    const rows = [row("alpha"), row("beta"), row("work"), row("review-work")]
+    const a = setup({ rows, scope: "o/r", branch: "beta", linked: "o/r/work" })
+    a.p.handleInput("\r")
+    expect(a.results[0]!.context).toBe("review-work")
+    const b = setup({ rows: rows.slice(0, 3), scope: "o/r", branch: "beta", linked: "o/r/work" })
+    b.p.handleInput("\r")
+    expect(b.results[0]!.context).toBe("work")
   })
 
   test("ctrl+n edits a prefilled name and creates under the highlighted context; esc backs out", () => {
