@@ -2,8 +2,8 @@
  * Review context picker for one PR, over the repo's context tree (as the
  * cue browser lists it), hosted full screen by the PR browser. Enter on a
  * context reviews into it. The highlight starts on the first that exists of
- * review-<branch>, review-<linked>, the linked context (marked with a dot)
- * and <branch>, else the top. ctrl+n edits a new name (prefilled with
+ * review-<branch>, review-<linked>, the linked context and <branch>, else
+ * the top. The linked and the suggested context have their own colours. ctrl+n edits a new name (prefilled with
  * review-<branch>) and creates it under the highlighted context; existing
  * names are refused. tab cycles the manifest.
  */
@@ -61,6 +61,7 @@ export class ReviewPicker {
   private selected = 0
   private message: { text: string; tone: "error" | "muted" } = { text: "", tone: "muted" }
   private slugWidth: number
+  private tones = new Map<string, "success" | "warning">()
 
   constructor(
     private tui: TUI,
@@ -80,6 +81,8 @@ export class ReviewPicker {
       init.rows.find((r) => r.address === init.linked) ??
       (init.branch ? this.existing(init.branch) : undefined)
     if (start) this.preselect(start.address)
+    if (init.linked) this.tones.set(init.linked, "success")
+    if (start && start.address !== init.linked) this.tones.set(start.address, "warning")
   }
 
   /** Highlight a context, widening to all contexts when the window hides it. */
@@ -274,7 +277,7 @@ export class ReviewPicker {
     const hidden = tree ? collapseTree(this.tree(), NONE).hidden : new Map<string, number>()
     const now = this.now()
     const all = rows.map((r) =>
-      contextLine(t, r, { tree, here: undefined, marked: this.init.linked, mixed, hidden, slugWidth: this.slugWidth, now, width }))
+      contextLine(t, r, { tree, here: undefined, tones: this.tones, mixed, hidden, slugWidth: this.slugWidth, now, width }))
     if (rows.length === 0) {
       all.push(t.fg("warning", q ? "no matching contexts" : `no contexts active in ${this.days}d (alt+a: all)`))
     }

@@ -70,8 +70,8 @@ export interface ContextLineOpts {
   tree: boolean
   /** The session's context, highlighted. */
   here: string | undefined
-  /** A context marked with a dot in the pin column (e.g. a branch link). */
-  marked?: string
+  /** Slug colours by address (e.g. a branch link), after `here`. */
+  tones?: ReadonlyMap<string, Parameters<Theme["fg"]>[0]>
   /** Rows span several scopes: show the scope in place of the title. */
   mixed: boolean
   /** Folded rows and how many descendants they hide. */
@@ -83,7 +83,7 @@ export interface ContextLineOpts {
 
 /** One context row: pin, tree and slug, age, mode, title. */
 export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string {
-  const pin = r.address === o.marked ? t.fg("accent", "●") : r.pinned ? t.fg("warning", "*") : " "
+  const pin = r.pinned ? t.fg("warning", "*") : " "
   // Cut the plain slug before styling: cutting styled text would reset
   // the selection background for the rest of the row.
   const slugW = Math.min(o.slugWidth, slugCap(o.width))
@@ -91,7 +91,8 @@ export function contextLine(t: Theme, r: ContextRow, o: ContextLineOpts): string
   const marker = o.hidden.has(r.address) ? ` +${o.hidden.get(r.address)}` : ""
   const room = slugW - visibleWidth(prefix) - visibleWidth(marker)
   const slug = visibleWidth(r.slug) > room ? clip(r.slug, room) : r.slug
-  const styled = r.address === o.here ? t.fg("accent", slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", slug) : slug
+  const tone = o.tones?.get(r.address)
+  const styled = r.address === o.here ? t.fg("accent", slug) : tone ? t.fg(tone, slug) : r.ancestorOnly || r.archivedAt !== null ? t.fg("dim", slug) : slug
   const name = clip(t.fg("dim", prefix) + styled + t.fg("dim", marker), slugW)
   const mode = r.archivedAt !== null
     ? t.fg("dim", "ARCHIVED")
