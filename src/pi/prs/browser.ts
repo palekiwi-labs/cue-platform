@@ -299,10 +299,6 @@ export class PrBrowser implements Component {
       void this.onCheckout()
       return true
     }
-    if (matchesKey(data, "ctrl+n")) {
-      void this.openLink()
-      return true
-    }
     if (matchesKey(data, "alt+w")) {
       this.mode = this.mode === "worktree" ? "root" : "worktree"
       this.tui.requestRender()
@@ -373,13 +369,14 @@ export class PrBrowser implements Component {
       manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
       rows,
       recencyDays: this.deps.recencyDays(),
-      ...(linked ? { selected: linked } : {}),
+      ...(this.deps.scope ? { scope: this.deps.scope } : {}),
+      ...(linked ? { linked } : {}),
     }, {
       cancel: () => this.closePicker(),
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
       submit: (r) => {
         this.closePicker()
-        const req: ReviewRequest = { pr, context: r.context, manifest: r.manifest ?? DEFAULT_MANIFEST, ...(r.parent ? { parent: r.parent } : {}) }
+        const req: ReviewRequest = { pr, context: r.context, manifest: r.manifest, ...(r.parent ? { parent: r.parent } : {}) }
         void this.run(`starting review of #${pr.number}`, () => this.deps.launchReview(req))
       },
     })
@@ -419,39 +416,6 @@ export class PrBrowser implements Component {
     })
     if (address) this.links.set(pr.headRef, address)
     return address
-  }
-
-  /** Link the PR branch to a context of your choice (ctrl+n). */
-  private async openLink(): Promise<void> {
-    const pr = this.actionablePr()
-    if (!pr || this.busy) return
-    this.busy = true
-    this.notice("loading contexts\u2026", "dim")
-    const rows = await this.deps.contexts().finally(() => (this.busy = false))
-    const linked = this.links.get(pr.headRef)
-    const shown = this.linkedAddress(pr, rows)
-    this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
-      pr,
-      context: prContext(pr),
-      manifests: [],
-      manifest: 0,
-      rows,
-      recencyDays: this.deps.recencyDays(),
-      link: true,
-      ...(this.deps.scope ? { scope: this.deps.scope } : {}),
-      ...(linked ? { linked } : {}),
-      ...(shown ? { selected: shown } : {}),
-    }, {
-      cancel: () => this.closePicker(),
-      saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
-      submit: (r) => {
-        this.closePicker()
-        const create = r.create ? (r.parent ? { parent: r.parent } : {}) : undefined
-        void this.linkTo(pr, r.context, create)
-      },
-    })
-    this.input.focused = false
-    this.notice("")
   }
 
   /**
@@ -528,7 +492,6 @@ export class PrBrowser implements Component {
       "enter session",
       "ctrl+s new session",
       "ctrl+o checkout",
-      "ctrl+n link",
       `alt+w ${this.mode}`,
       "ctrl+t target",
       "ctrl+r review",

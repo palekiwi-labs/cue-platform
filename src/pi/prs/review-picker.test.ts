@@ -10,7 +10,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { link?: boolean; selected?: string; scope?: string; linked?: string; context?: string } = {}) {
+function setup(extra: { scope?: string; linked?: string; context?: string; rows?: ContextRow[] } = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
@@ -35,97 +35,68 @@ function setup(extra: { link?: boolean; selected?: string; scope?: string; linke
 }
 
 describe("ReviewPicker", () => {
-  test("enter on the default row starts without a parent", () => {
+  test("enter on the first row reviews into the named context", () => {
     const s = setup()
+    expect(s.p.render(100).join("\n")).toContain("(new: review-t, top level)")
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
 
-  test("typing fuzzy-selects the best match as parent", () => {
+  test("enter on a context reviews into it; tab cycles the manifest", () => {
     const s = setup()
     s.type("bet")
-    s.p.handleInput("\r")
-    expect(s.results[0]!.parent).toBe("o/r/beta")
-  })
-
-  test("down moves through the tree; tab cycles the manifest", () => {
-    const s = setup()
-    s.p.handleInput("\x1b[B")
     s.p.handleInput("\t")
     s.p.handleInput("\r")
-    expect(s.results[0]).toEqual({ context: "review-t", manifest: "quick", parent: "o/r/alpha" })
+    expect(s.results).toEqual([{ context: "beta", manifest: "quick" }])
   })
 
-  test("ctrl+e edits the context; esc undoes, invalid slugs are refused", () => {
-    const s = setup()
-    s.p.handleInput("\x05")
-    s.type(" x")
+  test("an existing named context is highlighted over the linked one", () => {
+    const s = setup({ rows: [row("alpha"), row("review-t")], scope: "o/r", linked: "o/r/alpha" })
+    expect(s.p.render(100).join("\n")).toContain("(existing: o/r/review-t)")
     s.p.handleInput("\r")
-    expect(s.p.render(80).at(-1)).toContain("slug")
-    s.p.handleInput("\x1b")
-    s.p.handleInput("\x05")
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
+  })
+
+  test("without the named context the linked one is highlighted", () => {
+    const s = setup({ scope: "o/r", linked: "o/r/beta" })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "beta", manifest: "default" }])
+  })
+
+  test("ctrl+n edits a prefilled name and creates under the highlighted context", () => {
+    const s = setup({ scope: "o/r", linked: "o/r/alpha" })
+    s.p.handleInput("\x0e")
+    expect(s.results).toEqual([])
     s.type("-2")
     s.p.handleInput("\r")
-    s.p.handleInput("\r")
-    expect(s.results[0]!.context).toBe("review-t-2")
+    expect(s.results).toEqual([{ context: "review-t-2", manifest: "default", parent: "o/r/alpha" }])
+  })
+
+  test("ctrl+n on the first row creates at the top level; esc backs out", () => {
+    const s = setup()
+    s.p.handleInput("\x0e")
+    s.p.handleInput("\x1b")
+    expect(s.results).toEqual([])
     expect(s.cancelled()).toBe(false)
+    s.p.handleInput("\x0e")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
+  })
+
+  test("ctrl+n refuses existing names and non-slugs", () => {
+    const s = setup({ rows: [row("alpha"), row("review-t")], scope: "o/r" })
+    s.p.handleInput("\x0e")
+    s.p.handleInput("\r")
+    expect(s.p.render(100).at(-1)).toContain("exists")
+    s.type(" x")
+    s.p.handleInput("\r")
+    expect(s.p.render(100).at(-1)).toContain("slug")
+    expect(s.results).toEqual([])
   })
 
   test("esc goes back", () => {
     const s = setup()
     s.p.handleInput("\x1b")
     expect(s.cancelled()).toBe(true)
-  })
-
-  test("link: enter on a context links it", () => {
-    const s = setup({ link: true })
-    s.type("bet")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "o/r/beta" }])
-  })
-
-  test("link: first row creates the named context without a parent", () => {
-    const s = setup({ link: true })
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "review-t", create: true }])
-  })
-
-  test("link: ctrl+n creates under the highlighted context", () => {
-    const s = setup({ link: true })
-    s.p.handleInput("\x1b[B")
-    s.p.handleInput("\x0e")
-    expect(s.results).toEqual([{ context: "review-t", create: true, parent: "o/r/alpha" }])
-  })
-
-  test("link: an existing context named like the branch is linked, not created", () => {
-    const s = setup({ link: true, scope: "o/r", context: "beta" })
-    expect(s.p.render(100).join("\n")).toContain("link existing: o/r/beta")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "o/r/beta" }])
-  })
-
-  test("link: ctrl+n refuses a name that exists", () => {
-    const s = setup({ link: true, scope: "o/r", context: "beta" })
-    s.p.handleInput("\x0e")
-    expect(s.results).toEqual([])
-    expect(s.p.render(100).at(-1)).toContain("exists")
-  })
-
-  test("link: a linked branch shows its link and has no create row", () => {
-    const s = setup({ link: true, scope: "o/r", context: "beta", linked: "o/r/beta", selected: "o/r/beta" })
-    const out = s.p.render(100).join("\n")
-    expect(out).toContain("linked o/r/beta")
-    expect(out).not.toContain("(new:")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([])
-    s.p.handleInput("\x1b[A")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "o/r/alpha" }])
-  })
-
-  test("selected preselects a context", () => {
-    const s = setup({ selected: "o/r/beta" })
-    s.p.handleInput("\r")
-    expect(s.results[0]!.parent).toBe("o/r/beta")
   })
 })
