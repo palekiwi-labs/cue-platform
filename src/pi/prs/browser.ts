@@ -234,6 +234,24 @@ export class PrBrowser implements Component {
     this.tui.requestRender()
   }
 
+  /** zM/zR: fold every repo, or unfold them all. */
+  protected toggleFoldAll(): void {
+    if (this.view !== "org") return
+    const repos = this.rows().filter((r): r is Extract<Row, { kind: "repo" }> => r.kind === "repo").map((r) => r.repo)
+    if (repos.length === 0) return
+    const open = repos.filter((r) => !this.folded.has(r))
+    const current = this.selectedRow()
+    if (open.length > 0) {
+      for (const r of open) this.folded.add(r)
+      // A PR row hid under its repo heading: snap to it.
+      const repo = current?.kind === "pr" ? current.pr.repo : undefined
+      this.selectedId = `repo:${repo ?? open[0]}`
+    } else {
+      this.folded.clear()
+    }
+    this.tui.requestRender()
+  }
+
   /** Move to the previous/next repo heading (org view). */
   protected hopRepo(rows: Row[], dir: -1 | 1): void {
     if (this.view !== "org") return
@@ -276,6 +294,7 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "ctrl+up")) return this.hopRepo(rows, -1)
     if (matchesKey(data, "ctrl+down")) return this.hopRepo(rows, 1)
     if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
     if (matchesKey(data, "alt+r")) return void this.reload()
     if (this.handleAction(data)) return
 
@@ -483,12 +502,12 @@ export class PrBrowser implements Component {
     return [
       "tab preset",
       "alt+v view",
-      "alt+z fold",
+      "alt+z fold", "shift+tab fold all",
       "ctrl+up/down repo",
       "enter session",
       "ctrl+s new session",
       "ctrl+o checkout",
-      `alt+w ${this.mode}`,
+      "alt+w checkout",
       "ctrl+t target",
       "ctrl+r review",
       "ctrl+y url",
@@ -550,6 +569,7 @@ export class PrBrowser implements Component {
     const parts = [
       t.fg("accent", t.bold("pull requests")),
       t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`),
+      t.fg(this.mode === "root" ? "warning" : "muted", `[${this.mode}]`),
       t.fg("warning", `[${this.view}]`),
       t.fg("muted", scope),
       t.fg("accent", `(${PRESET_LABEL[this.preset]})`),
