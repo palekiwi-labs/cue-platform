@@ -10,7 +10,7 @@
     };
     nvf.url = "github:NotAShelf/nvf";
     cue = {
-      url = "github:palekiwi-labs/cue/cue-agent-prototype";
+      url = "github:palekiwi-labs/cue/feat/cue-agent-claude-harness";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     cast = {
