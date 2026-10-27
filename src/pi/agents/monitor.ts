@@ -56,12 +56,17 @@ export interface MonitorDeps {
   newSession(address: string, target: Target, note: string): string | undefined
 }
 
-/** Fixed monitor list columns; the label column takes the rest. */
-const COL = (() => {
+/**
+ * Monitor list columns; the label column takes the rest. The agent column
+ * fits the longest agent name listed, between AGENT_MIN and AGENT_MAX.
+ */
+const AGENT_MIN = 10
+const AGENT_MAX = 22
+const columns = (agent: number) => {
   const right = 6 + 1 + 6 + 1 + 7
-  const c = { right, state: 10, agent: 10, model: 22, indent: 2 }
+  const c = { right, state: 10, agent, model: 22, indent: 2 }
   return { ...c, fixed: c.indent + c.state + c.agent + c.model + right + 4 }
-})()
+}
 
 /**
  * The note a session started from a run carries: the run id.
@@ -419,7 +424,13 @@ export class AgentMonitor implements Component {
   }
 
   /** Width the list's rows need to show every label in full. */
+  private cols(): ReturnType<typeof columns> {
+    const names = this.groups().flatMap((g) => g.runs.map((r) => r.row.agent.length))
+    return columns(Math.min(AGENT_MAX, Math.max(AGENT_MIN, ...names)))
+  }
+
   private contentWidth(): number {
+    const COL = this.cols()
     const groups = this.groups()
     const runs = Math.max(6, ...groups.flatMap((g) => g.runs.map((r) => r.label.length)))
     const heads = Math.max(0, ...groups.map((g) =>
@@ -439,7 +450,7 @@ export class AgentMonitor implements Component {
     // Fixed columns on the right, shared by headings and run lines.
     const nums = (secs: number | null, tokens: number | null, cost: number | null) =>
       `${fmtDuration(secs).padStart(6)} ${fmtTokens(tokens).padStart(6)} ${fmtCost(cost).padStart(7)}`
-    const { right: rightW, state: stateW, agent: agentW, model: modelW, indent: indentW, fixed: fixedW } = COL
+    const { right: rightW, state: stateW, agent: agentW, model: modelW, indent: indentW, fixed: fixedW } = this.cols()
     const groups = this.groups()
     // The label column takes the rest, so rows fill the list's width.
     const labelW = Math.max(6, width - fixedW)
