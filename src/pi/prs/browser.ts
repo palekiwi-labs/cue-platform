@@ -570,7 +570,7 @@ export class PrBrowser implements Component {
       t.fg("accent", t.bold("pull requests")),
       t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`),
       t.fg(this.mode === "root" ? "warning" : "muted", `[${this.mode}]`),
-      t.fg("warning", `[${this.view}]`),
+      t.fg("muted", `[${this.view}]`),
       t.fg("muted", scope),
       t.fg("accent", `(${PRESET_LABEL[this.preset]})`),
       t.fg(d?.truncated ? "warning" : "muted", counts),
