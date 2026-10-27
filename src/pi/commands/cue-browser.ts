@@ -187,7 +187,7 @@ export async function loadSessions(
 
 /** Root of the cue store, as cue itself resolves it; cached. */
 let cachedStoreRoot: string | undefined
-function storeRoot(cwd: string): string {
+export function storeRoot(cwd: string): string {
   if (cachedStoreRoot) return cachedStoreRoot
   const r = spawnSync("cue", ["status", "--json"], { cwd, encoding: "utf8" })
   try {

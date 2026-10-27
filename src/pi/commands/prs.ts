@@ -1,4 +1,5 @@
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import {
   type CheckoutTarget,
@@ -13,8 +14,7 @@ import {
   linkAddress,
   linkValue,
   latestSession,
-  PAGE,
-  parseSearch,
+  mergeSearches,
   type Pr,
   repoOfRemote,
   resolveScope,
@@ -24,7 +24,7 @@ import {
   worktreeFor,
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
-import { loadSessions, newSession, resumeSession, saveRecencyDays, storedRecencyDays } from "./cue-browser"
+import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays } from "./cue-browser"
 import { scopeOfRemote } from "../browser/sessions"
 import { defaultTarget } from "../lib/default-target"
 
@@ -39,26 +39,43 @@ async function lines(exec: Exec, cwd: string, cmd: string, args: string[]): Prom
 }
 
 /** One GraphQL search per scope, in parallel; the first gh error wins. */
-async function search(exec: Exec, cwd: string, view: View, scopes: string[]): Promise<Loaded | { error: string }> {
-  if (scopes.length === 0) return { error: "no GitHub scope (origin is not a GitHub remote and cue.gh-org is unset)" }
+/** One search per repo, in parallel; see mergeSearches for failures. */
+async function search(exec: Exec, cwd: string, repos: string[]): Promise<Loaded | { error: string }> {
   const results = await Promise.all(
-    scopes.map((s) =>
-      exec("gh", ["api", "graphql", "-F", `q=${searchString(view, s)}`, "-f", `query=${SEARCH_QUERY}`], { cwd }),
-    ),
+    repos.map(async (repo) => ({
+      repo,
+      ...(await exec("gh", ["api", "graphql", "-F", `q=${searchString(repo)}`, "-f", `query=${SEARCH_QUERY}`], {
+        cwd,
+      })),
+    })),
   )
-  const loaded: Loaded = { prs: [], viewer: "", truncated: false }
-  for (const r of results) {
-    if (r.code !== 0) return { error: (r.stderr || r.stdout).trim() || `gh exited ${r.code}` }
-    try {
-      const s = parseSearch(r.stdout)
-      loaded.prs.push(...s.prs)
-      loaded.viewer ||= s.viewer
-      loaded.truncated ||= s.total > PAGE
-    } catch (e) {
-      return { error: `bad gh output: ${e instanceof Error ? e.message : String(e)}` }
-    }
+  return mergeSearches(results)
+}
+
+/**
+ * Org view repos: those of each org with a scope directory in the cue
+ * store (`<store>/<org>/<repo>`), i.e. the repos the operator works on.
+ */
+async function storeRepos(cwd: string, orgs: string[]): Promise<string[]> {
+  const root = storeRoot(cwd)
+  const per = await Promise.all(
+    orgs.map(async (org) => {
+      const entries = await readdir(join(root, org), { withFileTypes: true }).catch(() => [])
+      return entries.filter((e) => e.isDirectory()).map((e) => `${org}/${e.name}`)
+    }),
+  )
+  return per.flat().sort()
+}
+
+async function loadView(exec: Exec, cwd: string, view: View, localRepo: string | undefined, orgs: string[]) {
+  if (view === "repo") {
+    if (!localRepo) return { error: "no GitHub repo (origin is not a GitHub remote)" }
+    return search(exec, cwd, [localRepo])
   }
-  return loaded
+  if (orgs.length === 0) return { error: "no GitHub org (origin is not a GitHub remote and cue.gh-org is unset)" }
+  const repos = await storeRepos(cwd, orgs)
+  if (repos.length === 0) return { error: `no repos of ${orgs.join(", ")} in the cue store` }
+  return search(exec, cwd, repos)
 }
 
 const failed = (what: string, r: { stdout: string; stderr: string; code: number }): Outcome => ({
@@ -187,7 +204,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   const { orgs, view } = resolveScope(ghOrgs, localRepo)
   const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
   const deps: PrDeps = {
-    load: (v) => search(exec, cwd, v, v === "repo" ? (localRepo ? [localRepo] : []) : orgs),
+    load: (v) => loadView(exec, cwd, v, localRepo, orgs),
     localRepo,
     orgs,
     view,

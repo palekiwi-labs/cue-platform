@@ -3,9 +3,10 @@
  * GraphQL response, filter presets, and the rows the view renders (repo
  * headings and stacked PR trees). No I/O here.
  *
- * Both views use one GraphQL search per scope: `repo:<owner>/<name>` in
- * repo view, `org:<org>` per org in org view. One call returns every field
- * a row shows, so nothing is fetched per PR.
+ * Both views use one GraphQL search per repo (`repo:<owner>/<name>`), run
+ * in parallel. Org view searches the repos of each org that have a scope
+ * directory in the cue store, not the whole org. One call returns every
+ * field a row shows, so nothing is fetched per PR.
  */
 
 import type { SessionRow } from "../browser/sessions"
@@ -42,6 +43,47 @@ export interface SearchResult {
   prs: Pr[]
 }
 
+/** Raw outcome of one per-repo search. */
+export interface RepoSearch {
+  repo: string
+  code: number
+  stdout: string
+  stderr: string
+}
+
+export interface Merged {
+  prs: Pr[]
+  viewer: string
+  truncated: boolean
+  /** `<repo>: <error>` for each repo whose search failed. */
+  failed: string[]
+}
+
+/**
+ * Merge per-repo searches. A failed repo costs only itself; the result is
+ * an error only when every search failed.
+ */
+export function mergeSearches(results: RepoSearch[]): Merged | { error: string } {
+  const merged: Merged = { prs: [], viewer: "", truncated: false, failed: [] }
+  for (const r of results) {
+    let why: string
+    if (r.code === 0) {
+      try {
+        const s = parseSearch(r.stdout)
+        merged.prs.push(...s.prs)
+        merged.viewer ||= s.viewer
+        merged.truncated ||= s.total > PAGE
+        continue
+      } catch (e) {
+        why = `bad gh output: ${e instanceof Error ? e.message : String(e)}`
+      }
+    } else why = (r.stderr || r.stdout).trim() || `gh exited ${r.code}`
+    merged.failed.push(`${r.repo}: ${why}`)
+  }
+  if (results.length > 0 && merged.failed.length === results.length) return { error: merged.failed.join("; ") }
+  return merged
+}
+
 /** Search results are capped at one page; `total` tells if more exist. */
 export const PAGE = 100
 
@@ -60,9 +102,9 @@ export const SEARCH_QUERY = `query($q: String!) {
   }
 }`
 
-/** Search string for one scope: an `owner/name` repo or an org. */
-export function searchString(view: View, scope: string): string {
-  return `is:pr is:open archived:false ${view === "repo" ? "repo" : "org"}:${scope}`
+/** Search string for one `owner/name` repo. */
+export function searchString(repo: string): string {
+  return `is:pr is:open archived:false repo:${repo}`
 }
 
 /** Parse a `gh api graphql` response for SEARCH_QUERY. Throws on bad JSON. */

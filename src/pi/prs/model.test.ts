@@ -12,6 +12,7 @@ import {
   repoOfRemote,
   resolveScope,
   reviewContext,
+  mergeSearches,
   searchString,
   stackRepo,
   worktreeFor,
@@ -87,8 +88,40 @@ describe("parseSearch", () => {
 })
 
 test("searchString", () => {
-  expect(searchString("repo", "o/r")).toBe("is:pr is:open archived:false repo:o/r")
-  expect(searchString("org", "o")).toBe("is:pr is:open archived:false org:o")
+  expect(searchString("o/r")).toBe("is:pr is:open archived:false repo:o/r")
+})
+
+describe("mergeSearches", () => {
+  const ok = (repo: string, n: number, total = 1) => ({
+    repo,
+    code: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      data: { viewer: { login: "me" }, search: { issueCount: total, nodes: [{ number: n, repository: { nameWithOwner: repo } }] } },
+    }),
+  })
+  const bad = (repo: string) => ({ repo, code: 1, stdout: "", stderr: "HTTP 502\n" })
+
+  test("merges every repo", () => {
+    const r = mergeSearches([ok("o/a", 1), ok("o/b", 2, 101)])
+    if ("error" in r) throw new Error(r.error)
+    expect(r.prs.map((p) => p.number)).toEqual([1, 2])
+    expect(r.viewer).toBe("me")
+    expect(r.truncated).toBe(true)
+    expect(r.failed).toEqual([])
+  })
+
+  test("a failed repo costs only itself", () => {
+    const r = mergeSearches([bad("o/a"), ok("o/b", 2), { ...ok("o/c", 3), stdout: "nope" }])
+    if ("error" in r) throw new Error(r.error)
+    expect(r.prs.map((p) => p.repo)).toEqual(["o/b"])
+    expect(r.failed[0]).toBe("o/a: HTTP 502")
+    expect(r.failed[1]).toStartWith("o/c: bad gh output")
+  })
+
+  test("error when every repo failed", () => {
+    expect(mergeSearches([bad("o/a"), bad("o/b")])).toEqual({ error: "o/a: HTTP 502; o/b: HTTP 502" })
+  })
 })
 
 test("repoOfRemote", () => {

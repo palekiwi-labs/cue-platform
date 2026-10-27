@@ -41,6 +41,8 @@ export interface Loaded {
   viewer: string
   /** More PRs matched than one page holds. */
   truncated: boolean
+  /** `<repo>: <error>` for each repo whose search failed. */
+  failed: string[]
 }
 
 export interface PrDeps {
@@ -177,7 +179,7 @@ export class PrBrowser implements Component {
     this.loading = false
     if ("error" in r) this.error = r.error
     else {
-      this.error = ""
+      this.error = r.failed.length > 0 ? `${r.failed.length} repo(s) failed: ${r.failed.join("; ")}` : ""
       // Org view starts with every repo collapsed; refreshes keep the folds.
       if (view === "org" && !this.data.org) for (const p of r.prs) this.folded.add(p.repo)
       this.data[view] = r
