@@ -133,6 +133,7 @@ describe("command registration", () => {
       "cue:idea",
       "cue:prs",
       "cue:sessions",
+      "label",
       "mcp-cast",
       "resume-open",
       "review:run",
