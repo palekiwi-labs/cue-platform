@@ -31,7 +31,7 @@ import {
   type Row,
   type View,
 } from "./model"
-import { ReviewPicker } from "./review-picker"
+import { ContextPicker } from "./context-picker"
 import type { ContextRow } from "../browser/model"
 import type { SessionRow } from "../browser/sessions"
 import type { Target } from "../lib/default-target"
@@ -84,6 +84,8 @@ export interface PrDeps {
   resume(session: SessionRow, target: Target): string | undefined
   /** Path of the session this browser runs in. */
   currentSession(): string | undefined
+  /** Address of the session's cue context, if any. */
+  sessionContext(): string | undefined
   /** Where sessions open first. */
   target: Target
 }
@@ -365,7 +367,7 @@ export class PrBrowser implements Component {
     }
   }
 
-  protected picker: ReviewPicker | undefined
+  protected picker: ContextPicker | undefined
 
   private async openPicker(): Promise<void> {
     const pr = this.actionablePr()
@@ -376,7 +378,7 @@ export class PrBrowser implements Component {
       .finally(() => (this.busy = false))
     if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
     const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
-    this.picker = new ReviewPicker(this.tui, this.theme, this.kb, {
+    this.picker = new ContextPicker(this.tui, this.theme, this.kb, {
       pr,
       context: reviewContext(pr),
       manifests,
@@ -391,7 +393,8 @@ export class PrBrowser implements Component {
       saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
       submit: (r) => {
         this.closePicker()
-        const req: ReviewRequest = { pr, context: r.context, manifest: r.manifest, ...(r.parent ? { parent: r.parent } : {}) }
+        const manifest = r.manifest ?? DEFAULT_MANIFEST
+        const req: ReviewRequest = { pr, context: r.context, manifest, ...(r.parent ? { parent: r.parent } : {}) }
         void this.run(`starting review of #${pr.number}`, () => this.deps.launchReview(req))
       },
     })
@@ -435,7 +438,8 @@ export class PrBrowser implements Component {
 
   /**
    * The PR branch's context, linking it first when needed: to the repo
-   * scope's context named after the branch, created when missing.
+   * scope's context named after the branch, or, when there is none, to a
+   * new one under a parent picked by the operator. Undefined on cancel.
    */
   private async ensureLinked(pr: Pr): Promise<string | undefined> {
     const linked = this.links.get(pr.headRef)
@@ -443,7 +447,40 @@ export class PrBrowser implements Component {
     const slug = prContext(pr)
     const rows = await this.deps.contexts()
     const existing = rows.find((r) => r.scope === this.deps.scope && r.slug === slug)
-    return existing ? this.linkTo(pr, existing.address) : this.linkTo(pr, slug, {})
+    if (existing) return this.linkTo(pr, existing.address)
+    const picked = await this.pickParent(pr, slug, rows)
+    if (!picked) return undefined
+    return this.linkTo(pr, picked.context, picked.parent ? { parent: picked.parent } : {})
+  }
+
+  /** Full-screen parent picker for a new PR context; undefined on cancel. */
+  private pickParent(pr: Pr, slug: string, rows: ContextRow[]): Promise<{ context: string; parent?: string } | undefined> {
+    return new Promise((resolve) => {
+      const here = this.deps.sessionContext()
+      this.picker = new ContextPicker(this.tui, this.theme, this.kb, {
+        purpose: "parent",
+        pr,
+        context: slug,
+        manifests: [],
+        manifest: 0,
+        rows,
+        recencyDays: this.deps.recencyDays(),
+        ...(this.deps.scope ? { scope: this.deps.scope } : {}),
+        ...(here ? { here } : {}),
+      }, {
+        cancel: () => {
+          this.closePicker()
+          resolve(undefined)
+        },
+        saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
+        submit: (r) => {
+          this.closePicker()
+          resolve({ context: r.context, ...(r.parent ? { parent: r.parent } : {}) })
+        },
+      })
+      this.input.focused = false
+      this.notice("")
+    })
   }
 
   /** Enter: work on the PR. Check out, then resume its context's newest session or start one. */

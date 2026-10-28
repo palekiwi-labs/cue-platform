@@ -26,6 +26,7 @@ import {
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
 import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays } from "./cue-browser"
 import { scopeOfRemote } from "../browser/sessions"
+import { currentContext } from "../lib/current-context"
 import { defaultTarget } from "../lib/default-target"
 
 /** Open the GitHub PR browser. */
@@ -221,6 +222,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
     latestSession: async (address) => latestSession(await loadSessions(pi, cwd), address),
     resume: (session, target) => resumeSession(pi, ctx, session, target),
     currentSession: () => ctx.sessionManager.getSessionFile(),
+    sessionContext: () => currentContext(ctx.sessionManager.getBranch()),
     startSession: (address, target, note) => newSession(pi, ctx, address, target, note),
     target: defaultTarget(ctx.sessionManager.getEntries()),
   }

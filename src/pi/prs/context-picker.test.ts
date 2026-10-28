@@ -3,21 +3,23 @@ import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { matchesKey, type TUI } from "@earendil-works/pi-tui"
 import type { ContextRow } from "../browser/model"
 import type { Pr } from "./model"
-import { type PickerResult, ReviewPicker } from "./review-picker"
+import { type PickerResult, ContextPicker } from "./context-picker"
 
 const row = (slug: string, depth = 0): ContextRow => ({
   address: `o/r/${slug}`, scope: "o/r", slug, title: slug, mode: null, kind: "work", pinned: false,
   lastLoggedAt: Math.floor(Date.now() / 1000), createdAt: null, archivedAt: null, path: "", depth, connectors: [], isLast: true,
 })
 
-function setup(extra: { scope?: string; branch?: string; linked?: string; context?: string; rows?: ContextRow[] } = {}) {
+function setup(extra: {
+  purpose?: "review" | "parent"; scope?: string; branch?: string; linked?: string; here?: string; context?: string; rows?: ContextRow[]
+} = {}) {
   const results: PickerResult[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
   const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
   const keys: Record<string, string> = { "tui.select.up": "up", "tui.select.down": "down" }
   const kb = { matches: (d: string, id: string) => (keys[id] ? matchesKey(d, keys[id] as Parameters<typeof matchesKey>[1]) : false) } as unknown as KeybindingsManager
-  const p = new ReviewPicker(tui, theme, kb, {
+  const p = new ContextPicker(tui, theme, kb, {
     pr: { number: 7, title: "T" } as Pr,
     context: "review-t",
     manifests: ["default", "quick"],
@@ -34,7 +36,7 @@ function setup(extra: { scope?: string; branch?: string; linked?: string; contex
   return { p, results, type, cancelled: () => cancelled }
 }
 
-describe("ReviewPicker", () => {
+describe("ContextPicker", () => {
   test("without a match the highlight starts at the top", () => {
     const s = setup()
     s.p.handleInput("\r")
@@ -100,6 +102,46 @@ describe("ReviewPicker", () => {
     s.p.handleInput("\x0e")
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
+  })
+
+  test("parent: (no parent) is the default without a session context", () => {
+    const s = setup({ purpose: "parent", context: "feat-x", scope: "o/r" })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "feat-x" }])
+  })
+
+  test("parent: the session context is highlighted; enter creates under it", () => {
+    const s = setup({ purpose: "parent", context: "feat-x", scope: "o/r", here: "o/r/beta" })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "feat-x", parent: "o/r/beta" }])
+  })
+
+  test("parent: moving down from (no parent) picks a context; search drops the row", () => {
+    const a = setup({ purpose: "parent", context: "feat-x", scope: "o/r" })
+    a.p.handleInput("\x1b[B")
+    a.p.handleInput("\r")
+    expect(a.results).toEqual([{ context: "feat-x", parent: "o/r/alpha" }])
+    const b = setup({ purpose: "parent", context: "feat-x", scope: "o/r" })
+    b.type("bet")
+    b.p.handleInput("\r")
+    expect(b.results).toEqual([{ context: "feat-x", parent: "o/r/beta" }])
+  })
+
+  test("parent: ctrl+e renames (enter keeps, esc undoes, existing refused)", () => {
+    const s = setup({ purpose: "parent", context: "feat-x", scope: "o/r" })
+    s.p.handleInput("\x05")
+    s.type("-2")
+    s.p.handleInput("\x1b")
+    s.p.handleInput("\x05")
+    s.p.handleInput("\x15")
+    s.type("alpha")
+    s.p.handleInput("\r")
+    expect(s.p.render(100).at(-1)).toContain("exists")
+    s.type("-2")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([])
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "alpha-2" }])
   })
 
   test("esc goes back", () => {
