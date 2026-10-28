@@ -13,6 +13,8 @@ import {
   jobState,
   jobTotals,
   parsePs,
+  parseReceipt,
+  receiptStats,
   type RunRow,
   runState,
   stageLabel,
@@ -196,5 +198,67 @@ describe("groupJobs", () => {
     expect(groups.map((g) => g.key)).toEqual(["solo", "A", "pair"])
     expect(groups[1]!.runs.map((r) => r.label)).toEqual(["a1", "verify"])
     expect(groups[2]!.runs.map((r) => r.row.runId)).toEqual(["pair-1", "pair-2"])
+  })
+})
+
+describe("receiptStats", () => {
+  const receipt = JSON.stringify({
+    agent: "claude",
+    harness: "claude-code",
+    model: "opus",
+    outcome: "completed",
+    exit_code: 0,
+    duration_ms: 151932,
+    turns: 31,
+    tokens_input: 54,
+    tokens_output: 13495,
+    cost_usd: 1.341191,
+    response: "the full agent response",
+    events_malformed: 0,
+    events_oversized: 2,
+    events_truncated: true,
+    stderr_excerpt: "boom",
+    cleanup_errors: ["unlink failed"],
+  })
+  const row = (extra: Partial<RunRow> = {}): RunRow => ({
+    batchId: "B", batchLabel: null, batchState: "finished", jobId: null, jobLabel: null,
+    startedAt: 1, runId: "B-1", label: null, context: null, agent: "claude", model: "opus",
+    position: 1, phase: "finished", runPath: "/runs/B-1", elapsedSecs: 152,
+    tokensInput: 54, tokensOutput: 13495, tokensCacheRead: 465000, tokensCacheWrite: 55600,
+    costUsd: 1.34, outcome: "completed", response: null, error: null,
+    ...extra,
+  })
+
+  test("parses and keeps only the stats fields", () => {
+    const rec = parseReceipt(receipt)
+    expect(rec).toBeDefined()
+    expect(rec!.eventsOversized).toBe(2)
+    expect(rec!.cleanupErrors).toEqual(["unlink failed"])
+  })
+
+  test("renders stats with the ps cache split and diagnostics", () => {
+    const md = receiptStats(parseReceipt(receipt)!, row())
+    expect(md).toContain("claude / claude-code")
+    expect(md).toContain("outcome: completed (exit 0)")
+    expect(md).toContain("duration: 2m32")
+    expect(md).toContain("turns: 31")
+    expect(md).toContain("54 in / 465.0k cache read / 55.6k cache write / 13.5k out")
+    expect(md).toContain("cost: $1.34")
+    expect(md).toContain("events: 2 oversized, truncated")
+    expect(md).toContain("stderr: boom")
+    expect(md).toContain("cleanup error: unlink failed")
+    expect(md).not.toContain("the full agent response")
+  })
+
+  test("falls back to ps numbers and omits empty diagnostics", () => {
+    const bare = parseReceipt(JSON.stringify({ agent: "x", outcome: "failed" }))!
+    const md = receiptStats(bare, row({ tokensCacheRead: null, tokensCacheWrite: null }))
+    expect(md).toContain("model: opus")
+    expect(md).toContain("outcome: failed")
+    expect(md).not.toContain("cache read: -")
+  })
+
+  test("rejects unreadable receipts", () => {
+    expect(parseReceipt("not json")).toBeUndefined()
   })
 })

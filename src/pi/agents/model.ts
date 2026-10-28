@@ -325,3 +325,95 @@ export function displayGroups(rows: RunRow[]): DisplayGroup[] {
     }
   })
 }
+
+/** receipt.json of a finished run; only fields the stats pane shows. */
+export interface RunReceipt {
+  agent: string | null
+  harness: string | null
+  model: string | null
+  outcome: string | null
+  exitCode: number | null
+  signal: string | null
+  durationMs: number | null
+  turns: number | null
+  tokensInput: number | null
+  tokensOutput: number | null
+  costUsd: number | null
+  error: string | null
+  stderrExcerpt: string | null
+  eventsMalformed: number | null
+  eventsOversized: number | null
+  eventsTruncated: boolean
+  persistenceErrors: string[]
+  cleanupErrors: string[]
+}
+
+/** Parse a run's receipt.json; undefined when unreadable or not JSON. */
+export function parseReceipt(json: string): RunReceipt | undefined {
+  let d: unknown
+  try {
+    d = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  if (typeof d !== "object" || d === null) return undefined
+  const r = d as Record<string, unknown>
+  const errList = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []
+  return {
+    agent: str(r.agent),
+    harness: str(r.harness),
+    model: str(r.model),
+    outcome: str(r.outcome),
+    exitCode: num(r.exit_code),
+    signal: str(r.signal),
+    durationMs: num(r.duration_ms),
+    turns: num(r.turns),
+    tokensInput: num(r.tokens_input),
+    tokensOutput: num(r.tokens_output),
+    costUsd: num(r.cost_usd),
+    error: str(r.error),
+    stderrExcerpt: str(r.stderr_excerpt),
+    eventsMalformed: num(r.events_malformed),
+    eventsOversized: num(r.events_oversized),
+    eventsTruncated: r.events_truncated === true,
+    persistenceErrors: errList(r.persistence_errors),
+    cleanupErrors: errList(r.cleanup_errors),
+  }
+}
+
+/**
+ * The stats pane's markdown: the receipt's post-run record with the ps
+ * row's cache split. The response text and run_path stay out; the
+ * response has its own pane and ctrl+y copies the dir.
+ */
+export function receiptStats(rec: RunReceipt, r: RunRow): string {
+  const lines: string[] = []
+  const agent = [rec.agent, rec.harness].filter(Boolean).join(" / ")
+  lines.push(`- agent: ${agent || r.agent}`)
+  lines.push(`- model: ${rec.model ?? r.model}`)
+  const exit = [
+    rec.exitCode !== null ? `exit ${rec.exitCode}` : undefined,
+    rec.signal ?? undefined,
+  ].filter(Boolean).join(", ")
+  lines.push(`- outcome: ${rec.outcome ?? "?"}${exit ? ` (${exit})` : ""}`)
+  if (rec.durationMs !== null) lines.push(`- duration: ${fmtDuration(Math.round(rec.durationMs / 1000))}`)
+  if (rec.turns !== null) lines.push(`- turns: ${rec.turns}`)
+  lines.push(`- tokens: ${fmtTokens(r.tokensInput ?? rec.tokensInput)} in / ` +
+    `${fmtTokens(r.tokensCacheRead)} cache read / ` +
+    `${fmtTokens(r.tokensCacheWrite)} cache write / ` +
+    `${fmtTokens(r.tokensOutput ?? rec.tokensOutput)} out`)
+  lines.push(`- cost: ${fmtCost(rec.costUsd ?? r.costUsd)}`)
+  const events = [
+    rec.eventsMalformed ? `${rec.eventsMalformed} malformed` : undefined,
+    rec.eventsOversized ? `${rec.eventsOversized} oversized` : undefined,
+    rec.eventsTruncated ? "truncated" : undefined,
+  ].filter(Boolean)
+  if (events.length) lines.push(`- events: ${events.join(", ")}`)
+  if (rec.error) lines.push(`- error: ${rec.error}`)
+  if (rec.stderrExcerpt) lines.push(`- stderr: ${rec.stderrExcerpt}`)
+  for (const [what, errs] of [["persistence", rec.persistenceErrors], ["cleanup", rec.cleanupErrors]] as const) {
+    for (const e of errs) lines.push(`- ${what} error: ${e}`)
+  }
+  return lines.join("\n")
+}

@@ -26,9 +26,11 @@ import {
   fmtCost,
   fmtDuration,
   fmtTokens,
-  inputTokens,
   haystack,
+  inputTokens,
   isLive,
+  parseReceipt,
+  receiptStats,
   type RunRow,
   runState,
   stateTone,
@@ -41,8 +43,10 @@ export interface MonitorDeps {
   load(): Promise<{ rows: RunRow[] } | { error: string }>
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
+  /** The run's receipt.json text, if readable. */
+  receipt(runPath: string): string | undefined
   /** File holding the document shown in a pane; undefined if none. */
-  documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined
+  documentPath(r: RunRow, pane: Pane): string | undefined
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
   editFile(path: string): Promise<void>
   /** Copy text to the system clipboard. */
@@ -79,7 +83,10 @@ export function runSessionNote(r: RunRow): string {
 export type { Target } from "../lib/default-target"
 
 type Subset = "running" | "all"
-type Pane = "prompt" | "response"
+
+/** Preview panes; ctrl+r cycles through them in this order. */
+export type Pane = "prompt" | "response" | "stats"
+const PANES: readonly Pane[] = ["prompt", "response", "stats"]
 
 /** A selectable list line: a run, or the heading of a folded group. */
 interface Entry {
@@ -243,7 +250,7 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "ctrl+r")) {
-      this.pane = this.pane === "prompt" ? "response" : "prompt"
+      this.pane = PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]!
       this.previewScroll = 0
       return this.tui.requestRender()
     }
@@ -381,7 +388,7 @@ export class AgentMonitor implements Component {
       "tab running/all",
       `enter open ${this.pane}`,
       "ctrl+t target",
-      `ctrl+r ${this.pane === "prompt" ? "response" : "prompt"}`,
+      `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold",
@@ -502,6 +509,12 @@ export class AgentMonitor implements Component {
 
   private previewSource(r: RunRow): string {
     if (this.pane === "prompt") return this.deps.prompt(r.runPath) ?? "_no prompt.md_"
+    if (this.pane === "stats") {
+      const rec = this.deps.receipt(r.runPath)
+      if (rec === undefined) return isLive(r) ? "_still running_" : "_no receipt_"
+      const parsed = parseReceipt(rec)
+      return parsed ? receiptStats(parsed, r) : "_unreadable receipt_"
+    }
     if (r.error) return `**${r.outcome ?? "error"}:** ${r.error}\n\n${r.response ?? ""}`
     if (r.response) return r.response
     return isLive(r) ? "_still running_" : "_no response_"

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { TUI } from "@earendil-works/pi-tui"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { parsePs, type RunRow } from "../agents/model"
-import { AgentMonitor, type MonitorDeps } from "../agents/monitor"
+import { AgentMonitor, type MonitorDeps, type Pane } from "../agents/monitor"
 import { editInTerminal, newSession, openInTmux } from "./cue-browser"
 
 /** Open the cue-agent monitor. */
@@ -19,12 +19,25 @@ function prompt(runPath: string): string | undefined {
   }
 }
 
+/** The run's receipt.json text, when the run dir holds one. */
+function readReceipt(runPath: string): string | undefined {
+  try {
+    return readFileSync(join(runPath, "receipt.json"), "utf8")
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Documents live in the run dir. Runs from before cue-agent wrote
  * response.md, and runs that failed without one, get their response or
  * error from ps written to a temp file instead.
  */
-function documentPath(r: RunRow, pane: "prompt" | "response"): string | undefined {
+function documentPath(r: RunRow, pane: Pane): string | undefined {
+  if (pane === "stats") {
+    const p = r.runPath ? join(r.runPath, "receipt.json") : ""
+    return p && existsSync(p) ? p : undefined
+  }
   const own = r.runPath ? join(r.runPath, `${pane}.md`) : ""
   if (own && existsSync(own)) return own
   if (pane === "prompt") return undefined
@@ -47,6 +60,7 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
       return { rows: parsePs(r.stdout) }
     },
     prompt,
+    receipt: readReceipt,
     documentPath,
     editFile: (path) => editInTerminal(tui, path),
     copy: copyToClipboard,
