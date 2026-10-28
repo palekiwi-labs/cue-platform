@@ -387,33 +387,40 @@ export function parseReceipt(json: string): RunReceipt | undefined {
  * row's cache split. The response text and run_path stay out; the
  * response has its own pane and ctrl+y copies the dir.
  */
+/**
+ * The stats pane's yaml: the receipt's post-run record with the ps
+ * row's cache split, fenced so the markdown renderer highlights it.
+ * The response text and run_path stay out; the response has its own
+ * pane and ctrl+y copies the dir.
+ */
 export function receiptStats(rec: RunReceipt, r: RunRow): string {
   const lines: string[] = []
   const agent = [rec.agent, rec.harness].filter(Boolean).join(" / ")
-  lines.push(`- agent: ${agent || r.agent}`)
-  lines.push(`- model: ${rec.model ?? r.model}`)
+  const kv = (k: string, v: string) => lines.push(`${k}: ${v}`)
+  kv("agent", agent || r.agent)
+  kv("model", rec.model ?? r.model)
   const exit = [
     rec.exitCode !== null ? `exit ${rec.exitCode}` : undefined,
     rec.signal ?? undefined,
   ].filter(Boolean).join(", ")
-  lines.push(`- outcome: ${rec.outcome ?? "?"}${exit ? ` (${exit})` : ""}`)
-  if (rec.durationMs !== null) lines.push(`- duration: ${fmtDuration(Math.round(rec.durationMs / 1000))}`)
-  if (rec.turns !== null) lines.push(`- turns: ${rec.turns}`)
-  lines.push(`- tokens: ${fmtTokens(r.tokensInput ?? rec.tokensInput)} in / ` +
+  kv("outcome", `${rec.outcome ?? "?"}${exit ? ` (${exit})` : ""}`)
+  if (rec.durationMs !== null) kv("duration", fmtDuration(Math.round(rec.durationMs / 1000)))
+  if (rec.turns !== null) kv("turns", `${rec.turns}`)
+  kv("tokens", `${fmtTokens(r.tokensInput ?? rec.tokensInput)} in / ` +
     `${fmtTokens(r.tokensCacheRead)} cache read / ` +
     `${fmtTokens(r.tokensCacheWrite)} cache write / ` +
     `${fmtTokens(r.tokensOutput ?? rec.tokensOutput)} out`)
-  lines.push(`- cost: ${fmtCost(rec.costUsd ?? r.costUsd)}`)
+  kv("cost", fmtCost(rec.costUsd ?? r.costUsd))
   const events = [
     rec.eventsMalformed ? `${rec.eventsMalformed} malformed` : undefined,
     rec.eventsOversized ? `${rec.eventsOversized} oversized` : undefined,
     rec.eventsTruncated ? "truncated" : undefined,
   ].filter(Boolean)
-  if (events.length) lines.push(`- events: ${events.join(", ")}`)
-  if (rec.error) lines.push(`- error: ${rec.error}`)
-  if (rec.stderrExcerpt) lines.push(`- stderr: ${rec.stderrExcerpt}`)
+  if (events.length) kv("events", events.join(", "))
+  if (rec.error) kv("error", rec.error.replace(/\s+/g, " "))
+  if (rec.stderrExcerpt) kv("stderr", rec.stderrExcerpt.replace(/\s+/g, " "))
   for (const [what, errs] of [["persistence", rec.persistenceErrors], ["cleanup", rec.cleanupErrors]] as const) {
-    for (const e of errs) lines.push(`- ${what} error: ${e}`)
+    for (const e of errs) kv(`${what}_errors`, e.replace(/\s+/g, " "))
   }
-  return lines.join("\n")
+  return ["```yaml", ...lines, "```"].join("\n")
 }

@@ -236,17 +236,18 @@ describe("receiptStats", () => {
     expect(rec!.cleanupErrors).toEqual(["unlink failed"])
   })
 
-  test("renders stats with the ps cache split and diagnostics", () => {
+  test("renders fenced yaml with the ps cache split and diagnostics", () => {
     const md = receiptStats(parseReceipt(receipt)!, row())
-    expect(md).toContain("claude / claude-code")
+    expect(md.split("\n")[0]).toBe("```yaml")
+    expect(md).toContain("agent: claude / claude-code")
     expect(md).toContain("outcome: completed (exit 0)")
     expect(md).toContain("duration: 2m32")
     expect(md).toContain("turns: 31")
-    expect(md).toContain("54 in / 465.0k cache read / 55.6k cache write / 13.5k out")
+    expect(md).toContain("tokens: 54 in / 465.0k cache read / 55.6k cache write / 13.5k out")
     expect(md).toContain("cost: $1.34")
     expect(md).toContain("events: 2 oversized, truncated")
     expect(md).toContain("stderr: boom")
-    expect(md).toContain("cleanup error: unlink failed")
+    expect(md).toContain("cleanup_errors: unlink failed")
     expect(md).not.toContain("the full agent response")
   })
 
