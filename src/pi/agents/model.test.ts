@@ -238,7 +238,7 @@ describe("receiptStats", () => {
 
   test("renders fenced yaml with the ps cache split and diagnostics", () => {
     const md = receiptStats(parseReceipt(receipt)!, row())
-    expect(md.split("\n")[0]).toBe("```yaml")
+    expect(md.split("\n").every((l) => !l.startsWith("- "))).toBe(true)
     expect(md).toContain("agent: claude / claude-code")
     expect(md).toContain("outcome: completed (exit 0)")
     expect(md).toContain("duration: 2m32")

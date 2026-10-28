@@ -9,7 +9,7 @@ import type { Target } from "../lib/default-target"
 
 import { dirname } from "node:path"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent"
+import { getMarkdownTheme, highlightCode } from "@earendil-works/pi-coding-agent"
 import {
   type Component,
   fuzzyFilter,
@@ -507,17 +507,28 @@ export class AgentMonitor implements Component {
     return lines.slice(start, start + height)
   }
 
-  private previewSource(r: RunRow): string {
-    if (this.pane === "prompt") return this.deps.prompt(r.runPath) ?? "_no prompt.md_"
+  /** The preview's text and its rendering: prose renders as markdown,
+   * code languages go straight to the highlighter. */
+  private previewSource(r: RunRow): { text: string; lang?: string } {
+    if (this.pane === "prompt") return { text: this.deps.prompt(r.runPath) ?? "_no prompt.md_" }
     if (this.pane === "stats") {
       const rec = this.deps.receipt(r.runPath)
-      if (rec === undefined) return isLive(r) ? "_still running_" : "_no receipt_"
+      if (rec === undefined) return { text: isLive(r) ? "_still running_" : "_no receipt_" }
       const parsed = parseReceipt(rec)
-      return parsed ? receiptStats(parsed, r) : "_unreadable receipt_"
+      return parsed
+        ? { text: receiptStats(parsed, r), lang: "yaml" }
+        : { text: "_unreadable receipt_" }
     }
-    if (r.error) return `**${r.outcome ?? "error"}:** ${r.error}\n\n${r.response ?? ""}`
-    if (r.response) return r.response
-    return isLive(r) ? "_still running_" : "_no response_"
+    if (r.error) return { text: `**${r.outcome ?? "error"}:** ${r.error}\n\n${r.response ?? ""}` }
+    if (r.response) {
+      // Reviewer runs answer in JSON; pretty-print it and highlight it.
+      try {
+        return { text: JSON.stringify(JSON.parse(r.response), null, 2), lang: "json" }
+      } catch {
+        return { text: r.response }
+      }
+    }
+    return { text: isLive(r) ? "_still running_" : "_no response_" }
   }
 
   private previewLines(width: number, height: number): string[] {
@@ -525,7 +536,10 @@ export class AgentMonitor implements Component {
     if (!r) return []
     const key = `${r.runId}:${this.pane}:${width}`
     if (this.previewCache?.key !== key) {
-      const lines = new Markdown(this.previewSource(r), 0, 0, getMarkdownTheme()).render(width)
+      const src = this.previewSource(r)
+      const lines = src.lang
+        ? highlightCode(src.text, src.lang)
+        : new Markdown(src.text, 0, 0, getMarkdownTheme()).render(width)
       this.previewCache = { key, lines }
     }
     const t = this.theme

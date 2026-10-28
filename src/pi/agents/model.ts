@@ -388,7 +388,7 @@ export function parseReceipt(json: string): RunReceipt | undefined {
  * response has its own pane and ctrl+y copies the dir.
  */
 /**
- * The stats pane's yaml: the receipt's post-run record with the ps
+ * The stats pane's yaml body: the receipt's post-run record with the ps
  * row's cache split, fenced so the markdown renderer highlights it.
  * The response text and run_path stay out; the response has its own
  * pane and ctrl+y copies the dir.
@@ -422,5 +422,5 @@ export function receiptStats(rec: RunReceipt, r: RunRow): string {
   for (const [what, errs] of [["persistence", rec.persistenceErrors], ["cleanup", rec.cleanupErrors]] as const) {
     for (const e of errs) kv(`${what}_errors`, e.replace(/\s+/g, " "))
   }
-  return ["```yaml", ...lines, "```"].join("\n")
+  return lines.join("\n")
 }
