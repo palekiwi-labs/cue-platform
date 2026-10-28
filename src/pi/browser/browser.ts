@@ -727,6 +727,7 @@ export class CueBrowser implements Component {
         return this.refresh()
       }
       if (matchesKey(data, "alt+z") && !this.contextsFlat) return this.onToggleCollapse(v)
+      if (matchesKey(data, "shift+tab") && !this.contextsFlat) return this.onCollapseAll(v)
       if (matchesKey(data, "ctrl+r")) {
         const c = this.selectedContext()
         if (c) this.pushSessions({ address: c.address, slug: c.slug })
@@ -758,6 +759,7 @@ export class CueBrowser implements Component {
         }
         if (matchesKey(data, "ctrl+l")) return void this.onLink()
         if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
+        if (matchesKey(data, "shift+tab")) return this.onFoldSessionsAll(v)
         if (matchesKey(data, "alt+t")) {
           this.sessionsFlat = !this.sessionsFlat
           v.selected = 0
@@ -1025,6 +1027,40 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  /** zM/zR: collapse every root with children, or expand all. */
+  private onCollapseAll(v: ContextsView): void {
+    if (v.query.trim() !== "") return
+    const tree = this.treeRows(v)
+    const roots: string[] = []
+    for (let i = 0; i < tree.length; i++) {
+      if (tree[i]!.depth !== 0) continue
+      if (i + 1 < tree.length && tree[i + 1]!.depth > 0) roots.push(tree[i]!.address)
+    }
+    // zM when any collapsible root is open, zR when they are all folded
+    // (deeper folds clear with the roots: zR opens everything).
+    if (roots.some((a) => !this.collapsed.has(a))) {
+      for (const a of roots) this.collapsed.add(a)
+      this.growSlugWidth(v.rows)
+      // The cursor's row may hide inside a root: move to its nearest
+      // visible ancestor, scanning back through the pre-order tree.
+      const keep = this.selectedContext()?.address
+      if (!(keep && this.selectContext(v, keep))) {
+        const idx = tree.findIndex((r) => r.address === keep)
+        const depth = idx >= 0 ? tree[idx]!.depth : 0
+        let j = idx
+        while (j > 0 && tree[j]!.depth >= depth) j--
+        const up = tree[j]?.address
+        if (!(up && this.selectContext(v, up))) this.selectHere(v)
+      }
+    } else {
+      this.collapsed.clear()
+      this.growSlugWidth(v.rows)
+      const keep = this.selectedContext()?.address
+      if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
+    }
+    this.refresh()
+  }
+
   private onResume(): void {
     const s = this.selectedSession()
     if (!s) return
@@ -1044,6 +1080,24 @@ export class CueBrowser implements Component {
     else this.sessionFolds.add(address)
     const i = this.shownSessions(v).findIndex((x) => x.kind === "context" && x.context.address === address)
     if (i >= 0) v.selected = i
+    this.refresh()
+  }
+
+  /** zM/zR for sessions: fold every context with sessions, or unfold all. */
+  private onFoldSessionsAll(v: SessionsView): void {
+    if (v.query.trim() !== "" || v.subset === "labeled" || this.sessionsFlat || !this.sessionFolds) return
+    const headers = this.shownSessions(v)
+      .filter((r): r is Extract<SessionListRow, { kind: "context" }> => r.kind === "context" && r.sessions.length > 0)
+    if (headers.some((r) => !this.sessionFolds!.has(r.context.address))) {
+      const keep = this.selectedSessionRow()
+      for (const r of headers) this.sessionFolds.add(r.context.address)
+      // Session rows hid under their header: snap to the same context.
+      const address = keep?.context.address
+      const i = this.shownSessions(v).findIndex((r) => r.kind === "context" && r.context.address === address)
+      if (i >= 0) v.selected = i
+    } else {
+      this.sessionFolds.clear()
+    }
     this.refresh()
   }
 
@@ -1321,11 +1375,11 @@ export class CueBrowser implements Component {
         : ["enter create", "tab slug/path", "esc back"]
     } else if (v.kind === "contexts") {
       hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
+        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "shift+tab fold all", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
         "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
       hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
-        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
+        "alt+z fold", "shift+tab fold all", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
       hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h context",

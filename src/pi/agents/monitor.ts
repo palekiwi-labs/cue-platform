@@ -219,6 +219,24 @@ export class AgentMonitor implements Component {
     this.tui.requestRender()
   }
 
+  /** zM/zR: fold every group, or unfold them all. */
+  private toggleFoldAll(): void {
+    const groups = this.groups()
+    if (groups.length === 0) return
+    const e = this.selectedEntry()
+    if (groups.some((g) => !this.isFolded(g))) {
+      for (const g of groups) this.foldOverride.set(g.key, true)
+      // A run hid under its group heading: snap to it.
+      this.selectedId = `group:${e?.group.key ?? groups[0]!.key}`
+    } else {
+      for (const g of groups) this.foldOverride.set(g.key, false)
+      // A group heading became its first run.
+      if (e && e.folded) this.selectedId = e.group.runs[0]!.row.runId
+    }
+    this.previewScroll = 0
+    this.tui.requestRender()
+  }
+
   // ---- input -----------------------------------------------------------
 
   handleInput(data: string): void {
@@ -255,6 +273,7 @@ export class AgentMonitor implements Component {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
     if (matchesKey(data, "ctrl+s")) return this.onSession()
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("id")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
@@ -391,7 +410,7 @@ export class AgentMonitor implements Component {
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
-      "alt+z fold",
+      "alt+z fold", "shift+tab fold all",
       "ctrl+s session",
       "ctrl+h id",
       "ctrl+y dir",
