@@ -11,7 +11,7 @@ Pipeline:
      the probability of their subtree (boost, never filter).
 
   recall-shallow --query '...' [--terms a,b] [--roots addr,...]
-                 [--limit 10] [--json]
+                 [--limit 10] [--format agent|text|json]
   recall-shallow eval <eval.jsonl|eval-note.md> [--json]
   recall-shallow card <context-address> [--query '...']
 
@@ -288,6 +288,140 @@ def jev_rank(state, cards, batch):
     return probs, ",".join(sorted(models)), {"input_tokens": tok}, len(chunks)
 
 
+# ---------------------------------------------------------------- agent
+
+# Confidence buckets over jev probabilities, chosen from the scoped eval
+# (note palekiwi/palekiwi/cue-recall/note/scoped-eval.md): at >= 0.80,
+# 94% of top-5 results were expected or acceptable; 0.65-0.80 holds a
+# fifth of the expected answers but also most top-5 noise. Results
+# below WEAK_FLOOR are dropped; off-topic queries score under 0.4.
+STRONG, LIKELY, WEAK_FLOOR = 0.80, 0.65, 0.30
+
+
+def bucket(p):
+    if p >= STRONG:
+        return "strong"
+    if p >= LIKELY:
+        return "likely"
+    return "weak" if p >= WEAK_FLOOR else None
+
+
+def evidence(raw, qt, idf, n=2, words=24):
+    """Up to n lines of the context that best match the query.
+
+    Log entries first (title plus best bullet, scored by the IDF of
+    the query tokens they contain), then task titles, then the intent.
+    """
+    scored = []
+    for i, (title, bl, ttok, btok) in enumerate(raw["logs"]):
+        st = _match(ttok, qt, idf)
+        bb = max(((_match(bt, qt, idf), b) for b, bt in zip(bl, btok)),
+                 default=(0.0, ""))
+        if st + bb[0] > 0:
+            line = title + (f" - {bb[1]}" if bb[0] > 0 else "")
+            scored.append((st + bb[0], i, "log: " + _words(line, words)))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    out = [x[2] for x in scored[:n]]
+    if len(out) < n:
+        tasks = [(_match(frozenset(LX.tokenize(t)), qt, idf), t)
+                 for t in raw["tasks"]]
+        out += ["task: " + _words(t, words)
+                for sc, t in sorted(tasks, key=lambda x: -x[0])
+                if sc > 0][:n - len(out)]
+    if len(out) < n and raw["intent"] and _match(
+            frozenset(LX.tokenize(raw["intent"])), qt, idf) > 0:
+        out.append("intent: " + _words(raw["intent"], words))
+    return out
+
+
+def _age(ts, now):
+    if not ts:
+        return None
+    d = max(0, int(now - ts)) // 86400
+    if d < 1:
+        return "today"
+    if d < 60:
+        return f"{d}d ago"
+    return f"{d // 30}mo ago" if d < 730 else f"{d // 365}y ago"
+
+
+def agent_report(idx, cards_raw, res, query, terms=None, scope=None,
+                 limit=10, now=None):
+    """Bucketed results with evidence, plus compact text for agents."""
+    now = time.time() if now is None else now
+    qt = set(LX.tokenize(query))
+    for term in terms or []:
+        qt |= set(LX.tokenize(term))
+    idf = {x: _idf(idx, x) for x in qt}
+    rows = idx.get("rows") or {}
+    results = []
+    for r in res:
+        b = bucket(r["probability"])
+        if b is None or len(results) >= limit:
+            continue
+        a, raw = r["address"], cards_raw[r["address"]]
+        row = rows.get(a, {})
+        results.append({
+            "address": a, "title": row.get("title") or raw["title"],
+            "bucket": b, "probability": round(r["probability"], 3),
+            "score": r["score"], "lexical_rank": r["lexical_rank"],
+            "root": r["root"], "kind": row.get("kind") or raw["kind"],
+            "mode": row.get("mode") or raw["mode"],
+            "parent": row.get("parent") or raw["parent"],
+            "last_logged_at": row.get("last_logged_at"),
+            "evidence": evidence(raw, qt, idf),
+            "reason": r["reason"],
+        })
+    n = len(idx["meta"])
+    where = f"scope {scope}" if scope else "the default scope"
+    counts = {b: sum(1 for x in results if x["bucket"] == b)
+              for b in ("strong", "likely", "weak")}
+    lines = [f"recall: {query!r} over {n} contexts in {where}"]
+    if not results:
+        lines.append(f"No matches (nothing scored p >= {WEAK_FLOOR:.2f}): "
+                     "no context in this scope appears to discuss "
+                     "this topic.")
+    else:
+        summ = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+        if counts["strong"]:
+            lines.append(f"{summ}.")
+        else:
+            lines.append(f"No strong matches ({summ}). Treat these as "
+                         "leads to check, not as prior discussion.")
+    labels = {"strong": f"strong (p >= {STRONG:.2f})",
+              "likely": f"likely (p {LIKELY:.2f}-{STRONG:.2f})",
+              "weak": f"weak (p {WEAK_FLOOR:.2f}-{LIKELY:.2f})"}
+    k, last = 0, None
+    for x in results:
+        if x["bucket"] != last:
+            lines += ["", labels[x["bucket"]]]
+            last = x["bucket"]
+        k += 1
+        title = f" - {_words(x['title'], 14)}" if x["title"] else ""
+        lines.append(f"{k}. {x['address']}{title}")
+        meta = [y for y in (x["kind"], x["mode"]) if y]
+        bits = ["/".join(meta)] if meta else []
+        if x["parent"]:
+            bits.append(f"parent {x['parent']}")
+        age = _age(x["last_logged_at"], now)
+        if age:
+            bits.append(f"last log {age}")
+        if bits:
+            lines.append("   " + "; ".join(bits))
+        lines += [f"   > {e}" for e in x["evidence"]]
+    if results:
+        top = results[0]["address"]
+        lines += ["", f"next: cue status --context {top}",
+                  f"      cue log list --context {top} --format md "
+                  "--limit 10",
+                  f"      cue list --context {top}"]
+    return {"query": query, "terms": terms or [], "scope": scope,
+            "contexts": n, "counts": counts,
+            "thresholds": {"strong": STRONG, "likely": LIKELY,
+                           "weak": WEAK_FLOOR},
+            "results": results, "text": "\n".join(lines)}
+
+
 # ---------------------------------------------------------------- pipeline
 
 def make_state(query, terms):
@@ -449,12 +583,22 @@ def main(argv):
         p.add_argument("--terms")
         p.add_argument("--roots")
         p.add_argument("--limit", type=int, default=10)
+        p.add_argument("--format", choices=["agent", "text", "json"],
+                       default="agent",
+                       help="agent: bucketed compact text with evidence; "
+                       "text: ranked list with probabilities (debugging); "
+                       "json: the agent report as data, its text in "
+                       "`text`, diagnostics in `diagnostics`")
         add_args(p)
         a = p.parse_args(argv)
         mode = "query"
     if a.no_prop:
         a.prop_parent = a.prop_refs = 0.0
     cfg = LX.Config(a)
+    if mode != "card" and not os.environ.get("TYPESAFE_API_KEY"):
+        sys.exit("cue-recall: TYPESAFE_API_KEY is not set; shallow recall "
+                 "ranks candidates with jev (api.typesafe.ai) and cannot "
+                 "run without it")
     if mode == "eval":
         return eval_main(a, cfg)
     t0 = time.perf_counter()
@@ -474,26 +618,33 @@ def main(argv):
                            csv(a.roots), a.candidates, a.batch,
                            a.root_boost, a.match_logs)
         info["timing_ms"]["load"] = t_load
+        fmt = "json" if a.json else a.format
+        if fmt in ("agent", "json"):
+            rep = agent_report(idx, cards_raw, res, a.query, csv(a.terms),
+                               a.scope, a.limit)
+            if fmt == "agent":
+                print(rep["text"])
+                return 0
+            rep["diagnostics"] = {
+                "model": info["model"], "calls": info["calls"],
+                "cards": info["cards"],
+                "input_tokens": info["input_tokens"],
+                "timing_ms": {k: round(v, 1) for k, v in
+                              info["timing_ms"].items()}}
+            print(json.dumps(rep, indent=2))
+            return 0
         top = [{k: r[k] for k in ("address", "probability", "score",
                                   "lexical_rank", "reason")}
                for r in res[:a.limit]]
-        if a.json:
-            print(json.dumps({"query": a.query, "results": top,
-                              "model": info["model"],
-                              "input_tokens": info["input_tokens"],
-                              "timing_ms": {k: round(v, 1) for k, v in
-                                            info["timing_ms"].items()}},
-                             indent=2))
-        else:
-            for k, r in enumerate(top, 1):
-                print(f"{k:2}. p={r['probability']:.2f}  {r['address']}")
-                print(f"      {r['reason']}")
-            tm = info["timing_ms"]
-            print(f"# {info['model']}, {info['cards']} cards, "
-                  f"{info['input_tokens']} tokens; load {t_load:.0f} ms, "
-                  f"lexical {tm['lexical']:.0f} ms, cards "
-                  f"{tm['cards']:.0f} ms, jev {tm['jev']:.0f} ms",
-                  file=sys.stderr)
+        for k, r in enumerate(top, 1):
+            print(f"{k:2}. p={r['probability']:.2f}  {r['address']}")
+            print(f"      {r['reason']}")
+        tm = info["timing_ms"]
+        print(f"# {info['model']}, {info['cards']} cards, "
+              f"{info['input_tokens']} tokens; load {t_load:.0f} ms, "
+              f"lexical {tm['lexical']:.0f} ms, cards "
+              f"{tm['cards']:.0f} ms, jev {tm['jev']:.0f} ms",
+              file=sys.stderr)
         return 0
 
 
@@ -555,5 +706,5 @@ def eval_main(a, cfg):
 if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
-    except LX.ScopeError as e:
-        sys.exit(f"recall-shallow: {e}")
+    except (LX.ScopeError, RuntimeError, urllib.error.URLError) as e:
+        sys.exit(f"cue-recall: {e}")
