@@ -6,8 +6,8 @@ and cast with its terminal UI on the host.
 cue-platform ships in three parts:
 
 - **The flake** builds the tools: pi, cue, cue-agent, cast-mcp-client,
-  cue-review, gh, jq, the container tmux (with its window picker) and the
-  nvf-based nvim. `packages.<system>.default` bundles all of them; each
+  cue-review, cue-recall, gh, jq, the container tmux (with its window
+  picker) and the nvf-based nvim. `packages.<system>.default` bundles all of them; each
   is also exported on its own.
 - **The host tools**: cast (re-exported from the cast flake) and
   cast-tui (`cast-tui/`), the terminal UI that bare `cast` opens.
