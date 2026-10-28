@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""recall-shallow: lexical candidates -> context cards -> one jev call.
+
+Pipeline:
+  1. recall-lexical ranks contexts (archived excluded); keep top N.
+  2. A deterministic context card (under ~150 words) per candidate.
+  3. One batched jev request: state = query (+ terms); one noul
+     question per card. Over --batch cards the set is split into
+     parallel requests.
+  4. Rank by probability, tie-break by lexical rank. Roots multiply
+     the probability of their subtree (boost, never filter).
+
+  recall-shallow --query '...' [--terms a,b] [--roots addr,...]
+                 [--limit 10] [--json]
+  recall-shallow eval <eval.jsonl|eval-note.md> [--json]
+  recall-shallow card <context-address> [--query '...']
+
+Needs recall-lexical (same directory, $RECALL_LEXICAL, or the cue
+store copy) and $TYPESAFE_API_KEY. Stdlib only.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+import pickle
+import re
+import statistics
+import sys
+import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+API = "https://api.typesafe.ai/v1/systemone"
+# jev-latest resolved to jev-1.14.0 on 2026-10-28; pinned so that
+# probabilities stay comparable across runs.
+MODEL = os.environ.get("RECALL_JEV_MODEL", "jev-1.14.0")
+QUESTION = "Is the topic of the state discussed in context_card?"
+CARD_VERSION = 2
+
+
+def _load_lexical():
+    # importing a sibling script must not leave __pycache__ in the store
+    sys.dont_write_bytecode = True
+    here = os.path.dirname(os.path.realpath(__file__))
+    store = os.environ.get("CUE_STORE", os.path.expanduser("~/cue"))
+    for p in (os.environ.get("RECALL_LEXICAL"),
+              os.path.join(here, "recall-lexical"),
+              os.path.join(store, "palekiwi/palekiwi/cue-recall/bin/"
+                           "recall-lexical")):
+        if p and os.path.isfile(p):
+            loader = importlib.machinery.SourceFileLoader("recall_lexical",
+                                                          p)
+            spec = importlib.util.spec_from_loader("recall_lexical", loader)
+            mod = importlib.util.module_from_spec(spec)
+            loader.exec_module(mod)
+            return mod
+    sys.exit("recall-shallow: recall-lexical not found "
+             "(set $RECALL_LEXICAL)")
+
+
+LX = _load_lexical()
+
+
+# ---------------------------------------------------------------- card data
+
+def _str(v):
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v)
+    return str(v or "")
+
+
+def _words(s, n):
+    w = s.split()
+    return " ".join(w[:n]) + (" ..." if len(w) > n else "")
+
+
+def _spec_intent(text):
+    """First paragraph under '## Intent', else the first prose one."""
+    _, body = LX.split_frontmatter(text)
+    paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    for k, p in enumerate(paras):
+        if re.match(r"^#+\s*intent\b", p, re.I):
+            rest = p.split("\n", 1)[1].strip() if "\n" in p else ""
+            if rest:
+                return " ".join(rest.split())
+            if k + 1 < len(paras):
+                return " ".join(paras[k + 1].split())
+    for p in paras:
+        if not p.startswith(("#", "```", "|", "---")):
+            return " ".join(p.split())
+    return ""
+
+
+def build_cards(meta):
+    """Raw card material for every indexed (non-archived) context."""
+    out = {}
+    for m in meta:
+        a = m["addr"]
+        base = os.path.join(LX.STORE, a)
+        fm, _ = LX.split_frontmatter(LX.read(os.path.join(base,
+                                                          "context.md")))
+        desc = " ".join(_str(fm.get("description")).split())
+        intent = desc
+        if not intent:
+            sp = os.path.join(base, "spec", "index.md")
+            if os.path.isfile(sp):
+                intent = _spec_intent(LX.read(sp))
+        tasks = []
+        tdir = os.path.join(base, "task")
+        if os.path.isdir(tdir):
+            for p in LX.md_files(tdir):
+                tfm, _ = LX.split_frontmatter(LX.read(p))
+                t = _str(tfm.get("title")) or os.path.basename(p)[:-3]
+                try:
+                    ts = int(str(tfm.get("created_at") or 0))
+                except ValueError:
+                    ts = 0
+                tasks.append((ts, _str(tfm.get("status")), t))
+        tasks.sort(key=lambda x: -x[0])
+        if not intent and tasks:
+            intent = tasks[0][2]
+        logs = []
+        ldir = os.path.join(base, "log")
+        if os.path.isdir(ldir):
+            for p in sorted(LX.log_files(ldir), key=os.path.basename):
+                try:
+                    j = json.loads(LX.read(p))
+                except ValueError:
+                    continue
+                if not isinstance(j, dict):
+                    continue
+                bl = []
+                for k in ("found", "decided", "open"):
+                    v = j.get(k) or []
+                    if isinstance(v, list):
+                        bl += [" ".join(str(x).split()) for x in v]
+                title = " ".join(_str(j.get("title")).split())
+                # token sets are precomputed for query matching
+                logs.append((title, bl, frozenset(LX.tokenize(title)),
+                             [frozenset(LX.tokenize(b)) for b in bl]))
+        out[a] = {
+            "title": m["title"], "kind": _str(fm.get("kind")),
+            "mode": _str(fm.get("mode")), "intent": intent,
+            "parent": m["parent"], "refs": m["refs"],
+            "tasks": [t for _, _, t in tasks], "logs": logs,
+        }
+    return out
+
+
+def load_cards(idx):
+    p = LX.cache_path().replace(".pickle", f"-cards-v{CARD_VERSION}.pickle")
+    if os.path.exists(p):
+        with open(p, "rb") as fh:
+            c = pickle.load(fh)
+        if c.get("sig") == idx["sig"]:
+            return c["cards"]
+    cards = build_cards(idx["meta"])
+    tmp = p + f".{os.getpid()}.tmp"
+    with open(tmp, "wb") as fh:
+        pickle.dump({"sig": idx["sig"], "cards": cards}, fh,
+                    protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp, p)
+    return cards
+
+
+# ---------------------------------------------------------------- cards
+
+def _idf(idx, t):
+    df = max(len(idx["post"]["logtitle"].get(t, ())),
+             len(idx["post"]["logbullets"].get(t, ())))
+    return math.log(1 + len(idx["meta"]) / (df + 1))
+
+
+def _match(toks, qt, idf):
+    return sum(idf[t] for t in qt if t in toks)
+
+
+def make_card(addr, raw, qt, idf, n_recent=3, n_match=3, n_tasks=3,
+              budget=150):
+    """Deterministic text card, kept under ~budget words.
+
+    Over budget, detail is shed in a fixed order: matching-log bullets,
+    then the third task, recent log and matching log.
+    """
+    logs = raw["logs"]
+    recent = list(range(len(logs) - 1, -1, -1))[:n_recent]
+    scored = []
+    for i, (title, bl, ttok, btok) in enumerate(logs):
+        if i in recent:
+            continue
+        st = _match(ttok, qt, idf)
+        bb = max(((_match(bt, qt, idf), b) for b, bt in zip(bl, btok)),
+                 default=(0.0, ""))
+        if st + bb[0] > 0:
+            scored.append((st + bb[0], i, title, bb))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+
+    def render(nr, nm, nt, bullets):
+        head = addr
+        if raw["title"]:
+            head += f" ({_words(raw['title'], 14)})"
+        lines = [f"context: {head}"]
+        if raw["intent"]:
+            lines.append(f"intent: {_words(raw['intent'], 35)}")
+        rel = []
+        if raw["parent"]:
+            rel.append(f"parent {raw['parent']}")
+        if raw["refs"]:
+            rel.append("refs " + ", ".join(raw["refs"][:2]))
+        if rel:
+            lines.append("; ".join(rel))
+        if recent[:nr]:
+            lines.append("recent logs: " + " | ".join(
+                _words(logs[i][0], 15) for i in recent[:nr]))
+        if scored[:nm]:
+            ent = []
+            for _, _, title, (bs, b) in scored[:nm]:
+                e = _words(title, 15)
+                if bullets and bs > 0:
+                    e += " - " + _words(b, 18)
+                ent.append(e)
+            lines.append("matching logs: " + " | ".join(ent))
+        if raw["tasks"][:nt]:
+            lines.append("tasks: " + " | ".join(
+                _words(t, 10) for t in raw["tasks"][:nt]))
+        return "\n".join(lines)
+
+    steps = [(n_recent, n_match, n_tasks, True),
+             (n_recent, n_match, n_tasks, False),
+             (n_recent, n_match, min(n_tasks, 2), False),
+             (min(n_recent, 2), n_match, min(n_tasks, 2), False),
+             (min(n_recent, 2), min(n_match, 2), min(n_tasks, 2), False)]
+    for st in steps:
+        card = render(*st)
+        if len(card.split()) <= budget:
+            return card
+    return card
+
+
+# ---------------------------------------------------------------- jev
+
+def jev_call(state, cards, timeout=60):
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if not key:
+        raise RuntimeError("TYPESAFE_API_KEY is not set")
+    qs = {f"c{k}": {"type": "noul",
+                    "instructions": {"context_card": card,
+                                     "question": QUESTION}}
+          for k, card in enumerate(cards)}
+    body = json.dumps({"model": MODEL, "state": state,
+                       "questions": qs}).encode()
+    req = urllib.request.Request(API, data=body, method="POST", headers={
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"})
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                j = json.loads(r.read())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 529) and attempt < 3:
+                time.sleep(0.5 * 2 ** attempt)
+                continue
+            raise RuntimeError(f"jev HTTP {e.code}: "
+                               f"{e.read()[:300].decode(errors='replace')}")
+    probs = [j["answers"][f"c{k}"]["noul"] for k in range(len(cards))]
+    return probs, j.get("model"), j.get("usage") or {}
+
+
+def jev_rank(state, cards, batch):
+    """Split into ceil(n/batch) near-equal parallel requests."""
+    if not cards:
+        return [], None, {"input_tokens": 0}, 0
+    nb = max(1, math.ceil(len(cards) / batch))
+    size = math.ceil(len(cards) / nb)
+    chunks = [cards[i:i + size] for i in range(0, len(cards), size)]
+    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
+        res = list(ex.map(lambda c: jev_call(state, c), chunks))
+    probs, models, tok = [], set(), 0
+    for p, m, u in res:
+        probs += p
+        models.add(m)
+        tok += u.get("input_tokens", 0)
+    return probs, ",".join(sorted(models)), {"input_tokens": tok}, len(chunks)
+
+
+# ---------------------------------------------------------------- pipeline
+
+def make_state(query, terms):
+    if terms:
+        return f"{query}\nRelated terms: {', '.join(terms)}"
+    return query
+
+
+def recall(idx, cards_raw, cfg, query, terms=None, roots=None, n=100,
+           batch=200, root_boost=1.5, n_match=3):
+    t = {}
+    t0 = time.perf_counter()
+    # lexical stage: roots are applied after jev, not here
+    top, order, _ = LX.search(idx, query, terms, None, cfg, limit=n)
+    cand = order[:n]
+    lres = {r["address"]: r["reason"] for r in top}
+    t["lexical"] = (time.perf_counter() - t0) * 1000
+    t0 = time.perf_counter()
+    qt = set(LX.tokenize(query))
+    for term in terms or []:
+        qt |= set(LX.tokenize(term))
+    idf = {x: _idf(idx, x) for x in qt}
+    addrs = [idx["meta"][i]["addr"] for i in cand]
+    cards = [make_card(a, cards_raw[a], qt, idf, n_match=n_match)
+             for a in addrs]
+    t["cards"] = (time.perf_counter() - t0) * 1000
+    t0 = time.perf_counter()
+    probs, model, usage, ncalls = jev_rank(make_state(query, terms), cards,
+                                           batch)
+    t["jev"] = (time.perf_counter() - t0) * 1000
+    boosted = set()
+    for r in roots or []:
+        boosted |= LX.subtree(idx, r)
+    rows = []
+    for k, (i, a, p) in enumerate(zip(cand, addrs, probs)):
+        s = p * (root_boost if i in boosted else 1.0)
+        rows.append({"address": a, "score": round(s, 4),
+                     "probability": p, "lexical_rank": k + 1,
+                     "root": i in boosted, "reason": lres.get(a, ""),
+                     "card": cards[k]})
+    rows.sort(key=lambda r: (-r["score"], r["lexical_rank"]))
+    for r in rows:
+        r["reason"] = (f"jev p={r['probability']:.2f}, lexical "
+                       f"#{r['lexical_rank']}"
+                       + (", root subtree" if r["root"] else "")
+                       + (f"; {r['reason']}" if r["reason"] else ""))
+    return rows, {"timing_ms": t, "model": model, "calls": ncalls,
+                  "input_tokens": usage.get("input_tokens", 0),
+                  "cards": len(cards),
+                  "card_words": [len(c.split()) for c in cards]}
+
+
+# ---------------------------------------------------------------- eval
+
+def pct(xs, q):
+    xs = sorted(xs)
+    if not xs:
+        return 0.0
+    k = (len(xs) - 1) * q
+    lo, hi = math.floor(k), math.ceil(k)
+    return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
+
+
+def run_eval(idx, cards_raw, cfg, cases, a):
+    rows, stats = [], []
+    for c in cases:
+        res, info = recall(idx, cards_raw, cfg, c["query"], c.get("terms"),
+                           c.get("roots"), a.candidates, a.batch,
+                           a.root_boost, a.match_logs)
+        ranked = [r["address"] for r in res]
+        rank = {x: k + 1 for k, x in enumerate(ranked)}
+        exp = c["expected"]
+        ok = set(exp) | set(c.get("acceptable") or [])
+        ranks = [rank.get(x) for x in exp]
+        first = min((r for r in ranks if r), default=None)
+        top5 = ranked[:5]
+        rows.append({
+            "id": c["id"], "kind": c["kind"],
+            "hinted": bool(c.get("terms") or c.get("roots")),
+            "r5": sum(1 for r in ranks if r and r <= 5) / len(exp),
+            "r10": sum(1 for r in ranks if r and r <= 10) / len(exp),
+            "mrr": 1 / first if first else 0.0,
+            "p5": sum(1 for x in top5 if x in ok) / 5,
+            "ranks": dict(zip(exp, ranks)), "top5": top5,
+            "top5_p": [round(r["probability"], 3) for r in res[:5]],
+            "expected_p": {x: round(res[rank[x] - 1]["probability"], 3)
+                           for x in exp if x in rank},
+            "lexical_ranks": {x: res[rank[x] - 1]["lexical_rank"]
+                              for x in exp if x in rank},
+        })
+        stats.append(info)
+    return rows, stats
+
+
+def latency_report(stats):
+    out = {}
+    for st in ("lexical", "cards", "jev"):
+        xs = [s["timing_ms"][st] for s in stats]
+        out[st] = {"median": statistics.median(xs), "p90": pct(xs, 0.9)}
+    tot = [sum(s["timing_ms"].values()) for s in stats]
+    out["total"] = {"median": statistics.median(tot), "p90": pct(tot, 0.9)}
+    tk = [s["input_tokens"] for s in stats]
+    out["input_tokens"] = {"median": statistics.median(tk),
+                           "p90": pct(tk, 0.9)}
+    wd = [w for s in stats for w in s["card_words"]]
+    out["card_words"] = {"median": statistics.median(wd),
+                         "p90": pct(wd, 0.9), "max": max(wd)}
+    out["models"] = sorted({s["model"] for s in stats})
+    out["calls"] = sorted({s["calls"] for s in stats})
+    return out
+
+
+# ---------------------------------------------------------------- cli
+
+def csv(v):
+    return [x.strip() for x in v.split(",") if x.strip()] if v else None
+
+
+def add_args(p):
+    p.add_argument("--candidates", "-n", type=int, default=100,
+                   help="lexical candidates sent to jev")
+    p.add_argument("--batch", type=int, default=200,
+                   help="max cards per jev request; above it the set is "
+                   "split into parallel requests")
+    p.add_argument("--match-logs", type=int, default=3,
+                   help="query-matching log entries per card")
+    # lexical candidate-generation flags (recall-lexical's). Its
+    # --root-boost is reused as the probability multiplier for the
+    # roots' subtrees, applied after jev; roots never reach the
+    # lexical stage.
+    LX.add_cfg_args(p)
+
+
+def main(argv):
+    if argv and argv[0] == "eval":
+        p = argparse.ArgumentParser(prog="recall-shallow eval")
+        p.add_argument("cases")
+        p.add_argument("--fail-at", type=int, default=5)
+        p.add_argument("--save", help="also write the JSON report here")
+        add_args(p)
+        a = p.parse_args(argv[1:])
+        mode = "eval"
+    elif argv and argv[0] == "card":
+        p = argparse.ArgumentParser(prog="recall-shallow card")
+        p.add_argument("address")
+        p.add_argument("--query", "-q", default="")
+        p.add_argument("--terms")
+        add_args(p)
+        a = p.parse_args(argv[1:])
+        mode = "card"
+    else:
+        p = argparse.ArgumentParser(prog="recall-shallow")
+        p.add_argument("--query", "-q", required=True)
+        p.add_argument("--terms")
+        p.add_argument("--roots")
+        p.add_argument("--limit", type=int, default=10)
+        add_args(p)
+        a = p.parse_args(argv)
+        mode = "query"
+    if a.no_prop:
+        a.prop_parent = a.prop_refs = 0.0
+    cfg = LX.Config(a)
+    t0 = time.perf_counter()
+    idx, _ = LX.load_index(a.rebuild, check=not a.no_check)
+    cards_raw = load_cards(idx)
+    t_load = (time.perf_counter() - t0) * 1000
+    if mode == "card":
+        qt = set(LX.tokenize(a.query))
+        for term in csv(a.terms) or []:
+            qt |= set(LX.tokenize(term))
+        idf = {x: _idf(idx, x) for x in qt}
+        print(make_card(a.address, cards_raw[a.address], qt, idf,
+                        n_match=a.match_logs))
+        return 0
+    if mode == "query":
+        res, info = recall(idx, cards_raw, cfg, a.query, csv(a.terms),
+                           csv(a.roots), a.candidates, a.batch,
+                           a.root_boost, a.match_logs)
+        info["timing_ms"]["load"] = t_load
+        top = [{k: r[k] for k in ("address", "probability", "score",
+                                  "lexical_rank", "reason")}
+               for r in res[:a.limit]]
+        if a.json:
+            print(json.dumps({"query": a.query, "results": top,
+                              "model": info["model"],
+                              "input_tokens": info["input_tokens"],
+                              "timing_ms": {k: round(v, 1) for k, v in
+                                            info["timing_ms"].items()}},
+                             indent=2))
+        else:
+            for k, r in enumerate(top, 1):
+                print(f"{k:2}. p={r['probability']:.2f}  {r['address']}")
+                print(f"      {r['reason']}")
+            tm = info["timing_ms"]
+            print(f"# {info['model']}, {info['cards']} cards, "
+                  f"{info['input_tokens']} tokens; load {t_load:.0f} ms, "
+                  f"lexical {tm['lexical']:.0f} ms, cards "
+                  f"{tm['cards']:.0f} ms, jev {tm['jev']:.0f} ms",
+                  file=sys.stderr)
+        return 0
+    cases = LX.load_cases(a.cases)
+    rows, stats = run_eval(idx, cards_raw, cfg, cases, a)
+    rep = LX.eval_report(rows)
+    lat = latency_report(stats)
+    fails = [r for r in rows
+             if any((not v) or v > a.fail_at for v in r["ranks"].values())]
+    desc = (f"candidates={a.candidates} batch={a.batch} "
+            f"root_boost={a.root_boost} match_logs={a.match_logs} "
+            f"model={MODEL}; lexical {cfg.describe()}")
+    report = {"config": desc, "summary": rep, "latency": lat,
+              "cases": rows}
+    if a.save:
+        with open(a.save, "w") as fh:
+            json.dump(report, fh, indent=2)
+    if a.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    print(f"config: {desc}")
+    print(f"load {t_load:.0f} ms; models {lat['models']}; "
+          f"calls/query {lat['calls']}")
+    for g, s in rep.items():
+        print(f"{g:10} n={s['n']:2}  R@5 {s['recall@5']:.3f}  "
+              f"R@10 {s['recall@10']:.3f}  MRR {s['mrr']:.3f}  "
+              f"top5ok {s['top5_ok']:.3f}")
+    for st in ("lexical", "cards", "jev", "total"):
+        print(f"latency {st:8} median {lat[st]['median']:7.1f} ms  "
+              f"p90 {lat[st]['p90']:7.1f} ms")
+    print(f"input tokens/query median {lat['input_tokens']['median']:.0f}"
+          f"  p90 {lat['input_tokens']['p90']:.0f}; card words median "
+          f"{lat['card_words']['median']:.0f} p90 "
+          f"{lat['card_words']['p90']:.0f} max {lat['card_words']['max']}")
+    print(f"failed (an expected below rank {a.fail_at}): {len(fails)}")
+    for r in fails:
+        lst = ", ".join(
+            f"{e.split('/', 1)[1]}@{v or '-'}"
+            f"(lex {r['lexical_ranks'].get(e, '-')}, "
+            f"p {r['expected_p'].get(e, '-')})"
+            for e, v in r["ranks"].items())
+        print(f"  {r['id']:6} {lst}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

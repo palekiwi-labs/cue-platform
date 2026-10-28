@@ -1,0 +1,666 @@
+#!/usr/bin/env python3
+"""recall-lexical: shallow lexical recall over the cue store.
+
+Ranks context addresses (<org>/<repo>/<context>) for a query using
+per-field BM25 with field weights, exact slug/ticket bonuses, graph
+propagation to parent/refs, and a root-subtree boost. Stdlib only.
+
+  recall-lexical --query '...' [--terms a,b] [--roots addr,...]
+                 [--limit 10] [--json] [source/weight flags]
+  recall-lexical eval <eval.jsonl> [source/weight flags] [--json]
+  recall-lexical build            # (re)build the index cache
+
+Store: $CUE_STORE or ~/cue. Cache: $XDG_CACHE_HOME/recall-lexical/.
+"""
+import argparse
+import json
+import math
+import os
+import pickle
+import re
+import sys
+import time
+from collections import Counter, defaultdict
+
+INDEX_VERSION = 4
+STORE = os.environ.get("CUE_STORE", os.path.expanduser("~/cue"))
+CACHE_DIR = os.path.join(
+    os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+    "recall-lexical")
+
+# Indexed fields. Defaults are the best config measured against eval
+# set v1 (note lexical-baseline.md): context-level fields only. The
+# starting weights were task 6, note 2; pass --w-task 6 --w-note 2 to
+# restore them. "logbody" (log JSON body) is an extra, off by default.
+FIELDS = ["slug", "desc", "spec", "task", "logtitle", "logbullets",
+          "note", "logbody"]
+DEFAULT_WEIGHTS = {"slug": 10, "desc": 8, "spec": 8, "task": 0,
+                   "logtitle": 5, "logbullets": 3, "note": 0, "logbody": 0}
+
+STOPWORDS = set("""
+a about above after again against all also am an and any are as at be
+because been before being below between both but by can could did do does
+doing done down during each either else etc ever every few for from further
+get gets got had has have having he her here hers him his how i if in into
+is it its itself just like make many may me might more most much must my
+need no nor not now of off on once one only or other our ours out over own
+per same shall she should so some still such than that the their theirs
+them then there these they this those through to too under until up upon
+us use used using very via was we were what when where whether which while
+who whom whose why will with within without would yet you your yours
+already itself someone something anything thing things way we've don't
+""".split())
+
+BASE_RE = re.compile(r"[a-z0-9]+")
+# Compound tokens: ticket ids (sb-10548), hyphenated slugs, dotted names,
+# snake_case, repo#pr. Kept intact as extra tokens.
+COMP_RE = re.compile(r"[a-z0-9]+(?:[-_.#/][a-z0-9]+)+")
+TICKET_RE = re.compile(r"^[a-z]{1,6}-\d{2,}$")
+
+
+def stem(t):
+    # Very light suffix stripping; only used with --stem.
+    if len(t) <= 4 or t.isdigit():
+        return t
+    for suf, rep in (("ies", "y"), ("ing", ""), ("ed", ""), ("es", ""),
+                     ("s", "")):
+        if t.endswith(suf) and len(t) - len(suf) >= 3:
+            if suf == "s" and t.endswith("ss"):
+                return t
+            return t[: len(t) - len(suf)] + rep
+    return t
+
+
+def tokenize(text):
+    text = text.lower()
+    toks = [t for t in BASE_RE.findall(text)
+            if t not in STOPWORDS and (len(t) > 1 or t.isdigit())]
+    for c in COMP_RE.findall(text):
+        c = c.strip("-_.#/")
+        if len(c) >= 4 and not re.fullmatch(r"[\d.]+", c):
+            toks.append(c)
+    return toks
+
+
+# ---------------------------------------------------------------- parsing
+
+def split_frontmatter(text):
+    if not text.startswith("---"):
+        return {}, text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return {}, text
+    fm = parse_yaml(text[3:end])
+    body = text[end + 4:]
+    return fm, body
+
+
+def _unquote(v):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] == "'":
+        return v[1:-1].replace("''", "'")
+    if len(v) >= 2 and v[0] == v[-1] == '"':
+        try:
+            return json.loads(v)
+        except ValueError:
+            return v[1:-1]
+    return v
+
+
+def parse_yaml(src):
+    """Minimal YAML for cue frontmatter: scalars, lists, block scalars."""
+    out, key, mode, buf = {}, None, None, []
+    lines = src.splitlines()
+
+    def flush():
+        if key is not None and mode == "block":
+            out[key] = "\n".join(buf).strip()
+
+    for line in lines:
+        if mode == "block":
+            if line.startswith((" ", "\t")) or not line.strip():
+                buf.append(line.strip())
+                continue
+            flush()
+            mode = None
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if m:
+            key, val = m.group(1), m.group(2)
+            if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                mode, buf = "block", []
+            elif val == "":
+                out[key] = []
+                mode = "list"
+            else:
+                out[key] = _unquote(val)
+                mode = None
+            continue
+        s = line.strip()
+        if mode == "list" and s.startswith("- "):
+            out[key].append(_unquote(s[2:]))
+    flush()
+    for k, v in list(out.items()):
+        if isinstance(v, list) and not v:
+            out[k] = None
+    return out
+
+
+def ctx_of(addr):
+    if not addr:
+        return None
+    parts = addr.strip().strip("/").split("/")
+    return "/".join(parts[:3]) if len(parts) >= 3 else None
+
+
+def as_list(v):
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    v = v.strip()
+    if v.startswith("[") and v.endswith("]"):
+        return [_unquote(x) for x in v[1:-1].split(",") if x.strip()]
+    return [v]
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def md_files(d):
+    """Markdown files under d (recursive), skipping hidden dirs."""
+    out = []
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if not x.startswith(".")]
+        out += [os.path.join(root, f) for f in files if f.endswith(".md")]
+    return out
+
+
+def log_files(d):
+    out = []
+    for root, dirs, files in os.walk(d):
+        # log/.archive/* is included on purpose
+        out += [os.path.join(root, f) for f in files if f.endswith(".json")]
+    return out
+
+
+def list_contexts():
+    ctxs = []
+    for org in sorted(os.listdir(STORE)):
+        po = os.path.join(STORE, org)
+        if org.startswith(".") or not os.path.isdir(po):
+            continue
+        for repo in sorted(os.listdir(po)):
+            pr = os.path.join(po, repo)
+            if repo.startswith(".") or not os.path.isdir(pr):
+                continue
+            for c in sorted(os.listdir(pr)):
+                if os.path.isfile(os.path.join(pr, c, "context.md")):
+                    ctxs.append(f"{org}/{repo}/{c}")
+    return ctxs
+
+
+def signature(ctxs):
+    """Cheap staleness check: mtimes of context.md and indexed dirs."""
+    h = 0
+    for a in ctxs:
+        base = os.path.join(STORE, a)
+        for sub in ("context.md", "spec/index.md", "task", "note", "log"):
+            try:
+                h = (h * 1000003 + os.stat(os.path.join(base, sub))
+                     .st_mtime_ns) & ((1 << 64) - 1)
+            except OSError:
+                pass
+        for sub in ("note", "log"):
+            p = os.path.join(base, sub)
+            if os.path.isdir(p):
+                for root, dirs, _ in os.walk(p):
+                    for x in dirs:
+                        try:
+                            h = (h * 1000003 + os.stat(os.path.join(
+                                root, x)).st_mtime_ns) & ((1 << 64) - 1)
+                        except OSError:
+                            pass
+    return (len(ctxs), h)
+
+
+# ---------------------------------------------------------------- index
+
+def build_index():
+    ctxs = list_contexts()
+    sig = signature(ctxs)
+    docs = []        # per context: dict field -> Counter
+    meta = []        # per context: dict
+    for a in ctxs:
+        base = os.path.join(STORE, a)
+        fm, _ = split_frontmatter(read(os.path.join(base, "context.md")))
+        if fm.get("archived_at"):
+            continue
+        slug = a.split("/")[2]
+        title = fm.get("title") or ""
+        if isinstance(title, list):
+            title = " ".join(title)
+        desc = fm.get("description") or ""
+        if isinstance(desc, list):
+            desc = " ".join(desc)
+        f = {}
+        f["slug"] = Counter(tokenize(slug.replace("-", " ") + " " + slug
+                                     + " " + title))
+        f["desc"] = Counter(tokenize(desc))
+        spec = os.path.join(base, "spec", "index.md")
+        f["spec"] = Counter(tokenize(split_frontmatter(read(spec))[1]))
+        tt = []
+        tdir = os.path.join(base, "task")
+        if os.path.isdir(tdir):
+            for p in sorted(md_files(tdir)):
+                tfm, body = split_frontmatter(read(p))
+                tt.append(str(tfm.get("title") or "") + " "
+                          + os.path.basename(p)[:-3].replace("-", " ")
+                          + " " + body)
+        f["task"] = Counter(tokenize("\n".join(tt)))
+        nt = []
+        ndir = os.path.join(base, "note")
+        if os.path.isdir(ndir):
+            for p in sorted(md_files(ndir)):
+                nfm, body = split_frontmatter(read(p))
+                nt.append(str(nfm.get("title") or "") + " " + body)
+        f["note"] = Counter(tokenize("\n".join(nt)))
+        lt, lb, lbody, last_titles = [], [], [], []
+        ldir = os.path.join(base, "log")
+        for p in sorted(log_files(ldir)) if os.path.isdir(ldir) else []:
+            try:
+                j = json.loads(read(p))
+            except ValueError:
+                continue
+            if not isinstance(j, dict):
+                continue
+            t = j.get("title") or ""
+            lt.append(t)
+            last_titles.append(t)
+            for k in ("found", "decided", "open"):
+                v = j.get(k) or []
+                if isinstance(v, list):
+                    lb += [str(x) for x in v]
+            lbody.append(str(j.get("body") or ""))
+        f["logtitle"] = Counter(tokenize("\n".join(lt)))
+        f["logbullets"] = Counter(tokenize("\n".join(lb)))
+        f["logbody"] = Counter(tokenize("\n".join(lbody)))
+        docs.append(f)
+        meta.append({
+            "addr": a, "slug": slug, "title": title,
+            "parent": ctx_of(fm.get("parent")) if isinstance(
+                fm.get("parent"), str) else None,
+            "refs": [r for r in (ctx_of(x) for x in as_list(fm.get("refs")))
+                     if r and r != a],
+        })
+    # postings per field
+    post = {fl: defaultdict(list) for fl in FIELDS}
+    lens = {fl: [] for fl in FIELDS}
+    for i, f in enumerate(docs):
+        for fl in FIELDS:
+            c = f[fl]
+            lens[fl].append(sum(c.values()))
+            for t, n in c.items():
+                post[fl][t].append((i, n))
+    post = {fl: dict(p) for fl, p in post.items()}
+    addrs = [m["addr"] for m in meta]
+    pos = {a: i for i, a in enumerate(addrs)}
+    children = defaultdict(list)
+    for i, m in enumerate(meta):
+        if m["parent"] in pos:
+            children[pos[m["parent"]]].append(i)
+    stems = defaultdict(set)
+    for fl in FIELDS:
+        for t in post[fl]:
+            if "-" not in t and "_" not in t:
+                stems[stem(t)].add(t)
+    stems = {k: sorted(v) for k, v in stems.items() if len(v) > 1}
+    return {"version": INDEX_VERSION, "store": STORE, "sig": sig,
+            "meta": meta, "post": post, "lens": lens, "stems": stems,
+            "children": dict(children), "pos": pos}
+
+
+def cache_path():
+    key = re.sub(r"[^A-Za-z0-9]+", "_", os.path.abspath(STORE)).strip("_")
+    return os.path.join(CACHE_DIR, f"index-v{INDEX_VERSION}-{key}.pickle")
+
+
+def load_index(rebuild=False, check=True):
+    p = cache_path()
+    if not rebuild and os.path.exists(p):
+        with open(p, "rb") as fh:
+            idx = pickle.load(fh)
+        if idx.get("version") == INDEX_VERSION and (
+                not check or idx["sig"] == signature(list_contexts())):
+            return idx, False
+    idx = build_index()
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    tmp = p + f".{os.getpid()}.tmp"
+    with open(tmp, "wb") as fh:
+        pickle.dump(idx, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp, p)
+    return idx, True
+
+
+# ---------------------------------------------------------------- scoring
+
+class Config:
+    def __init__(self, a):
+        self.w = {fl: getattr(a, "w_" + fl) for fl in FIELDS}
+        for fl in FIELDS:
+            if getattr(a, "no_" + fl, False):
+                self.w[fl] = 0
+        self.k1, self.b = a.k1, a.b
+        self.prop_parent, self.prop_refs = a.prop_parent, a.prop_refs
+        self.prop_mode = a.prop_mode
+        self.root_boost = a.root_boost
+        self.exact = a.exact_bonus
+        self.terms_weight = a.terms_weight
+        self.stem = a.stem
+
+    def describe(self):
+        w = " ".join(f"{k}={v:g}" for k, v in self.w.items())
+        return (f"weights[{w}] k1={self.k1} b={self.b} "
+                f"prop={self.prop_parent}/{self.prop_refs}({self.prop_mode}) "
+                f"root_boost={self.root_boost} exact={self.exact} "
+                f"terms_w={self.terms_weight} stem={self.stem}")
+
+
+def query_terms(query, terms, cfg, idx=None):
+    q = Counter()
+    for t in tokenize(query):
+        q[t] += 1.0
+    for term in terms or []:
+        for t in tokenize(term):
+            q[t] += cfg.terms_weight
+    if cfg.stem and idx is not None:
+        # expand each term to indexed variants sharing its light stem
+        for t, w in list(q.items()):
+            for v in idx["stems"].get(stem(t), []):
+                if v not in q:
+                    q[v] = w * cfg.stem
+    return q
+
+
+def subtree(idx, root):
+    i = idx["pos"].get(root)
+    if i is None:
+        return set()
+    seen, stack = {i}, [i]
+    while stack:
+        for c in idx["children"].get(stack.pop(), []):
+            if c not in seen:
+                seen.add(c)
+                stack.append(c)
+    return seen
+
+
+def search(idx, query, terms=None, roots=None, cfg=None, limit=10):
+    meta, post, lens = idx["meta"], idx["post"], idx["lens"]
+    n = len(meta)
+    q = query_terms(query, terms, cfg, idx)
+    fields = [fl for fl in FIELDS if cfg.w[fl] > 0]
+    avg = {fl: (sum(lens[fl]) / n or 1.0) for fl in fields}
+    score = [0.0] * n
+    why = defaultdict(lambda: defaultdict(set))
+    for t, qw in q.items():
+        plist = {fl: post[fl].get(t) for fl in fields}
+        df = len({i for p in plist.values() if p for i, _ in p})
+        if not df:
+            continue
+        idf = math.log(1 + (n - df + 0.5) / (df + 0.5))
+        for fl, p in plist.items():
+            if not p:
+                continue
+            w, L, A = cfg.w[fl], lens[fl], avg[fl]
+            for i, tf in p:
+                norm = cfg.k1 * (1 - cfg.b + cfg.b * L[i] / A)
+                score[i] += qw * w * idf * tf * (cfg.k1 + 1) / (tf + norm)
+                why[i][fl].add(t)
+    # exact matches: whole query is an address/slug, or a compound
+    # token (ticket id, hyphenated slug) equals / is contained in a slug
+    bonus = [0.0] * n
+    ql = query.strip().lower().strip("`'\"")
+    comps = {c for c in q if any(ch in c for ch in "-_.#/")}
+    tickets = {c for c in comps if TICKET_RE.match(c)}
+    for i, m in enumerate(meta):
+        slug, addr = m["slug"].lower(), m["addr"].lower()
+        if ql in (slug, addr) or addr in ql:
+            bonus[i] = max(bonus[i], cfg.exact)
+            why[i]["exact"].add("address" if addr in ql else "slug")
+            continue
+        for c in comps:
+            if c == slug:
+                bonus[i] = max(bonus[i], cfg.exact)
+                why[i]["exact"].add(c)
+            elif len(c) >= 6 and re.search(
+                    r"(^|-)" + re.escape(c) + r"($|-)", slug):
+                b = cfg.exact * (0.6 if c in tickets else 0.5)
+                bonus[i] = max(bonus[i], b)
+                why[i]["slug~"].add(c)
+            elif c in tickets and re.search(
+                    r"(^|-)" + re.escape(c.split("-")[1]) + r"($|-)", slug):
+                bonus[i] = max(bonus[i], cfg.exact * 0.4)
+                why[i]["slug~"].add(c)
+    # bonuses are relative to the best lexical score so they dominate
+    # regardless of query length
+    top = max(score) if any(score) else 1.0
+    base = [s + b * top for s, b in zip(score, bonus)]
+    final = list(base)
+    # graph propagation: a context passes a fraction of its own score to
+    # its parent and refs (max over sources, so busy parents do not
+    # accumulate from dozens of children)
+    if cfg.prop_parent or cfg.prop_refs:
+        recv = defaultdict(float)
+        src = {}
+        for i, m in enumerate(meta):
+            if base[i] <= 0:
+                continue
+            targets = []
+            if m["parent"] in idx["pos"]:
+                targets.append((idx["pos"][m["parent"]], cfg.prop_parent,
+                                "child"))
+            for r in m["refs"]:
+                if r in idx["pos"]:
+                    targets.append((idx["pos"][r], cfg.prop_refs, "ref"))
+            for j, frac, kind in targets:
+                if frac <= 0:
+                    continue
+                v = frac * base[i]
+                if cfg.prop_mode == "sum":
+                    recv[j] += v
+                elif v > recv[j]:
+                    recv[j] = v
+                if v > src.get(j, (0,))[0]:
+                    src[j] = (v, kind, m["addr"])
+        for j, v in recv.items():
+            final[j] += v
+            why[j]["via"].add(f"{src[j][1]} {src[j][2]}")
+    if roots:
+        boosted = set()
+        for r in roots:
+            boosted |= subtree(idx, r)
+        for i in boosted:
+            if final[i] > 0:
+                final[i] *= cfg.root_boost
+                why[i]["root"].add("subtree")
+    order = sorted((i for i in range(n) if final[i] > 0),
+                   key=lambda i: -final[i])
+    res = []
+    for i in order[:limit]:
+        parts = []
+        for k in ["exact", "slug~"] + FIELDS + ["via", "root"]:
+            if why[i].get(k):
+                vals = sorted(why[i][k])
+                if k in FIELDS:
+                    vals = sorted(vals, key=lambda t: -q[t])[:5]
+                parts.append(f"{k}: {', '.join(vals[:5])}")
+        res.append({"address": meta[i]["addr"],
+                    "score": round(final[i], 3),
+                    "reason": "; ".join(parts)})
+    return res, order, final
+
+
+# ---------------------------------------------------------------- eval
+
+def load_cases(path):
+    text = read(path)
+    if "```jsonl" in text:
+        text = text.split("```jsonl", 1)[1].split("```", 1)[0]
+    return [json.loads(l) for l in text.splitlines() if l.strip()]
+
+
+def run_eval(idx, cases, cfg):
+    addrs = [m["addr"] for m in idx["meta"]]
+    rows = []
+    t0 = time.perf_counter()
+    for c in cases:
+        _, order, _ = search(idx, c["query"], c.get("terms"), c.get("roots"),
+                             cfg, limit=0)
+        ranked = [addrs[i] for i in order]
+        rank = {a: k + 1 for k, a in enumerate(ranked)}
+        exp = c["expected"]
+        ok = set(exp) | set(c.get("acceptable") or [])
+        ranks = [rank.get(a) for a in exp]
+        first = min((r for r in ranks if r), default=None)
+        top5 = ranked[:5]
+        rows.append({
+            "id": c["id"], "kind": c["kind"],
+            "hinted": bool(c.get("terms") or c.get("roots")),
+            "r5": sum(1 for r in ranks if r and r <= 5) / len(exp),
+            "r10": sum(1 for r in ranks if r and r <= 10) / len(exp),
+            "mrr": 1 / first if first else 0.0,
+            "p5": sum(1 for a in top5 if a in ok) / 5,
+            "ranks": dict(zip(exp, ranks)), "top5": top5,
+        })
+    ms = (time.perf_counter() - t0) * 1000 / max(1, len(cases))
+    return rows, ms
+
+
+def summarize(rows):
+    k = len(rows) or 1
+    return {"n": len(rows),
+            "recall@5": sum(r["r5"] for r in rows) / k,
+            "recall@10": sum(r["r10"] for r in rows) / k,
+            "mrr": sum(r["mrr"] for r in rows) / k,
+            "top5_ok": sum(r["p5"] for r in rows) / k}
+
+
+def eval_report(rows):
+    groups = [("overall", rows)]
+    for kind in ("exact", "paraphrase", "reference"):
+        groups.append((kind, [r for r in rows if r["kind"] == kind]))
+    groups.append(("unhinted", [r for r in rows if not r["hinted"]]))
+    groups.append(("hinted", [r for r in rows if r["hinted"]]))
+    return {g: summarize(rs) for g, rs in groups if rs}
+
+
+# ---------------------------------------------------------------- cli
+
+def add_cfg_args(p):
+    for fl in FIELDS:
+        p.add_argument("--w-" + fl, type=float, default=DEFAULT_WEIGHTS[fl],
+                       help=f"weight of field {fl}")
+        p.add_argument("--no-" + fl, action="store_true",
+                       help=f"disable field {fl}")
+    p.add_argument("--k1", type=float, default=1.2)
+    p.add_argument("--b", type=float, default=0.9)
+    p.add_argument("--prop-parent", type=float, default=0.15)
+    p.add_argument("--prop-refs", type=float, default=0.1)
+    p.add_argument("--prop-mode", choices=["max", "sum"], default="max")
+    p.add_argument("--no-prop", action="store_true",
+                   help="disable graph propagation")
+    p.add_argument("--root-boost", type=float, default=1.5)
+    p.add_argument("--exact-bonus", type=float, default=1.0,
+                   help="exact slug/address bonus, x best lexical score")
+    p.add_argument("--terms-weight", type=float, default=1.0)
+    p.add_argument("--stem", type=float, default=0.0,
+                   help="weight of light-stem variants of query terms "
+                   "(0 = off)")
+    p.add_argument("--rebuild", action="store_true")
+    p.add_argument("--no-check", action="store_true",
+                   help="skip the cache staleness check")
+    p.add_argument("--json", action="store_true")
+
+
+def csv(v):
+    return [x.strip() for x in v.split(",") if x.strip()] if v else None
+
+
+def main(argv):
+    if argv and argv[0] == "eval":
+        p = argparse.ArgumentParser(prog="recall-lexical eval")
+        p.add_argument("cases")
+        p.add_argument("--fail-at", type=int, default=5,
+                       help="a case fails if an expected is below this rank")
+        add_cfg_args(p)
+        a = p.parse_args(argv[1:])
+        mode = "eval"
+    elif argv and argv[0] == "build":
+        t0 = time.perf_counter()
+        idx, built = load_index(rebuild=True)
+        print(f"built {len(idx['meta'])} contexts in "
+              f"{(time.perf_counter() - t0) * 1000:.0f} ms -> {cache_path()}")
+        return 0
+    else:
+        p = argparse.ArgumentParser(prog="recall-lexical")
+        p.add_argument("--query", "-q", required=True)
+        p.add_argument("--terms")
+        p.add_argument("--roots")
+        p.add_argument("--limit", type=int, default=10)
+        add_cfg_args(p)
+        a = p.parse_args(argv)
+        mode = "query"
+    if a.no_prop:
+        a.prop_parent = a.prop_refs = 0.0
+    cfg = Config(a)
+    t0 = time.perf_counter()
+    idx, built = load_index(a.rebuild, check=not a.no_check)
+    t_load = (time.perf_counter() - t0) * 1000
+    if mode == "query":
+        t1 = time.perf_counter()
+        res, _, _ = search(idx, a.query, csv(a.terms), csv(a.roots), cfg,
+                           a.limit)
+        t_q = (time.perf_counter() - t1) * 1000
+        if a.json:
+            print(json.dumps({"query": a.query, "results": res,
+                              "timing_ms": {"index": round(t_load, 1),
+                                            "search": round(t_q, 1),
+                                            "built": built}}, indent=2))
+        else:
+            for k, r in enumerate(res, 1):
+                print(f"{k:2}. {r['score']:8.2f}  {r['address']}")
+                print(f"              {r['reason']}")
+            print(f"# index {t_load:.0f} ms{' (built)' if built else ''}, "
+                  f"search {t_q:.1f} ms", file=sys.stderr)
+        return 0
+    cases = load_cases(a.cases)
+    rows, ms = run_eval(idx, cases, cfg)
+    rep = eval_report(rows)
+    fails = [r for r in rows
+             if any((not v) or v > a.fail_at for v in r["ranks"].values())]
+    if a.json:
+        print(json.dumps({"config": cfg.describe(), "summary": rep,
+                          "per_query_ms": ms, "cases": rows}, indent=2))
+        return 0
+    print(f"config: {cfg.describe()}")
+    print(f"index load {t_load:.0f} ms{' (built)' if built else ''}; "
+          f"search {ms:.1f} ms/query")
+    for g, s in rep.items():
+        print(f"{g:10} n={s['n']:2}  R@5 {s['recall@5']:.3f}  "
+              f"R@10 {s['recall@10']:.3f}  MRR {s['mrr']:.3f}  "
+              f"top5ok {s['top5_ok']:.3f}")
+    print(f"failed (an expected below rank {a.fail_at}): {len(fails)}")
+    for r in fails:
+        lst = ", ".join(f"{e.split('/', 1)[1]}@{v or '-'}"
+                        for e, v in r["ranks"].items())
+        print(f"  {r['id']:6} {lst}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
