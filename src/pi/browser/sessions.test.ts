@@ -134,18 +134,19 @@ describe("inScopes", () => {
 
 describe("cwdMark", () => {
   const s = { cwd: "/c/sb", cwdScope: "sb/sb", address: "sb/sb/ctx" }
-  test("all marks every row with the cwd repo", () => {
-    expect(cwdMark(s, "/c/sb", "all")).toEqual({ text: "(sb/sb)", mismatch: false })
+  test("same repo as here is unmarked, worktrees included", () => {
+    expect(cwdMark(s, { cwd: "/c/sb", scope: "sb/sb" })).toBeUndefined()
+    expect(cwdMark(s, { cwd: "/c/sb/worktrees/x", scope: "sb/sb" })).toBeUndefined()
   })
-  test("other marks only cwds differing from here", () => {
-    expect(cwdMark(s, "/c/sb", "other")).toBeUndefined()
-    expect(cwdMark(s, "/c/x", "other")).toEqual({ text: "(sb/sb)", mismatch: false })
+  test("another repo is marked with the session's cwd repo", () => {
+    expect(cwdMark(s, { cwd: "/c/org", scope: "pk/sb-org" })).toEqual({ text: "(sb/sb)", mismatch: false })
   })
   test("a cwd repo outside the context scope is a mismatch, always shown", () => {
     const m = { cwd: "/c/org", cwdScope: "pk/sb-org", address: "sb/sb/ctx" }
-    expect(cwdMark(m, "/c/org", "other")).toEqual({ text: "(pk/sb-org)", mismatch: true })
+    expect(cwdMark(m, { cwd: "/c/org", scope: "pk/sb-org" })).toEqual({ text: "(pk/sb-org)", mismatch: true })
   })
-  test("no origin falls back to the directory name, never a mismatch", () => {
-    expect(cwdMark({ cwd: "/tmp/scratch", address: "sb/sb/ctx" }, "/x", "all")).toEqual({ text: "(scratch)", mismatch: false })
+  test("without repos, cwds compare by path and show the directory name", () => {
+    expect(cwdMark({ cwd: "/tmp/scratch" }, { cwd: "/tmp/scratch" })).toBeUndefined()
+    expect(cwdMark({ cwd: "/tmp/scratch", address: "sb/sb/ctx" }, { cwd: "/x" })).toEqual({ text: "(scratch)", mismatch: false })
   })
 })

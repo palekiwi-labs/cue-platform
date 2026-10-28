@@ -330,7 +330,10 @@ export async function openBrowser(
         newSession: (address, target) => newSession(pi, ctx, address, target),
         loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
         currentSession: () => ctx.sessionManager.getSessionFile(),
-        currentCwd: () => ctx.sessionManager.getCwd(),
+        currentCwd: () => {
+          const cwd = ctx.sessionManager.getCwd()
+          return { cwd, scope: cwdScope(cwd) }
+        },
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
         clearLabels: clearSessionLabels,

@@ -5,7 +5,11 @@
 // - up-arrow shows total input (input + cacheRead + cacheWrite).
 // The plan-usage status is right-aligned on its own line; other statuses
 // render left-aligned as in pi.
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { scopeOf, scopeOfRemote } from "../src/pi/browser/sessions";
+import { currentContext } from "../src/pi/lib/current-context";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -26,6 +30,20 @@ function formatTokens(count: number): string {
   if (count < 1000000) return `${Math.round(count / 1000)}k`;
   if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
   return `${Math.round(count / 1000000)}M`;
+}
+
+/** `<org>/<repo>` of a cwd's git origin; cached per cwd. */
+const cwdScopes = new Map<string, string | undefined>();
+function cwdScope(cwd: string): string | undefined {
+  if (!cwdScopes.has(cwd)) {
+    let scope: string | undefined;
+    if (existsSync(cwd)) {
+      const r = spawnSync("git", ["-C", cwd, "remote", "get-url", "origin"], { encoding: "utf8" });
+      if (r.status === 0) scope = scopeOfRemote(r.stdout);
+    }
+    cwdScopes.set(cwd, scope);
+  }
+  return cwdScopes.get(cwd);
 }
 
 function formatCwd(cwd: string, home: string | undefined): string {
@@ -144,9 +162,11 @@ export default function (pi: ExtensionAPI) {
               : modelText;
           const statuses = footerData.getExtensionStatuses();
           const mcp = mcpMarker(statuses.get(MCP_KEY), theme);
-          // pi never chdirs, so process.cwd() is the launch dir; a resumed
-          // session from another directory moves the session cwd away from it.
-          const drifted = resolve(cwd) !== resolve(process.cwd());
+          // Red when the cwd's repo is not the linked context's scope: the
+          // session was created in another repo than its context's.
+          const address = currentContext(ctx.sessionManager.getBranch());
+          const repo = address ? cwdScope(cwd) : undefined;
+          const drifted = repo !== undefined && repo !== scopeOf(address!);
           const left1 = (drifted ? theme.fg("error", pwd) : dim(pwd)) + dim(nameSuffix);
           // Marker sits in front of the (provider) model part.
           const pre = mcp ? `${mcp} ` : "";

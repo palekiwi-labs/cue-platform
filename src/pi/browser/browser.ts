@@ -54,7 +54,6 @@ import {
 import {
   fmtTokens,
   cwdMark,
-  type CwdMarks,
   groupSessions,
   NO_CONTEXT,
   type SessionListRow,
@@ -62,9 +61,6 @@ import {
   syntheticContext,
   transcript,
 } from "./sessions"
-
-/** Session rows' cwd repo marker; kept across browser opens. */
-let cwdMarks: CwdMarks = "all"
 
 export interface ContextRef {
   address: string
@@ -111,8 +107,8 @@ export interface BrowserDeps {
   loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
   currentSession(): string | undefined
-  /** Working directory of this pi's active session. */
-  currentCwd(): string
+  /** Working directory of this pi's active session and its repo scope. */
+  currentCwd(): { cwd: string; scope?: string }
   /** Resume a session here or in tmux; returns an error message on failure. */
   resume(session: SessionRow, target: Target): string | undefined
   /** Delete a session file; resolves to what happened ("moved to trash"). */
@@ -768,11 +764,6 @@ export class CueBrowser implements Component {
           this.previewScroll = this.previewStart()
           return this.refresh()
         }
-        if (matchesKey(data, "alt+c")) {
-          cwdMarks = cwdMarks === "all" ? "other" : "all"
-          this.notify(cwdMarks === "all" ? "cwd repo on every session" : "cwd repo only on other cwds")
-          return this.refresh()
-        }
         if (matchesKey(data, "ctrl+x")) return this.onDelete()
         if (matchesKey(data, "alt+u")) return this.onClearLabel()
         if (matchesKey(data, "alt+d")) return this.onDescribe()
@@ -1333,7 +1324,7 @@ export class CueBrowser implements Component {
         "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
         "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
     } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+c cwd all/other", "alt+s scope",
+      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
@@ -1412,7 +1403,7 @@ export class CueBrowser implements Component {
     const label = (s: SessionRow) => (s.label ? " " + t.fg("error", `[${truncateToWidth(s.label, 12, "…")}]`) : "")
     const hereCwd = this.deps.currentCwd()
     const cwdTag = (s: SessionRow) => {
-      const m = cwdMark(s, hereCwd, cwdMarks)
+      const m = cwdMark(s, hereCwd)
       return m ? " " + t.fg(m.mismatch ? "error" : "dim", m.text) : ""
     }
     const nameWidth = Math.max(10, width - 12)

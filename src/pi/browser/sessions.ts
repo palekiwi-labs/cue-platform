@@ -205,23 +205,22 @@ export function groupSessions(
   return out
 }
 
-/** Which session rows show their cwd repo: every row, or only other cwds. */
-export type CwdMarks = "all" | "other"
-
 /**
- * The `(org/repo)` marker of a session's cwd. `mismatch` when the cwd
- * repo is not the scope of the session's own context: the session was
- * created in another repo, and resuming it moves pi there. Mismatches
- * always show; otherwise `other` shows only cwds differing from `here`.
+ * The `(org/repo)` marker of a session in another project than the
+ * current session (`here`: its cwd and that cwd's repo). Repos compare by
+ * scope, so worktrees of one repo count as the same project; cwds without
+ * a repo compare by path. `mismatch` when the cwd repo is not the scope
+ * of the session's own context: the session was created in another repo,
+ * and resuming it moves pi there. Mismatches always show.
  */
 export function cwdMark(
   s: Pick<SessionRow, "cwd" | "cwdScope" | "address">,
-  here: string,
-  marks: CwdMarks,
+  here: { cwd: string; scope?: string },
 ): { text: string; mismatch: boolean } | undefined {
   if (!s.cwd) return undefined
   const mismatch = s.address !== undefined && s.cwdScope !== undefined && s.cwdScope !== scopeOf(s.address)
-  if (!mismatch && marks === "other" && s.cwd === here) return undefined
+  const same = s.cwdScope !== undefined && here.scope !== undefined ? s.cwdScope === here.scope : s.cwd === here.cwd
+  if (!mismatch && same) return undefined
   const name = s.cwdScope ?? s.cwd.split("/").filter(Boolean).pop() ?? s.cwd
   return { text: `(${name})`, mismatch }
 }
