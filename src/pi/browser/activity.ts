@@ -124,7 +124,35 @@ export function commitDetails(e: ActivityEvent): CommitDetails | null {
   }
 }
 
-const capLines = (text: string, max: number): string => {
+const FULL_HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/**
+ * What an event points at, as text to copy: a session's file path, an
+ * artifact's address, a commit as `<org>/<repo>@<hash>`. When the event
+ * lacks it, the reason instead; nothing is guessed.
+ */
+export function eventValue(
+  e: ActivityEvent,
+  sessionFile: (sessionId: string) => string | undefined,
+): { text: string } | { missing: string } {
+  if (e.kind === "session_associated") {
+    const path = e.sessionId ? sessionFile(e.sessionId) : undefined
+    return path ? { text: path } : { missing: "session file not found on this host" }
+  }
+  if (e.kind === "artifact_created") {
+    const address = str(e.details.address)
+    return address ? { text: address } : { missing: "artifact event has no address" }
+  }
+  if (e.kind === "git_commit") {
+    const c = commitDetails(e)
+    if (!c || !FULL_HASH.test(c.hash)) return { missing: "commit event has no full hash" }
+    if (!c.repo) return { missing: "commit event has no repo" }
+    return { text: `${c.repo}@${c.hash}` }
+  }
+  return { missing: `nothing to copy for ${e.kind}` }
+}
+
+const capLines =(text: string, max: number): string => {
   const lines = text.split("\n")
   return lines.length <= max
     ? text

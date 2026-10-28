@@ -4,6 +4,7 @@ import {
   commitDetails,
   eventPreview,
   eventSummary,
+  eventValue,
   fmtWhen,
   kindLabel,
   parseActivity,
@@ -140,6 +141,41 @@ describe("eventPreview", () => {
     const long = Array.from({ length: 1500 }, (_, i) => `line ${i}`).join("\n")
     const md = eventPreview(event as any, { gitShow: long })
     expect(md).toContain("more lines")
+  })
+})
+
+describe("eventValue", () => {
+  const files: Record<string, string> = { "01a16e35-ceed": "/home/pl/.pi/agent/sessions/x/s_01a16e35-ceed.jsonl" }
+  const sessionFile = (id: string) => files[id]
+  const hash = "e523bf906239348bd8590a6a9435d4c03b489c86"
+  const commit = (details: Record<string, unknown>) =>
+    ({ ...event, sessionId: null, details: { ...event.details, ...details } }) as any
+
+  test("session: the session file path", () => {
+    const e = { ...event, kind: "session_associated", details: { method: "link" } } as any
+    expect(eventValue(e, sessionFile)).toEqual({ text: files["01a16e35-ceed"]! })
+  })
+  test("session without a local file or id copies nothing", () => {
+    const e = { ...event, kind: "session_associated", details: {} } as any
+    expect(eventValue({ ...e, sessionId: "gone" }, sessionFile)).toEqual({ missing: "session file not found on this host" })
+    expect(eventValue({ ...e, sessionId: null }, sessionFile)).toHaveProperty("missing")
+  })
+  test("artifact: its canonical address", () => {
+    const e = { ...event, kind: "artifact_created", details: { address: "a/b/c/note/x.md", type: "note" } } as any
+    expect(eventValue(e, sessionFile)).toEqual({ text: "a/b/c/note/x.md" })
+    expect(eventValue({ ...e, details: { type: "note" } }, sessionFile)).toHaveProperty("missing")
+  })
+  test("commit: <org>/<repo>@<full hash>", () => {
+    expect(eventValue(commit({ repo: "palekiwi-labs/cue" }), sessionFile)).toEqual({ text: `palekiwi-labs/cue@${hash}` })
+  })
+  test("commit without a repo or a full hash copies nothing", () => {
+    expect(eventValue(commit({ repo: null }), sessionFile)).toEqual({ missing: "commit event has no repo" })
+    expect(eventValue(commit({ repo: "o/r", hash: "e523bf9" }), sessionFile)).toHaveProperty("missing")
+    expect(eventValue(commit({ repo: "o/r", hash: null }), sessionFile)).toHaveProperty("missing")
+  })
+  test("unknown kinds copy nothing", () => {
+    const e = { ...event, kind: "deploy_hook", details: { url: "x" } } as any
+    expect(eventValue(e, sessionFile)).toEqual({ missing: "nothing to copy for deploy_hook" })
   })
 })
 

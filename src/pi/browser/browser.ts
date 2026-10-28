@@ -29,6 +29,7 @@ import {
   commitDetails,
   eventPreview,
   eventSummary,
+  eventValue,
   fmtWhen,
   kindLabel,
 } from "./activity"
@@ -684,6 +685,10 @@ export class CueBrowser implements Component {
       if (matchesKey(data, "ctrl+y")) return void this.onCopyLog("address")
       if (matchesKey(data, "ctrl+h")) return void this.onCopyLog("link")
     }
+    if (v.kind === "activity") {
+      if (matchesKey(data, "ctrl+h")) return void this.onCopyActivity("context")
+      if (matchesKey(data, "ctrl+y")) return void this.onCopyActivity("value")
+    }
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
     if (matchesKey(data, "ctrl+n")) {
@@ -889,6 +894,21 @@ export class CueBrowser implements Component {
     if (!e || v.kind !== "log") return
     const ctx = v.context.address
     await this.copyText(what === "address" ? entryAddress(e, ctx) : entryLink(e, ctx))
+  }
+
+  /**
+   * Activity view: the event's context, or what the event points at.
+   * cue lists only the view context's own events, so that context owns
+   * every row.
+   */
+  private async onCopyActivity(what: "context" | "value"): Promise<void> {
+    const v = this.view
+    const e = this.selectedActivity()
+    if (!e || v.kind !== "activity") return
+    if (what === "context") return this.copyText(v.context.address)
+    const r = eventValue(e, (id) => this.deps.sessionFile(id))
+    if ("text" in r) await this.copyText(r.text)
+    else this.notify(r.missing)
   }
 
   private async copyText(text: string): Promise<void> {
@@ -1305,8 +1325,8 @@ export class CueBrowser implements Component {
         "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
         "alt+l layout", ...this.previewHints(), esc]
     } else if (v.kind === "activity") {
-      hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h address",
-        "alt+r reload", "alt+p preview", "alt+l layout",
+      hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h context",
+        "ctrl+y path/address/commit", "alt+r reload", "alt+p preview", "alt+l layout",
         ...this.previewHints(), esc]
     } else if (v.kind === "log") {
       hints = ["enter/ctrl+e open trace", "ctrl+a activity", "ctrl+r sessions", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
