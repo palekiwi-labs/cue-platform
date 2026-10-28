@@ -15,8 +15,12 @@ Pipeline:
   recall-shallow eval <eval.jsonl|eval-note.md> [--json]
   recall-shallow card <context-address> [--query '...']
 
-Needs recall-lexical (same directory, $RECALL_LEXICAL, or the cue
-store copy) and $TYPESAFE_API_KEY. Stdlib only.
+Candidates come from the caller's default cue query scope (see
+recall-lexical); `--scope` names another scope for eval and debugging,
+and eval cases may carry their own `scope`.
+
+Needs recall-lexical (same directory or $RECALL_LEXICAL) and
+$TYPESAFE_API_KEY. Stdlib only.
 """
 import argparse
 import importlib.machinery
@@ -45,11 +49,8 @@ def _load_lexical():
     # importing a sibling script must not leave __pycache__ in the store
     sys.dont_write_bytecode = True
     here = os.path.dirname(os.path.realpath(__file__))
-    store = os.environ.get("CUE_STORE", os.path.expanduser("~/cue"))
     for p in (os.environ.get("RECALL_LEXICAL"),
-              os.path.join(here, "recall-lexical"),
-              os.path.join(store, "palekiwi/palekiwi/cue-recall/bin/"
-                           "recall-lexical")):
+              os.path.join(here, "recall-lexical")):
         if p and os.path.isfile(p):
             loader = importlib.machinery.SourceFileLoader("recall_lexical",
                                                           p)
@@ -151,7 +152,7 @@ def build_cards(meta):
 
 
 def load_cards(idx):
-    p = LX.cache_path().replace(".pickle", f"-cards-v{CARD_VERSION}.pickle")
+    p = idx["cache"].replace(".pickle", f"-cards-v{CARD_VERSION}.pickle")
     if os.path.exists(p):
         with open(p, "rb") as fh:
             c = pickle.load(fh)
@@ -350,9 +351,12 @@ def pct(xs, q):
     return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
 
 
-def run_eval(idx, cards_raw, cfg, cases, a):
+def run_eval(pool, cfg, cases, a):
     rows, stats = [], []
     for c in cases:
+        scope = LX.case_scope(c, a.scope)
+        idx = pool.get(scope)
+        cards_raw = load_cards(idx)
         res, info = recall(idx, cards_raw, cfg, c["query"], c.get("terms"),
                            c.get("roots"), a.candidates, a.batch,
                            a.root_boost, a.match_logs)
@@ -365,6 +369,8 @@ def run_eval(idx, cards_raw, cfg, cases, a):
         top5 = ranked[:5]
         rows.append({
             "id": c["id"], "kind": c["kind"],
+            "scope": scope or "default",
+            "out_of_scope": [x for x in exp if x not in idx["pos"]],
             "hinted": bool(c.get("terms") or c.get("roots")),
             "r5": sum(1 for r in ranks if r and r <= 5) / len(exp),
             "r10": sum(1 for r in ranks if r and r <= 10) / len(exp),
@@ -449,8 +455,10 @@ def main(argv):
     if a.no_prop:
         a.prop_parent = a.prop_refs = 0.0
     cfg = LX.Config(a)
+    if mode == "eval":
+        return eval_main(a, cfg)
     t0 = time.perf_counter()
-    idx, _ = LX.load_index(a.rebuild, check=not a.no_check)
+    idx, _ = LX.load_index(a.rebuild, check=not a.no_check, scope=a.scope)
     cards_raw = load_cards(idx)
     t_load = (time.perf_counter() - t0) * 1000
     if mode == "card":
@@ -487,8 +495,16 @@ def main(argv):
                   f"{tm['cards']:.0f} ms, jev {tm['jev']:.0f} ms",
                   file=sys.stderr)
         return 0
+
+
+def eval_main(a, cfg):
+    t0 = time.perf_counter()
+    pool = LX.IndexPool(a.rebuild, check=not a.no_check)
     cases = LX.load_cases(a.cases)
-    rows, stats = run_eval(idx, cards_raw, cfg, cases, a)
+    for c in cases:
+        load_cards(pool.get(LX.case_scope(c, a.scope)))
+    t_load = (time.perf_counter() - t0) * 1000
+    rows, stats = run_eval(pool, cfg, cases, a)
     rep = LX.eval_report(rows)
     lat = latency_report(stats)
     fails = [r for r in rows
@@ -518,6 +534,13 @@ def main(argv):
           f"  p90 {lat['input_tokens']['p90']:.0f}; card words median "
           f"{lat['card_words']['median']:.0f} p90 "
           f"{lat['card_words']['p90']:.0f} max {lat['card_words']['max']}")
+    print("scopes: " + ", ".join(
+        f"{k or 'default'} ({len(v['meta'])} contexts)"
+        for k, v in pool.idx.items()))
+    for r in rows:
+        if r["out_of_scope"]:
+            print(f"  out of scope: {r['id']} [{r['scope']}] "
+                  + ", ".join(r["out_of_scope"]))
     print(f"failed (an expected below rank {a.fail_at}): {len(fails)}")
     for r in fails:
         lst = ", ".join(
@@ -530,4 +553,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except LX.ScopeError as e:
+        sys.exit(f"recall-shallow: {e}")

@@ -10,19 +10,26 @@ propagation to parent/refs, and a root-subtree boost. Stdlib only.
   recall-lexical eval <eval.jsonl> [source/weight flags] [--json]
   recall-lexical build            # (re)build the index cache
 
-Store: $CUE_STORE or ~/cue. Cache: $XDG_CACHE_HOME/recall-lexical/.
+Candidates are the contexts `cue context list --json` returns in the
+current directory: the caller's default query scope, archived contexts
+left out. `--scope` passes a scope name to cue (eval and debugging);
+eval cases may carry their own `scope`. The store root is taken from
+the paths cue reports. Cache: $XDG_CACHE_HOME/recall-lexical/, one
+index per resolved scope.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
 import pickle
 import re
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
 
-INDEX_VERSION = 4
+INDEX_VERSION = 5
 STORE = os.environ.get("CUE_STORE", os.path.expanduser("~/cue"))
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
@@ -188,20 +195,40 @@ def log_files(d):
     return out
 
 
-def list_contexts():
-    ctxs = []
-    for org in sorted(os.listdir(STORE)):
-        po = os.path.join(STORE, org)
-        if org.startswith(".") or not os.path.isdir(po):
+class ScopeError(RuntimeError):
+    pass
+
+
+def scope_contexts(scope=None):
+    """Non-archived contexts of a query scope, as cue resolves it.
+
+    Without `scope`, cue applies the caller's default_scope (project
+    cue.json, then global, then the current repository). Returns
+    (addresses, rows by address, store root). Sets the module STORE to
+    the root cue reports, so artifacts are read from the same store.
+    """
+    global STORE
+    argv = ["cue", "context", "list", "--json"]
+    if scope:
+        argv += ["--scope", scope]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise ScopeError("cue not found on PATH")
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout).strip() or f"exit {r.returncode}"
+        raise ScopeError(f"cue context list failed: {msg}")
+    rows = {}
+    for row in json.loads(r.stdout or "[]"):
+        if row.get("archived_at"):
             continue
-        for repo in sorted(os.listdir(po)):
-            pr = os.path.join(po, repo)
-            if repo.startswith(".") or not os.path.isdir(pr):
-                continue
-            for c in sorted(os.listdir(pr)):
-                if os.path.isfile(os.path.join(pr, c, "context.md")):
-                    ctxs.append(f"{org}/{repo}/{c}")
-    return ctxs
+        a = f"{row['scope']}/{row['context']}"
+        rows[a] = row
+        path = row.get("path") or ""
+        tail = "/" + a + "/context.md"
+        if path.endswith(tail):
+            STORE = path[: -len(tail)]
+    return sorted(rows), rows, STORE
 
 
 def signature(ctxs):
@@ -230,8 +257,7 @@ def signature(ctxs):
 
 # ---------------------------------------------------------------- index
 
-def build_index():
-    ctxs = list_contexts()
+def build_index(ctxs):
     sig = signature(ctxs)
     docs = []        # per context: dict field -> Counter
     meta = []        # per context: dict
@@ -324,25 +350,39 @@ def build_index():
             "children": dict(children), "pos": pos}
 
 
-def cache_path():
+def cache_path(ctxs):
+    """One cache file per store and resolved scope (its address set)."""
     key = re.sub(r"[^A-Za-z0-9]+", "_", os.path.abspath(STORE)).strip("_")
-    return os.path.join(CACHE_DIR, f"index-v{INDEX_VERSION}-{key}.pickle")
+    h = hashlib.sha1("\n".join(sorted(ctxs)).encode()).hexdigest()[:12]
+    return os.path.join(CACHE_DIR,
+                        f"index-v{INDEX_VERSION}-{key}-{h}.pickle")
 
 
-def load_index(rebuild=False, check=True):
-    p = cache_path()
+def load_index(rebuild=False, check=True, scope=None):
+    """Index of the scope's contexts; rebuilt when stale.
+
+    The returned index carries `rows` (cue's context rows, fresh on
+    every call) and `cache` (its cache file path).
+    """
+    ctxs, rows, _ = scope_contexts(scope)
+    p = cache_path(ctxs)
+    idx = None
     if not rebuild and os.path.exists(p):
         with open(p, "rb") as fh:
             idx = pickle.load(fh)
-        if idx.get("version") == INDEX_VERSION and (
-                not check or idx["sig"] == signature(list_contexts())):
-            return idx, False
-    idx = build_index()
+        if idx.get("version") != INDEX_VERSION or (
+                check and idx["sig"] != signature(ctxs)):
+            idx = None
+    if idx is not None:
+        idx["rows"], idx["cache"] = rows, p
+        return idx, False
+    idx = build_index(ctxs)
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = p + f".{os.getpid()}.tmp"
     with open(tmp, "wb") as fh:
         pickle.dump(idx, fh, protocol=pickle.HIGHEST_PROTOCOL)
     os.replace(tmp, p)
+    idx["rows"], idx["cache"] = rows, p
     return idx, True
 
 
@@ -514,11 +554,29 @@ def load_cases(path):
     return [json.loads(l) for l in text.splitlines() if l.strip()]
 
 
-def run_eval(idx, cases, cfg):
-    addrs = [m["addr"] for m in idx["meta"]]
+class IndexPool:
+    """Indexes by scope name, loaded once each (eval runs cases from
+    several scopes). None is the caller's default scope."""
+
+    def __init__(self, rebuild=False, check=True):
+        self.rebuild, self.check, self.idx = rebuild, check, {}
+
+    def get(self, scope=None):
+        if scope not in self.idx:
+            self.idx[scope], _ = load_index(self.rebuild, self.check, scope)
+        return self.idx[scope]
+
+
+def case_scope(c, default=None):
+    return c.get("scope") or default
+
+
+def run_eval(pool, cases, cfg, scope=None):
     rows = []
     t0 = time.perf_counter()
     for c in cases:
+        idx = pool.get(case_scope(c, scope))
+        addrs = [m["addr"] for m in idx["meta"]]
         _, order, _ = search(idx, c["query"], c.get("terms"), c.get("roots"),
                              cfg, limit=0)
         ranked = [addrs[i] for i in order]
@@ -530,12 +588,14 @@ def run_eval(idx, cases, cfg):
         top5 = ranked[:5]
         rows.append({
             "id": c["id"], "kind": c["kind"],
+            "scope": case_scope(c, scope) or "default",
             "hinted": bool(c.get("terms") or c.get("roots")),
             "r5": sum(1 for r in ranks if r and r <= 5) / len(exp),
             "r10": sum(1 for r in ranks if r and r <= 10) / len(exp),
             "mrr": 1 / first if first else 0.0,
             "p5": sum(1 for a in top5 if a in ok) / 5,
             "ranks": dict(zip(exp, ranks)), "top5": top5,
+            "out_of_scope": [a for a in exp if a not in idx["pos"]],
         })
     ms = (time.perf_counter() - t0) * 1000 / max(1, len(cases))
     return rows, ms
@@ -581,6 +641,9 @@ def add_cfg_args(p):
     p.add_argument("--stem", type=float, default=0.0,
                    help="weight of light-stem variants of query terms "
                    "(0 = off)")
+    p.add_argument("--scope",
+                   help="query scope passed to cue (default: the "
+                   "caller's default scope)")
     p.add_argument("--rebuild", action="store_true")
     p.add_argument("--no-check", action="store_true",
                    help="skip the cache staleness check")
@@ -601,10 +664,13 @@ def main(argv):
         a = p.parse_args(argv[1:])
         mode = "eval"
     elif argv and argv[0] == "build":
+        p = argparse.ArgumentParser(prog="recall-lexical build")
+        p.add_argument("--scope")
+        a = p.parse_args(argv[1:])
         t0 = time.perf_counter()
-        idx, built = load_index(rebuild=True)
+        idx, built = load_index(rebuild=True, scope=a.scope)
         print(f"built {len(idx['meta'])} contexts in "
-              f"{(time.perf_counter() - t0) * 1000:.0f} ms -> {cache_path()}")
+              f"{(time.perf_counter() - t0) * 1000:.0f} ms -> {idx['cache']}")
         return 0
     else:
         p = argparse.ArgumentParser(prog="recall-lexical")
@@ -618,8 +684,10 @@ def main(argv):
     if a.no_prop:
         a.prop_parent = a.prop_refs = 0.0
     cfg = Config(a)
+    if mode == "eval":
+        return eval_main(a, cfg)
     t0 = time.perf_counter()
-    idx, built = load_index(a.rebuild, check=not a.no_check)
+    idx, built = load_index(a.rebuild, check=not a.no_check, scope=a.scope)
     t_load = (time.perf_counter() - t0) * 1000
     if mode == "query":
         t1 = time.perf_counter()
@@ -638,8 +706,16 @@ def main(argv):
             print(f"# index {t_load:.0f} ms{' (built)' if built else ''}, "
                   f"search {t_q:.1f} ms", file=sys.stderr)
         return 0
+
+
+def eval_main(a, cfg):
+    t0 = time.perf_counter()
+    pool = IndexPool(a.rebuild, check=not a.no_check)
     cases = load_cases(a.cases)
-    rows, ms = run_eval(idx, cases, cfg)
+    for c in cases:
+        pool.get(case_scope(c, a.scope))
+    t_load = (time.perf_counter() - t0) * 1000
+    rows, ms = run_eval(pool, cases, cfg, a.scope)
     rep = eval_report(rows)
     fails = [r for r in rows
              if any((not v) or v > a.fail_at for v in r["ranks"].values())]
@@ -648,12 +724,20 @@ def main(argv):
                           "per_query_ms": ms, "cases": rows}, indent=2))
         return 0
     print(f"config: {cfg.describe()}")
-    print(f"index load {t_load:.0f} ms{' (built)' if built else ''}; "
-          f"search {ms:.1f} ms/query")
+    print(f"index load {t_load:.0f} ms; search {ms:.1f} ms/query")
     for g, s in rep.items():
         print(f"{g:10} n={s['n']:2}  R@5 {s['recall@5']:.3f}  "
               f"R@10 {s['recall@10']:.3f}  MRR {s['mrr']:.3f}  "
               f"top5ok {s['top5_ok']:.3f}")
+    print("scopes: " + ", ".join(
+        f"{k or 'default'} ({len(v['meta'])} contexts)"
+        for k, v in pool.idx.items()))
+    oos = [r for r in rows if r["out_of_scope"]]
+    if oos:
+        print(f"cases with expected outside their scope: {len(oos)}")
+        for r in oos:
+            print(f"  {r['id']:6} [{r['scope']}] "
+                  + ", ".join(r["out_of_scope"]))
     print(f"failed (an expected below rank {a.fail_at}): {len(fails)}")
     for r in fails:
         lst = ", ".join(f"{e.split('/', 1)[1]}@{v or '-'}"
@@ -663,4 +747,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ScopeError as e:
+        sys.exit(f"recall-lexical: {e}")
