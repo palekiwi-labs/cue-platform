@@ -67,6 +67,8 @@ const KNOWN_KINDS: Record<string, KindLabel> = {
   git_commit: { label: "COMMIT", color: "success" },
   artifact_created: { label: "ARTIFACT", color: "accent" },
   session_associated: { label: "SESSION", color: "muted" },
+  log_compaction_started: { label: "COMPACT", color: "muted" },
+  log_compacted: { label: "COMPACT", color: "muted" },
 }
 
 /** Short badge for a known kind; the raw kind, dim, for anything else. */
@@ -86,7 +88,8 @@ export function fmtWhen(ms: number, now: number): string {
 
 /**
  * One-line summary of an event: the commit title, the artifact
- * address, the association method; details JSON as the fallback.
+ * address, the association method, a compaction run's sizes; details
+ * JSON as the fallback.
  */
 export function eventSummary(e: ActivityEvent): string {
   const d = e.details
@@ -98,7 +101,23 @@ export function eventSummary(e: ActivityEvent): string {
     if (address) return address
   }
   if (e.kind === "session_associated" && typeof d.method === "string") {
-    return `session ${d.method}`
+    return d.method
+  }
+  if (e.kind === "log_compaction_started") {
+    const entries = typeof d.entries === "number" ? d.entries : null
+    const head = typeof d.head === "number" ? d.head : null
+    if (entries !== null && head !== null) return `start: head ${head} of ${entries}`
+    return "compaction started"
+  }
+  if (e.kind === "log_compacted") {
+    const before = typeof d.entries_before === "number" ? d.entries_before : null
+    const replaced = typeof d.replaced === "number" ? d.replaced : null
+    const summaries = Array.isArray(d.summaries) ? d.summaries.length : null
+    if (before !== null && replaced !== null && summaries !== null) {
+      const after = before - replaced + summaries
+      return `${before} → ${after} entries (${replaced} → ${summaries} summaries)`
+    }
+    return "log compacted"
   }
   return JSON.stringify(d)
 }
@@ -128,7 +147,8 @@ const FULL_HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 /**
  * What an event points at, as text to copy: a session's file path, an
- * artifact's address, a commit as `<org>/<repo>@<hash>`. When the event
+ * artifact's address, a commit as `<org>/<repo>@<hash>`, a compaction
+ * run's dir. When the event
  * lacks it, the reason instead; nothing is guessed.
  */
 export function eventValue(
@@ -148,6 +168,10 @@ export function eventValue(
     if (!c || !FULL_HASH.test(c.hash)) return { missing: "commit event has no full hash" }
     if (!c.repo) return { missing: "commit event has no repo" }
     return { text: `${c.repo}@${c.hash}` }
+  }
+  if (e.kind === "log_compaction_started" || e.kind === "log_compacted") {
+    const runDir = str(e.details.run_dir)
+    return runDir ? { text: runDir } : { missing: "compaction event has no run dir" }
   }
   return { missing: `nothing to copy for ${e.kind}` }
 }

@@ -55,6 +55,8 @@ describe("kindLabel", () => {
     expect(kindLabel("git_commit").label).toBe("COMMIT")
     expect(kindLabel("artifact_created").label).toBe("ARTIFACT")
     expect(kindLabel("session_associated").label).toBe("SESSION")
+    expect(kindLabel("log_compaction_started").label).toBe("COMPACT")
+    expect(kindLabel("log_compacted").label).toBe("COMPACT")
   })
   test("unknown kinds render raw and dim, truncated", () => {
     expect(kindLabel("deploy_hook")).toEqual({ label: "deploy_h", color: "dim" })
@@ -84,7 +86,18 @@ describe("eventSummary", () => {
   })
   test("method for session_associated", () => {
     const e = { ...event, kind: "session_associated", details: { method: "link" } } as any
-    expect(eventSummary(e)).toBe("session link")
+    expect(eventSummary(e)).toBe("link")
+  })
+  test("compaction started reports the head size", () => {
+    const e = { ...event, kind: "log_compaction_started", details: { entries: 36, head: 31 } } as any
+    expect(eventSummary(e)).toBe("start: head 31 of 36")
+  })
+  test("compacted reports before → after", () => {
+    const e = {
+      ...event, kind: "log_compacted",
+      details: { entries_before: 36, replaced: 31, summaries: ["a", "b"] },
+    } as any
+    expect(eventSummary(e)).toBe("36 → 7 entries (31 → 2 summaries)")
   })
   test("details JSON as fallback", () => {
     const e = { ...event, kind: "custom_thing", details: { a: 1 } } as any
@@ -176,6 +189,11 @@ describe("eventValue", () => {
   test("unknown kinds copy nothing", () => {
     const e = { ...event, kind: "deploy_hook", details: { url: "x" } } as any
     expect(eventValue(e, sessionFile)).toEqual({ missing: "nothing to copy for deploy_hook" })
+  })
+  test("compaction: its run dir", () => {
+    const e = { ...event, kind: "log_compacted", details: { run_dir: "/home/pl/.cache/cue/compaction/x" } } as any
+    expect(eventValue(e, sessionFile)).toEqual({ text: "/home/pl/.cache/cue/compaction/x" })
+    expect(eventValue({ ...e, details: {} }, sessionFile)).toEqual({ missing: "compaction event has no run dir" })
   })
 })
 
