@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { parseContextTree } from "./model"
 import {
-  groupSessions, inScopes, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
+  cwdMark, groupSessions, inScopes, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
 } from "./sessions"
 
 let n = 0
@@ -129,5 +129,23 @@ describe("inScopes", () => {
     const rows = [s("a", "o/r/x"), s("b", "z/z/x"), s("c"), s("d", undefined, "/other"), s("e", undefined, "")]
     const kept = inScopes(rows, new Set(["o/r"]), (cwd) => (cwd === "/w" ? "o/r" : "q/q"))
     expect(kept.map((r) => r.path)).toEqual(["a", "c"])
+  })
+})
+
+describe("cwdMark", () => {
+  const s = { cwd: "/c/sb", cwdScope: "sb/sb", address: "sb/sb/ctx" }
+  test("all marks every row with the cwd repo", () => {
+    expect(cwdMark(s, "/c/sb", "all")).toEqual({ text: "(sb/sb)", mismatch: false })
+  })
+  test("other marks only cwds differing from here", () => {
+    expect(cwdMark(s, "/c/sb", "other")).toBeUndefined()
+    expect(cwdMark(s, "/c/x", "other")).toEqual({ text: "(sb/sb)", mismatch: false })
+  })
+  test("a cwd repo outside the context scope is a mismatch, always shown", () => {
+    const m = { cwd: "/c/org", cwdScope: "pk/sb-org", address: "sb/sb/ctx" }
+    expect(cwdMark(m, "/c/org", "other")).toEqual({ text: "(pk/sb-org)", mismatch: true })
+  })
+  test("no origin falls back to the directory name, never a mismatch", () => {
+    expect(cwdMark({ cwd: "/tmp/scratch", address: "sb/sb/ctx" }, "/x", "all")).toEqual({ text: "(scratch)", mismatch: false })
   })
 })

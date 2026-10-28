@@ -175,6 +175,7 @@ export async function loadSessions(
     return {
       path: info.path,
       cwd: info.cwd,
+      cwdScope: info.cwd ? cwdScope(info.cwd) : undefined,
       address: meta.address,
       description: meta.description ?? fallback,
       label: meta.label,
@@ -329,6 +330,7 @@ export async function openBrowser(
         newSession: (address, target) => newSession(pi, ctx, address, target),
         loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
         currentSession: () => ctx.sessionManager.getSessionFile(),
+        currentCwd: () => ctx.sessionManager.getCwd(),
         resume: (session, target) => resumeSession(pi, ctx, session, target),
         deleteSession: deleteSessionFile,
         clearLabels: clearSessionLabels,

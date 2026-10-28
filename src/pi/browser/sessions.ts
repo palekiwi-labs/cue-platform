@@ -13,6 +13,8 @@ const DESCRIPTION_TYPE = "session-description"
 export interface SessionRow {
   path: string
   cwd: string
+  /** `<org>/<repo>` of the cwd's git origin, when it has one. */
+  cwdScope?: string
   /** Newest cue context linked on the mainline. */
   address?: string
   /** session-description, else session name, else first message. */
@@ -201,6 +203,27 @@ export function groupSessions(
   const none = byAddress.get(NO_CONTEXT)
   if (none) push(syntheticContext(NO_CONTEXT), none)
   return out
+}
+
+/** Which session rows show their cwd repo: every row, or only other cwds. */
+export type CwdMarks = "all" | "other"
+
+/**
+ * The `(org/repo)` marker of a session's cwd. `mismatch` when the cwd
+ * repo is not the scope of the session's own context: the session was
+ * created in another repo, and resuming it moves pi there. Mismatches
+ * always show; otherwise `other` shows only cwds differing from `here`.
+ */
+export function cwdMark(
+  s: Pick<SessionRow, "cwd" | "cwdScope" | "address">,
+  here: string,
+  marks: CwdMarks,
+): { text: string; mismatch: boolean } | undefined {
+  if (!s.cwd) return undefined
+  const mismatch = s.address !== undefined && s.cwdScope !== undefined && s.cwdScope !== scopeOf(s.address)
+  if (!mismatch && marks === "other" && s.cwd === here) return undefined
+  const name = s.cwdScope ?? s.cwd.split("/").filter(Boolean).pop() ?? s.cwd
+  return { text: `(${name})`, mismatch }
 }
 
 /** `<org>/<repo>` of a git remote URL (https, ssh or scp form). */

@@ -125,7 +125,8 @@ export default function (pi: ExtensionAPI) {
           const dim = (s: string) => theme.fg("dim", s);
 
           // Line 1: cwd (branch) • session    ...    (provider) model • level
-          let pwd = formatCwd(ctx.sessionManager.getCwd(), process.env.HOME);
+          const cwd = ctx.sessionManager.getCwd();
+          let pwd = formatCwd(cwd, process.env.HOME);
           const branch = footerData.getGitBranch();
           if (branch) pwd = `${pwd} (${branch})`;
           const name = ctx.sessionManager.getSessionName();
@@ -143,7 +144,10 @@ export default function (pi: ExtensionAPI) {
               : modelText;
           const statuses = footerData.getExtensionStatuses();
           const mcp = mcpMarker(statuses.get(MCP_KEY), theme);
-          const left1 = dim(pwd + nameSuffix);
+          // pi never chdirs, so process.cwd() is the launch dir; a resumed
+          // session from another directory moves the session cwd away from it.
+          const drifted = resolve(cwd) !== resolve(process.cwd());
+          const left1 = (drifted ? theme.fg("error", pwd) : dim(pwd)) + dim(nameSuffix);
           // Marker sits in front of the (provider) model part.
           const pre = mcp ? `${mcp} ` : "";
           const right1 = pre + dim(withProvider);
