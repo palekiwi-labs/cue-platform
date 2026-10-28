@@ -80,7 +80,7 @@ async function runTool(
 }
 
 describe("cuePlugins registration", () => {
-  test("registers the eight parity tools plus delegate", () => {
+  test("registers the cue tools, recall and delegate", () => {
     const { pi, tools } = makeMockPi()
     cuePlugins(pi)
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -89,6 +89,7 @@ describe("cuePlugins registration", () => {
       "cue-context-usage",
       "cue-log",
       "cue-plan",
+      "cue-recall",
       "cue-review",
       "cue-task",
       "delegate",

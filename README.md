@@ -6,8 +6,8 @@ and cast with its terminal UI on the host.
 cue-platform ships in three parts:
 
 - **The flake** builds the tools: pi, cue, cue-agent, cast-mcp-client,
-  cue-review, gh, jq, the container tmux (with its window picker) and the
-  nvf-based nvim. `packages.<system>.default` bundles all of them; each
+  cue-review, cue-recall, gh, jq, the container tmux (with its window
+  picker) and the nvf-based nvim. `packages.<system>.default` bundles all of them; each
   is also exported on its own.
 - **The host tools**: cast (re-exported from the cast flake) and
   cast-tui (`cast-tui/`), the terminal UI that bare `cast` opens.
@@ -108,16 +108,21 @@ both versions would register duplicate tools, commands and handlers.
 
 ## Cue integration
 
-`src/pi/index.ts` registers the cue artifact tools, `delegate`, context
-orientation commands (`/cue:context:current`, `/cue:context:inject`,
+`src/pi/index.ts` registers the cue artifact tools, `cue-recall`,
+`delegate`, context orientation commands (`/cue:context:current`, `/cue:context:inject`,
 `/cue:context:pins`), `/cue:idea`, and `/review:run`. It also supplies cue skill
 injection, session naming, Acuity idle reporting, and the cast MCP adapter.
 `prompts/pi/` supplies `/cue:init`; `skills/` contains the nine cue skills.
 `extensions/` holds the footer, tmux-state and session-describe
 (`/describe`). Sessions are browsed in the cue browser (ctrl+r).
 
-The extensions call cue, cue-agent, git and tmux from PATH; the flake
-bundle provides all but git.
+The extensions call cue, cue-agent, cue-recall, git and tmux from PATH;
+the flake bundle provides all but git.
+
+`cue-recall` searches only the default cue query scope of the session's
+repository (`cue context list`) and ranks candidates with jev, so it
+needs `TYPESAFE_API_KEY` in the environment; without it the tool fails
+with that message.
 `ACUITY_HOST` selects the observability endpoint. The MCP adapter discovers
 cast through `cast-mcp-client`; outside cast it remains inactive.
 
