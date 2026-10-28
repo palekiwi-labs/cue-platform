@@ -507,8 +507,8 @@ export class AgentMonitor implements Component {
     return lines.slice(start, start + height)
   }
 
-  /** The preview's text and its rendering: prose renders as markdown,
-   * code languages go straight to the highlighter. */
+  /** The preview's text and its rendering: markdown prose, or a code
+   * language passed straight to the highlighter. */
   private previewSource(r: RunRow): { text: string; lang?: string } {
     if (this.pane === "prompt") return { text: this.deps.prompt(r.runPath) ?? "_no prompt.md_" }
     if (this.pane === "stats") {
@@ -520,14 +520,7 @@ export class AgentMonitor implements Component {
         : { text: "_unreadable receipt_" }
     }
     if (r.error) return { text: `**${r.outcome ?? "error"}:** ${r.error}\n\n${r.response ?? ""}` }
-    if (r.response) {
-      // Reviewer runs answer in JSON; pretty-print it and highlight it.
-      try {
-        return { text: JSON.stringify(JSON.parse(r.response), null, 2), lang: "json" }
-      } catch {
-        return { text: r.response }
-      }
-    }
+    if (r.response) return { text: r.response }
     return { text: isLive(r) ? "_still running_" : "_no response_" }
   }
 
