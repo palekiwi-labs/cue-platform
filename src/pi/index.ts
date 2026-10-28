@@ -19,6 +19,7 @@ import { cueContextTool } from "./tools/cue-context"
 import { cueContextUsageTool } from "./tools/cue-context-usage"
 import { cueLogTool } from "./tools/cue-log"
 import { cuePlanTool } from "./tools/cue-plan"
+import { cueRecallTool } from "./tools/cue-recall"
 import { cueReviewTool } from "./tools/cue-review"
 import { cueTaskTool } from "./tools/cue-task"
 import { saveBranchDiffTool } from "./tools/save-branch-diff"
@@ -40,6 +41,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   pi.registerTool(cueContextUsageTool())
   pi.registerTool(cueLogTool(pi))
   pi.registerTool(cuePlanTool(pi))
+  pi.registerTool(cueRecallTool(pi))
   pi.registerTool(cueReviewTool(pi))
   pi.registerTool(cueTaskTool(pi))
   pi.registerTool(saveBranchDiffTool(pi))
