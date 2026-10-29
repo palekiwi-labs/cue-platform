@@ -182,8 +182,7 @@ export class PrBrowser implements Component {
     if ("error" in r) this.error = r.error
     else {
       this.error = r.failed.length > 0 ? `${r.failed.length} repo(s) failed: ${r.failed.join("; ")}` : ""
-      // Org view starts with every repo collapsed; refreshes keep the folds.
-      if (view === "org" && !this.data.org) for (const p of r.prs) this.folded.add(p.repo)
+      // Refreshes keep the operator's folds; the org view starts unfolded.
       this.data[view] = r
     }
     this.tui.requestRender()
