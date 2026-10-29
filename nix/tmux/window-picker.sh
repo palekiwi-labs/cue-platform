@@ -5,12 +5,12 @@
 #   @pi_desc                         extensions/session-describe.ts
 #   @pi_last                         extensions/tmux-state.ts
 #   @review_state, @review_context,
-#   @review_title, @review_run       cue-review
+#   @review_title, @review_run       cue-review (row-level only)
 # tmux.conf colours the status-bar tabs from the same options.
 #
 # Rows are coloured like the tabs, show context tokens coloured like the
-# pi footer, an age marker (time since the last completed turn) and
-# preview the review or session description.
+# pi footer, an age marker (time since the last completed turn) and the
+# session description; all info is in the rows (no preview pane).
 
 # Rows: id, coloured label (hidden id field used for preview).
 tmux list-windows -F \
@@ -41,7 +41,7 @@ tmux list-windows -F \
       }
       rv = ($8 != "") ? sprintf("  \033[2m%s\033[0m", $8) : "";
       # Session description, dimmed right after the window name.
-      dv = ($9 != "") ? sprintf("  \033[2m%s\033[0m", substr($9, 1, 60)) : "";
+      dv = ($9 != "") ? sprintf("  \033[2m%s\033[0m", $9) : "";
       # Age since the last completed turn, dimmed.
       av = "";
       if ($10 != "") {
@@ -55,10 +55,8 @@ tmux list-windows -F \
       }
       printf "%s\t%s %s%s\033[0m%s%s%s%s\n", $1, mark, c, $6, dv, pct, rv, av;
     }' \
-  | fzf --ansi --reverse --no-sort --delimiter '\t' \
+  | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
       --prompt "$(tmux display-message -p '#S')> " \
-      --preview "tmux display-message -p -t {1} '#{?@review_context,#{@review_title} | #{@review_context} | run #{?@review_run,#{@review_run},pending} | #{?@review_state,#{@review_state},pending},#{@pi_desc}}'" \
-      --preview-window 'down,3,wrap' \
   | cut -f1 \
   | xargs -r tmux select-window -t
