@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { initTheme, type KeybindingsManager as AgentKeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
-import { KeybindingsManager, TUI_KEYBINDINGS, type TUI, visibleWidth } from "@earendil-works/pi-tui"
+import { getMarkdownTheme, initTheme, type KeybindingsManager as AgentKeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
+import { KeybindingsManager, Markdown, TUI_KEYBINDINGS, type TUI, visibleWidth } from "@earendil-works/pi-tui"
 import { commentLines, PrBrowser, type PrDeps } from "./browser"
 import type { Pr } from "./model"
 import { parseDetail, PreviewCache, type PrDetail } from "./preview"
@@ -18,6 +18,7 @@ const detail = (body: string): PrDetail => ({
   threads: [{ kind: "comment", messages: [{ id: 1, author: "reviewer", body, at: "2026-01-01T00:00:00Z" }] }],
 })
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
+const md = (body: string, width: number) => new Markdown(body, 0, 0, getMarkdownTheme()).render(width)
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").trimEnd()
 
 class Browser extends PrBrowser {
@@ -59,7 +60,7 @@ describe("comment rendering", () => {
       { ...c(1002, "Unique reply", "2026-01-02T00:00:00Z"), in_reply_to_id: 1001 },
     ]]), JSON.stringify([[{ ...c(1003, "Review body", ""), submitted_at: "2026-01-01T12:00:00Z" }]]),
     JSON.stringify([[c(1004, "General body", "2026-01-01T06:00:00Z")]]))
-    const lines = commentLines(parsed, 80, theme, Date.parse("2026-01-02T01:00:00Z")).map(plain)
+    const lines = commentLines(parsed, 80, theme, Date.parse("2026-01-02T01:00:00Z"), md).map(plain)
     const text = lines.join("\n")
     expect(text.match(/Unique root/g)).toHaveLength(1)
     expect(text.match(/src\/file.ts:12/g)).toHaveLength(1)
@@ -79,7 +80,7 @@ describe("comment rendering", () => {
     const prose = "First **bold** words followed by enough prose to span several narrow pane lines END_PROSE"
     const body = `${prose}\n\n- list with *emphasis* and many words END_LIST\n\n\`\`\`ts\n${token}\n\`\`\`\n\n${token}\n\n界面文字`
     for (const width of [12, 24, 80]) {
-      const lines = commentLines(detail(body), width, theme).map(plain)
+      const lines = commentLines(detail(body), width, theme, Date.now(), md).map(plain)
       expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true)
       const compact = lines.join("").replace(/\s/g, "")
       expect(compact).toContain(prose.replace(/\*|\s/g, ""))
@@ -87,16 +88,16 @@ describe("comment rendering", () => {
       expect(compact.split(token)).toHaveLength(3)
       expect(compact).toContain("界面文字")
     }
-    expect(commentLines(detail(body), 24, theme).length).toBeGreaterThan(commentLines(detail(body), 80, theme).length)
+    expect(commentLines(detail(body), 24, theme, Date.now(), md).length).toBeGreaterThan(commentLines(detail(body), 80, theme, Date.now(), md).length)
   })
 
   test("keeps message Markdown isolated and has a comments-only empty state", () => {
     const d = detail("```ts\nunclosed fence")
     d.threads[0]!.messages.push({ id: 2, author: "next", body: "**Separate reply**", at: "2026-01-02T00:00:00Z" })
-    const text = plain(commentLines(d, 80, theme).join("\n"))
+    const text = plain(commentLines(d, 80, theme, Date.now(), md).join("\n"))
     expect(text).toContain("Separate reply")
     expect(text).not.toContain("**Separate reply**")
-    expect(commentLines({ threads: [] }, 80, theme)).toEqual(["No comments yet"])
+    expect(commentLines({ threads: [] }, 80, theme, Date.now(), md)).toEqual(["No comments yet"])
   })
 })
 
@@ -264,5 +265,62 @@ describe("PR browser preview", () => {
     s.browser.handleInput("no-match")
     expect(s.browser.render(80).join("\n")).toContain("Select a PR")
     expect(s.calls).toEqual([2])
+  })
+})
+
+describe("host actions", () => {
+  const actionDeps = () => {
+    const ran: string[] = []
+    const deps = {
+      view: "repo", orgs: ["o"], localRepo: undefined, previews: new PreviewCache(),
+      markdown: (body: string, width: number) => [body.padEnd(width).trim()],
+      load: async () => ({ prs: [pr(2), pr(1)], viewer: "author", failed: [], truncated: false }),
+      detail: async () => detail("Comment body"),
+      checkout: async (p: Pr) => ({ ok: true, text: `checked out #${p.number}` }),
+      actions: (p: Pr) => [
+        { key: "l", label: `lgtm #${p.number}`, run: async (q: Pr) => { ran.push(`lgtm ${q.number}`); return { ok: true, text: "approved" } } },
+        { key: "d", label: "deploy staging", confirm: true, run: async (q: Pr) => { ran.push(`deploy ${q.number}`); return { ok: true, text: "deployed" } } },
+      ],
+    } as unknown as PrDeps
+    return { deps, ran }
+  }
+
+  const hostSetup = () => {
+    const { deps, ran } = actionDeps()
+    const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
+    const browser = new Browser(tui, theme, new KeybindingsManager(TUI_KEYBINDINGS), deps, () => {})
+    return { browser, ran }
+  }
+
+  test("no session deps: session hints hidden, any repo actionable", async () => {
+    const s = hostSetup()
+    await tick()
+    const text = s.browser.render(400).join("\n")
+    expect(text).toContain("l lgtm #2")
+    expect(text).toContain("d deploy staging (confirm)")
+    expect(plain(text)).not.toContain("enter session")
+    expect(plain(text)).not.toContain("ctrl+r review")
+  })
+
+  test("unconfirmed action runs immediately", async () => {
+    const s = hostSetup()
+    await tick()
+    s.browser.handleInput("l")
+    await tick()
+    expect(s.ran).toEqual(["lgtm 2"])
+  })
+
+  test("confirmed action asks y/n; any other key cancels", async () => {
+    const s = hostSetup()
+    await tick()
+    s.browser.handleInput("d")
+    expect(s.browser.render(80).join("\n")).toContain("deploy staging on o/r#2")
+    s.browser.handleInput("x")
+    await tick()
+    expect(s.ran).toEqual([])
+    s.browser.handleInput("d")
+    s.browser.handleInput("y")
+    await tick()
+    expect(s.ran).toEqual(["deploy 2"])
   })
 })

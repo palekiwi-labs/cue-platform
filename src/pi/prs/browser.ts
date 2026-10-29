@@ -7,12 +7,10 @@
  * dispatches keys. Read-only towards GitHub.
  */
 
-import { getMarkdownTheme, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import {
   type Component,
   fuzzyFilter,
   Input,
-  Markdown,
   matchesKey,
   type TUI,
   truncateToWidth,
@@ -35,9 +33,8 @@ import {
 } from "./model"
 import { ContextPicker } from "./context-picker"
 import { type PrDetail, PreviewCache, prKey } from "./preview"
+import type { Kb, SessionLike, Target, Theme } from "./ui"
 import type { ContextRow } from "../browser/model"
-import type { SessionRow } from "../browser/sessions"
-import type { Target } from "../lib/default-target"
 
 export interface Loaded {
   prs: Pr[]
@@ -46,6 +43,54 @@ export interface Loaded {
   truncated: boolean
   /** `<repo>: <error>` for each repo whose search failed. */
   failed: string[]
+}
+
+/**
+ * Session-bound capabilities (pi only): opening PRs into sessions,
+ * cue-review launches, branch-context linking. Standalone host pickers
+ * omit the group and get a list-only browser.
+ */
+export interface SessionDeps {
+  /** Manifest names cue-review knows; error text on failure. */
+  manifests(): Promise<string[] | { error: string }>
+  /** The session repo's context tree, pinned first: review parents. */
+  contexts(): Promise<ContextRow[]>
+  /** The cue browser's stored recency window for this repo. */
+  recencyDays(): number | undefined
+  saveRecencyDays(days: number): void
+  /** Start a detached cue-review run for a PR. */
+  launchReview(req: ReviewRequest): Promise<Outcome>
+  /** The session repo's cue scope (`org/repo`); new contexts land here. */
+  scope: string | undefined
+  /** Branch -> address of its linked context (branch.<b>.cue-context). */
+  links(): Promise<Map<string, string>>
+  /**
+   * Link a branch to a context: an address, or with `create` a slug to
+   * create in the repo scope first. The outcome carries the linked address.
+   */
+  link(branch: string, context: string, create?: { parent?: string }): Promise<Outcome>
+  /** Start a pi session in a context, the note after the orientation; error text on failure. */
+  startSession(address: string, target: Target, note: string): string | undefined
+  /** Newest session of a context, read when needed. */
+  latestSession(address: string): Promise<SessionLike | undefined>
+  /** Resume a session; error text on failure. */
+  resume(session: SessionLike, target: Target): string | undefined
+  /** Path of the session this browser runs in. */
+  currentSession(): string | undefined
+  /** Address of the session's cue context, if any. */
+  sessionContext(): string | undefined
+  /** Where sessions open first. */
+  target: Target
+}
+
+/** A host-attached picker action, dispatched by its key chord. */
+export interface HostAction {
+  /** Key chord as pi-tui writes it (e.g. "d", "ctrl+d"). */
+  key: string
+  label: string
+  /** Ask y/n in the footer before running. */
+  confirm?: boolean
+  run(pr: Pr): Promise<Outcome>
 }
 
 export interface PrDeps {
@@ -61,38 +106,14 @@ export interface PrDeps {
   view: View
   /** Check a PR out in the repo root or its own worktree; the outcome. */
   checkout(pr: Pr, where: CheckoutTarget): Promise<Outcome>
-  /** Manifest names cue-review knows; error text on failure. */
-  manifests(): Promise<string[] | { error: string }>
-  /** The session repo's context tree, pinned first: review parents. */
-  contexts(): Promise<ContextRow[]>
-  /** The cue browser's stored recency window for this repo. */
-  recencyDays(): number | undefined
-  saveRecencyDays(days: number): void
-  /** Start a detached cue-review run for a PR. */
-  launchReview(req: ReviewRequest): Promise<Outcome>
   /** Copy text to system clipboard. */
   copy(text: string): Promise<void>
-  /** The session repo's cue scope (`org/repo`); new contexts land here. */
-  scope: string | undefined
-  /** Branch -> address of its linked context (branch.<b>.cue-context). */
-  links(): Promise<Map<string, string>>
-  /**
-   * Link a branch to a context: an address, or with `create` a slug to
-   * create in the repo scope first. The outcome carries the linked address.
-   */
-  link(branch: string, context: string, create?: { parent?: string }): Promise<Outcome>
-  /** Start a pi session in a context, the note after the orientation; error text on failure. */
-  startSession(address: string, target: Target, note: string): string | undefined
-  /** Newest session of a context, read when needed. */
-  latestSession(address: string): Promise<SessionRow | undefined>
-  /** Resume a session; error text on failure. */
-  resume(session: SessionRow, target: Target): string | undefined
-  /** Path of the session this browser runs in. */
-  currentSession(): string | undefined
-  /** Address of the session's cue context, if any. */
-  sessionContext(): string | undefined
-  /** Where sessions open first. */
-  target: Target
+  /** Render a Markdown message body to terminal lines. */
+  markdown(body: string, width: number): string[]
+  /** Session-bound capabilities; omit for a standalone host picker. */
+  sessions?: SessionDeps
+  /** Host actions for the highlighted PR, bound to their own keys. */
+  actions?: (pr: Pr) => HostAction[]
 }
 
 export interface ReviewRequest {
@@ -135,7 +156,13 @@ const checksGlyph = (c: Pr["checks"]): string =>
 
 const rowId = (r: Row): string => (r.kind === "repo" ? `repo:${r.repo}` : `pr:${r.pr.repo}#${r.pr.number}`)
 
-export function commentLines(detail: PrDetail, width: number, theme: Theme, now = Date.now()): string[] {
+export function commentLines(
+  detail: PrDetail,
+  width: number,
+  theme: Theme,
+  now = Date.now(),
+  md: (body: string, width: number) => string[] = (body, w) => wrapTextWithAnsi(body, w),
+): string[] {
   if (detail.threads.length === 0) return wrapTextWithAnsi(theme.fg("dim", "No comments yet"), width)
   const lines = [...wrapTextWithAnsi(theme.fg("muted", "COMMENTS / newest first"), width), ""]
   for (const [index, thread] of detail.threads.entries()) {
@@ -147,7 +174,7 @@ export function commentLines(detail: PrDetail, width: number, theme: Theme, now 
     for (const [i, message] of thread.messages.entries()) {
       if (i > 0) lines.push("")
       lines.push(...wrapTextWithAnsi(theme.fg("dim", `@${message.author} · ${fmtAge(message.at, now)} ago`), width))
-      lines.push(...new Markdown(message.body || "(empty comment)", 0, 0, getMarkdownTheme()).render(width))
+      lines.push(...md(message.body || "(empty comment)", width))
     }
   }
   return lines
@@ -165,7 +192,7 @@ export class PrBrowser implements Component {
   protected selectedId: string | undefined
   protected links = new Map<string, string>()
   protected mode: CheckoutTarget = "worktree"
-  protected target: Target
+  protected target: Target | undefined
   private preview = true
   private previewKey: string | undefined
   protected previewScroll = 0
@@ -178,19 +205,19 @@ export class PrBrowser implements Component {
   constructor(
     protected tui: TUI,
     protected theme: Theme,
-    protected kb: KeybindingsManager,
+    protected kb: Kb,
     protected deps: PrDeps,
     protected done: () => void,
   ) {
     this.view = deps.view
-    this.target = deps.target
+    this.target = deps.sessions?.target
     this.input.focused = true
     void this.reload()
     void this.loadLinks()
   }
 
   protected async loadLinks(): Promise<void> {
-    this.links = await this.deps.links()
+    this.links = (await this.deps.sessions?.links()) ?? new Map()
     this.tui.requestRender()
   }
 
@@ -245,12 +272,12 @@ export class PrBrowser implements Component {
     return rows[this.selectedIndex(rows)]
   }
 
-  /** The highlighted PR, if it is one the cwd's repo can act on. */
+  /** The highlighted PR, when it is one this host can act on. */
   protected actionablePr(): Pr | undefined {
     const r = this.selectedRow()
     if (r?.kind !== "pr") return undefined
-    if (r.pr.repo !== this.deps.localRepo) {
-      this.notice(`${r.pr.repo} is not this repo (${this.deps.localRepo ?? "no GitHub origin"}); no local clone to act in`, "warning")
+    if (this.deps.localRepo && r.pr.repo !== this.deps.localRepo) {
+      this.notice(`${r.pr.repo} is not this repo (${this.deps.localRepo}); no local clone to act in`, "warning")
       return undefined
     }
     return r.pr
@@ -298,6 +325,7 @@ export class PrBrowser implements Component {
 
   handleInput(data: string): void {
     if (this.picker) return this.picker.handleInput(data)
+    if (this.confirming) return this.confirmInput(data)
     const rows = this.rows()
     const move = (delta: number) => {
       if (rows.length === 0) return
@@ -388,12 +416,12 @@ export class PrBrowser implements Component {
       this.tui.requestRender()
       return true
     }
-    if (matchesKey(data, "ctrl+t")) {
+    if (matchesKey(data, "ctrl+t") && this.deps.sessions) {
       this.target = this.target === "here" ? "tmux" : "here"
       this.tui.requestRender()
       return true
     }
-    if (matchesKey(data, "ctrl+r")) {
+    if (matchesKey(data, "ctrl+r") && this.deps.sessions) {
       void this.openPicker()
       return true
     }
@@ -404,6 +432,15 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "ctrl+h")) {
       void this.onCopy("title")
       return true
+    }
+    const row = this.selectedRow()
+    if (row?.kind === "pr" && this.deps.actions) {
+      for (const a of this.deps.actions(row.pr)) {
+        if (matchesKey(data, a.key as Parameters<typeof matchesKey>[1])) {
+          void this.runAction(a, row.pr)
+          return true
+        }
+      }
     }
     return false
   }
@@ -431,11 +468,12 @@ export class PrBrowser implements Component {
   protected picker: ContextPicker | undefined
 
   private async openPicker(): Promise<void> {
+    const s = this.deps.sessions
     const pr = this.actionablePr()
-    if (!pr || this.busy) return
+    if (!s || !pr || this.busy) return
     this.busy = true
     this.notice("loading manifests and contexts\u2026", "dim")
-    const [m, rows] = await Promise.all([this.deps.manifests(), this.deps.contexts()])
+    const [m, rows] = await Promise.all([s.manifests(), s.contexts()])
       .finally(() => (this.busy = false))
     if ("error" in m) return this.notice(`cue-review manifests: ${m.error}`, "error")
     const manifests = m.length > 0 ? m : [DEFAULT_MANIFEST]
@@ -445,18 +483,18 @@ export class PrBrowser implements Component {
       manifests,
       manifest: Math.max(0, manifests.indexOf(DEFAULT_MANIFEST)),
       rows,
-      recencyDays: this.deps.recencyDays(),
-      ...(this.deps.scope ? { scope: this.deps.scope } : {}),
+      recencyDays: s.recencyDays(),
+      ...(s.scope ? { scope: s.scope } : {}),
       branch: prContext(pr),
       ...(this.links.get(pr.headRef) ? { linked: this.links.get(pr.headRef)! } : {}),
     }, {
       cancel: () => this.closePicker(),
-      saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
+      saveRecencyDays: (d) => s.saveRecencyDays(d),
       submit: (r) => {
         this.closePicker()
         const manifest = r.manifest ?? DEFAULT_MANIFEST
         const req: ReviewRequest = { pr, context: r.context, manifest, ...(r.parent ? { parent: r.parent } : {}) }
-        void this.run(`starting review of #${pr.number}`, () => this.deps.launchReview(req))
+        void this.run(`starting review of #${pr.number}`, () => s.launchReview(req))
       },
     })
     this.input.focused = false
@@ -470,6 +508,37 @@ export class PrBrowser implements Component {
   }
 
   protected busy = false
+
+  /** A host action awaiting y/n confirmation. */
+  protected confirming: { action: HostAction; pr: Pr } | undefined
+
+  protected currentActions(): HostAction[] {
+    const row = this.selectedRow()
+    if (!this.deps.actions || row?.kind !== "pr") return []
+    return this.deps.actions(row.pr)
+  }
+
+  protected async runAction(a: HostAction, pr: Pr): Promise<void> {
+    if (this.busy) return
+    if (a.confirm) {
+      this.confirming = { action: a, pr }
+      this.status = { text: "", tone: "muted" }
+      return this.tui.requestRender()
+    }
+    await this.run(a.label, () => a.run(pr))
+  }
+
+  private confirmInput(data: string): void {
+    const c = this.confirming
+    this.confirming = undefined
+    if (!c) return
+    if (matchesKey(data, "y") || matchesKey(data, "enter")) {
+      void this.run(c.action.label, () => c.action.run(c.pr))
+    } else {
+      this.notice("cancelled")
+    }
+    this.tui.requestRender()
+  }
 
   protected async run(label: string, action: () => Promise<Outcome>): Promise<void> {
     if (this.busy) return
@@ -487,9 +556,11 @@ export class PrBrowser implements Component {
 
   /** Link the branch; the linked address, or undefined after a failure notice. */
   private async linkTo(pr: Pr, context: string, create?: { parent?: string }): Promise<string | undefined> {
+    const s = this.deps.sessions
+    if (!s) return undefined
     let address: string | undefined
     await this.run(`linking ${pr.headRef} to ${context}`, async () => {
-      const o = await this.deps.link(pr.headRef, context, create)
+      const o = await s.link(pr.headRef, context, create)
       if (o.ok) address = o.address
       return o
     })
@@ -503,11 +574,13 @@ export class PrBrowser implements Component {
    * new one under a parent picked by the operator. Undefined on cancel.
    */
   private async ensureLinked(pr: Pr): Promise<string | undefined> {
+    const s = this.deps.sessions
+    if (!s) return undefined
     const linked = this.links.get(pr.headRef)
     if (linked) return linked
     const slug = prContext(pr)
-    const rows = await this.deps.contexts()
-    const existing = rows.find((r) => r.scope === this.deps.scope && r.slug === slug)
+    const rows = await s.contexts()
+    const existing = rows.find((r) => r.scope === s.scope && r.slug === slug)
     if (existing) return this.linkTo(pr, existing.address)
     const picked = await this.pickParent(pr, slug, rows)
     if (!picked) return undefined
@@ -517,7 +590,8 @@ export class PrBrowser implements Component {
   /** Full-screen parent picker for a new PR context; undefined on cancel. */
   private pickParent(pr: Pr, slug: string, rows: ContextRow[]): Promise<{ context: string; parent?: string } | undefined> {
     return new Promise((resolve) => {
-      const here = this.deps.sessionContext()
+      const s = this.deps.sessions
+      const here = s?.sessionContext()
       this.picker = new ContextPicker(this.tui, this.theme, this.kb, {
         purpose: "parent",
         pr,
@@ -525,15 +599,15 @@ export class PrBrowser implements Component {
         manifests: [],
         manifest: 0,
         rows,
-        recencyDays: this.deps.recencyDays(),
-        ...(this.deps.scope ? { scope: this.deps.scope } : {}),
+        recencyDays: s?.recencyDays(),
+        ...(s?.scope ? { scope: s.scope } : {}),
         ...(here ? { here } : {}),
       }, {
         cancel: () => {
           this.closePicker()
           resolve(undefined)
         },
-        saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
+        saveRecencyDays: (d) => s?.saveRecencyDays(d),
         submit: (r) => {
           this.closePicker()
           resolve({ context: r.context, ...(r.parent ? { parent: r.parent } : {}) })
@@ -546,26 +620,28 @@ export class PrBrowser implements Component {
 
   /** Enter: work on the PR. Check out, then resume its context's newest session or start one. */
   private async onOpen(): Promise<void> {
+    const s = this.deps.sessions
     const pr = this.actionablePr()
-    if (!pr || this.busy) return
+    if (!s || !pr || this.busy) return
     const address = await this.ensureLinked(pr)
     if (!address) return
-    const session = this.deps.latestSession(address)
+    const session = s.latestSession(address)
     const path = await this.checkoutPr(pr)
-    const s = await session
+    const sess = await session
     if (!path) return
-    if (!s) return this.start(pr, address, path)
-    if (s.path === this.deps.currentSession()) return this.notice("already in this session")
-    const err = this.deps.resume(s, this.target)
+    if (!sess) return this.start(pr, address, path)
+    if (sess.path === s.currentSession()) return this.notice("already in this session")
+    const err = s.resume(sess, s.target)
     if (err) return this.notice(err, "error")
-    if (this.target === "here") return this.close()
-    this.notice(`resumed ${s.description.slice(0, 40)} in tmux`, "success")
+    if (s.target === "here") return this.close()
+    this.notice(`resumed ${sess.description.slice(0, 40)} in tmux`, "success")
   }
 
   /** Ctrl+s: check out and start a new session in the PR's context. */
   private async onNewSession(): Promise<void> {
+    const s = this.deps.sessions
     const pr = this.actionablePr()
-    if (!pr || this.busy) return
+    if (!s || !pr || this.busy) return
     const address = await this.ensureLinked(pr)
     if (!address) return
     const path = await this.checkoutPr(pr)
@@ -590,9 +666,11 @@ export class PrBrowser implements Component {
   }
 
   private start(pr: Pr, address: string, path: string): void {
-    const err = this.deps.startSession(address, this.target, prNote(pr, path))
+    const s = this.deps.sessions
+    if (!s) return
+    const err = s.startSession(address, s.target, prNote(pr, path))
     if (err) return this.notice(err, "error")
-    if (this.target === "here") return this.close()
+    if (s.target === "here") return this.close()
     this.notice(`started a session for ${address} in tmux`, "success")
   }
 
@@ -613,14 +691,12 @@ export class PrBrowser implements Component {
       "alt+v view",
       "alt+z fold", "shift+tab fold all",
       "ctrl+up/down repo",
-      "enter session",
-      "ctrl+s new session",
-      "ctrl+o checkout",
-      "alt+w checkout",
-      "ctrl+t target",
-      "ctrl+r review",
+      ...(this.deps.sessions
+        ? ["enter session", "ctrl+s new session", "ctrl+o checkout", "alt+w checkout", "ctrl+t target", "ctrl+r review"]
+        : ["ctrl+o checkout", "alt+w checkout"]),
       "ctrl+y url",
       "ctrl+h title",
+      ...this.currentActions().map((a) => `${a.key} ${a.label}${a.confirm ? " (confirm)" : ""}`),
       "alt+r refresh",
       "esc close",
     ]
@@ -669,6 +745,10 @@ export class PrBrowser implements Component {
   protected footerLine(): string {
     const t = this.theme
     if (this.error) return t.fg("error", `gh: ${this.error}`)
+    if (this.confirming) {
+      const { action, pr } = this.confirming
+      return t.fg("warning", `${action.label} on ${pr.repo}#${pr.number} — y confirm, any key cancels`)
+    }
     return t.fg(this.status.tone, this.status.text)
   }
 
@@ -702,7 +782,7 @@ export class PrBrowser implements Component {
     if (!cache || cache.detail !== entry.detail || cache.width !== width || cache.minute !== minute) {
       this.previewCache = {
         detail: entry.detail, width, minute,
-        lines: commentLines(entry.detail, width, this.theme, now),
+        lines: commentLines(entry.detail, width, this.theme, now, this.deps.markdown),
       }
     }
     const lines = this.previewCache!.lines
@@ -720,7 +800,7 @@ export class PrBrowser implements Component {
       : ""
     const parts = [
       t.fg("accent", t.bold("pull requests")),
-      t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`),
+      ...(this.deps.sessions ? [t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)] : []),
       t.fg(this.mode === "root" ? "warning" : "muted", `[${this.mode}]`),
       t.fg("muted", `[${this.view}]`),
       t.fg("muted", scope),

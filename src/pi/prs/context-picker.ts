@@ -14,7 +14,7 @@
  * names are refused. tab cycles the manifest.
  */
 
-import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import type { Kb, Theme } from "./ui"
 import { Input, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui"
 import { collapseTree, type ContextRow, RECENCY_STEPS, recencyIndex } from "../browser/model"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "../browser/context-list"
@@ -79,7 +79,7 @@ export class ContextPicker {
   constructor(
     private tui: TUI,
     private theme: Theme,
-    private kb: KeybindingsManager,
+    private kb: Kb,
     private init: PickerInit,
     private host: PickerHost,
   ) {
