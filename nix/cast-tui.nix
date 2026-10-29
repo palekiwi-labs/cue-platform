@@ -7,20 +7,24 @@ in
 pkgs.stdenv.mkDerivation {
   pname = "cast-tui";
   version = packageJson.version;
-  src = pkgs.lib.cleanSourceWith {
-    inherit src;
-    filter =
-      path: type:
-      let
-        base = baseNameOf path;
-      in
-      !(builtins.elem base [
-        "node_modules"
-        "dist"
-        "build-test"
-      ])
-      && (pkgs.lib.cleanSourceFilter path type);
+  src = pkgs.lib.fileset.toSource {
+    root = ../.;
+    fileset = pkgs.lib.fileset.unions [
+      (pkgs.lib.fileset.difference src (
+        pkgs.lib.fileset.unions (
+          map (dir: pkgs.lib.fileset.maybeMissing (src + "/${dir}")) [
+            "node_modules"
+            "dist"
+            "build-test"
+            "src/picker"
+          ]
+        )
+      ))
+      ../src/pi/prs
+      ../src/pi/browser
+    ];
   };
+  sourceRoot = "source/cast-tui";
   # importNpmLock reads package-lock.json at eval time, so there is
   # no npmDepsHash to maintain (pattern from pi's nix/package.nix).
   npmDeps = pkgs.importNpmLock { npmRoot = src; };
