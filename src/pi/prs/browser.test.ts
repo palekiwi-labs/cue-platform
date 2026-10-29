@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { initTheme, type KeybindingsManager as AgentKeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import { KeybindingsManager, TUI_KEYBINDINGS, type TUI, visibleWidth } from "@earendil-works/pi-tui"
-import { PrBrowser, type PrDeps } from "./browser"
+import { commentLines, PrBrowser, type PrDeps } from "./browser"
 import type { Pr } from "./model"
-import { PreviewCache, type PrDetail } from "./preview"
+import { parseDetail, PreviewCache, type PrDetail } from "./preview"
 
 initTheme("dark", false)
 
@@ -14,7 +14,11 @@ const pr = (number: number): Pr => ({
   reviewDecision: null, checks: null, baseRef: "main", headRef: `branch-${number}`,
   defaultBranch: "main", reviewers: [], labels: [],
 })
-const detail = (body: string): PrDetail => ({ body, feedback: [] })
+const detail = (body: string): PrDetail => ({
+  threads: [{ kind: "comment", messages: [{ id: 1, author: "reviewer", body, at: "2026-01-01T00:00:00Z" }] }],
+})
+const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").trimEnd()
 
 class Browser extends PrBrowser {
   scroll(): number { return this.previewScroll }
@@ -22,7 +26,7 @@ class Browser extends PrBrowser {
 }
 
 function setup(
-  loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Description"),
+  loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Comment body"),
   kb = new KeybindingsManager(TUI_KEYBINDINGS, {
     "tui.altScreen.halfPageUp": "ctrl+u",
     "tui.altScreen.halfPageDown": "ctrl+d",
@@ -34,7 +38,6 @@ function setup(
   const calls: number[] = []
   const terminal = { rows: 30 }
   const tui = { requestRender: () => { renders++ }, terminal } as unknown as TUI
-  const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
   const deps = {
     view: "repo", orgs: ["o"], localRepo: "o/r", target: "here", previews: new PreviewCache(),
     load: async () => { loads++; return { prs: [pr(2), pr(1)], viewer: "author", failed: [], truncated: false } },
@@ -45,9 +48,61 @@ function setup(
   return { browser, calls, terminal, renders: () => renders, loads: () => loads, closed: () => closed }
 }
 
+describe("comment rendering", () => {
+  test("shows compact thread context once, relative authors, spacing and thin separators", () => {
+    const c = (id: number, body: string, at: string) => ({
+      id, body, user: { login: `author${id}` }, created_at: at,
+      path: "src/file.ts", line: 12, diff_hunk: "RAW DIFF HUNK", html_url: "https://github.com/raw-id",
+    })
+    const parsed = parseDetail(JSON.stringify([[
+      c(1001, "Unique root", "2026-01-01T00:00:00Z"),
+      { ...c(1002, "Unique reply", "2026-01-02T00:00:00Z"), in_reply_to_id: 1001 },
+    ]]), JSON.stringify([[{ ...c(1003, "Review body", ""), submitted_at: "2026-01-01T12:00:00Z" }]]),
+    JSON.stringify([[c(1004, "General body", "2026-01-01T06:00:00Z")]]))
+    const lines = commentLines(parsed, 80, theme, Date.parse("2026-01-02T01:00:00Z")).map(plain)
+    const text = lines.join("\n")
+    expect(text.match(/Unique root/g)).toHaveLength(1)
+    expect(text.match(/src\/file.ts:12/g)).toHaveLength(1)
+    expect(text.match(/Review summary/g)).toHaveLength(1)
+    expect(text.match(/Conversation/g)).toHaveLength(1)
+    expect(text).toContain("@author1002 · 1h ago")
+    expect(text).toContain("Unique root\n\n@author1002")
+    expect(lines.filter((l) => l === "─".repeat(80))).toHaveLength(2)
+    expect(text.indexOf("Unique root")).toBeLessThan(text.indexOf("Unique reply"))
+    expect(text.indexOf("Unique reply")).toBeLessThan(text.indexOf("Review body"))
+    expect(text.indexOf("Review body")).toBeLessThan(text.indexOf("General body"))
+    expect(text).not.toMatch(/RAW DIFF HUNK|https:|reply to|thread root|2026-01/)
+  })
+
+  test("wraps Markdown prose, lists, code, long tokens and wide characters without dropping content", () => {
+    const token = "abcdefghijklmnopqrstuvwxyz".repeat(4)
+    const prose = "First **bold** words followed by enough prose to span several narrow pane lines END_PROSE"
+    const body = `${prose}\n\n- list with *emphasis* and many words END_LIST\n\n\`\`\`ts\n${token}\n\`\`\`\n\n${token}\n\n界面文字`
+    for (const width of [12, 24, 80]) {
+      const lines = commentLines(detail(body), width, theme).map(plain)
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true)
+      const compact = lines.join("").replace(/\s/g, "")
+      expect(compact).toContain(prose.replace(/\*|\s/g, ""))
+      expect(compact).toContain("END_LIST")
+      expect(compact.split(token)).toHaveLength(3)
+      expect(compact).toContain("界面文字")
+    }
+    expect(commentLines(detail(body), 24, theme).length).toBeGreaterThan(commentLines(detail(body), 80, theme).length)
+  })
+
+  test("keeps message Markdown isolated and has a comments-only empty state", () => {
+    const d = detail("```ts\nunclosed fence")
+    d.threads[0]!.messages.push({ id: 2, author: "next", body: "**Separate reply**", at: "2026-01-02T00:00:00Z" })
+    const text = plain(commentLines(d, 80, theme).join("\n"))
+    expect(text).toContain("Separate reply")
+    expect(text).not.toContain("**Separate reply**")
+    expect(commentLines({ threads: [] }, 80, theme)).toEqual(["No comments yet"])
+  })
+})
+
 describe("PR browser preview", () => {
   test("lazy selected-only loading, stacked at narrow and wide widths, toggle and cache", async () => {
-    const s = setup()
+    const s = setup(async () => ({ ...detail("Comment body"), body: "PR_DESCRIPTION_ONLY" }))
     await tick()
     expect(s.calls).toEqual([])
     expect(s.browser.render(80).join("\n")).toContain("Loading o/r#2")
@@ -59,7 +114,12 @@ describe("PR browser preview", () => {
       expect(lines.every((l) => visibleWidth(l) <= width)).toBe(true)
       const separator = lines.findIndex((l, i) => i > 4 && l === "─".repeat(width))
       expect(separator).toBe(13)
-      expect(lines.slice(separator + 1).join("\n")).toContain("PR 2")
+      const preview = plain(lines.slice(separator + 1).join("\n"))
+      expect(preview).toContain("COMMENTS / newest first")
+      expect(preview).toContain("Comment body")
+      for (const removed of ["PR 2", "PR_DESCRIPTION_ONLY", "Description", "o/r", "branch-2", "main", "Review:", "Checks:", "https://"]) {
+        expect(preview).not.toContain(removed)
+      }
     }
     s.browser.handleInput("\x1bp")
     s.browser.handleInput("\x1b[B")

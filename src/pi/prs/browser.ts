@@ -16,6 +16,7 @@ import {
   matchesKey,
   type TUI,
   truncateToWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import {
   applyPreset,
@@ -33,7 +34,7 @@ import {
   type View,
 } from "./model"
 import { ContextPicker } from "./context-picker"
-import { detailMarkdown, type PrDetail, PreviewCache, prKey } from "./preview"
+import { type PrDetail, PreviewCache, prKey } from "./preview"
 import type { ContextRow } from "../browser/model"
 import type { SessionRow } from "../browser/sessions"
 import type { Target } from "../lib/default-target"
@@ -134,6 +135,24 @@ const checksGlyph = (c: Pr["checks"]): string =>
 
 const rowId = (r: Row): string => (r.kind === "repo" ? `repo:${r.repo}` : `pr:${r.pr.repo}#${r.pr.number}`)
 
+export function commentLines(detail: PrDetail, width: number, theme: Theme, now = Date.now()): string[] {
+  if (detail.threads.length === 0) return wrapTextWithAnsi(theme.fg("dim", "No comments yet"), width)
+  const lines = [...wrapTextWithAnsi(theme.fg("muted", "COMMENTS / newest first"), width), ""]
+  for (const [index, thread] of detail.threads.entries()) {
+    if (index > 0) lines.push("", theme.fg("border", "─".repeat(width)), "")
+    const label = thread.kind === "inline"
+      ? `${thread.path ?? "Inline conversation"}${thread.line ? `:${thread.line}` : ""}`
+      : thread.kind === "review" ? "Review summary" : "Conversation"
+    lines.push(...wrapTextWithAnsi(theme.fg("muted", label), width))
+    for (const [i, message] of thread.messages.entries()) {
+      if (i > 0) lines.push("")
+      lines.push(...wrapTextWithAnsi(theme.fg("dim", `@${message.author} · ${fmtAge(message.at, now)} ago`), width))
+      lines.push(...new Markdown(message.body || "(empty comment)", 0, 0, getMarkdownTheme()).render(width))
+    }
+  }
+  return lines
+}
+
 export class PrBrowser implements Component {
   protected input = new Input()
   protected view: View
@@ -150,7 +169,7 @@ export class PrBrowser implements Component {
   private preview = true
   private previewKey: string | undefined
   protected previewScroll = 0
-  private previewCache: { detail: PrDetail; pr: Pr; width: number; lines: string[] } | undefined
+  private previewCache: { detail: PrDetail; width: number; minute: number; lines: string[] } | undefined
   private closed = false
   private previewChanged = () => {
     if (!this.closed) this.tui.requestRender()
@@ -678,10 +697,12 @@ export class PrBrowser implements Component {
     if (entry.state === "loading") return [this.theme.fg("dim", `Loading ${prKey(pr)}…`)]
     if (entry.state === "error") return [this.theme.fg("error", `Preview: ${entry.error} (alt+r to retry)`)]
     const cache = this.previewCache
-    if (!cache || cache.detail !== entry.detail || cache.pr !== pr || cache.width !== width) {
+    const now = Date.now()
+    const minute = Math.floor(now / 60_000)
+    if (!cache || cache.detail !== entry.detail || cache.width !== width || cache.minute !== minute) {
       this.previewCache = {
-        detail: entry.detail, pr, width,
-        lines: new Markdown(detailMarkdown(pr, entry.detail), 0, 0, getMarkdownTheme()).render(width),
+        detail: entry.detail, width, minute,
+        lines: commentLines(entry.detail, width, this.theme, now),
       }
     }
     const lines = this.previewCache!.lines

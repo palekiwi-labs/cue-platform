@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Pr } from "./model"
-import { detailMarkdown, fetchDetail, parseDetail, type PrDetail, PreviewCache } from "./preview"
+import { fetchDetail, parseDetail, type PrDetail, PreviewCache } from "./preview"
 
 const pr = { repo: "o/r", number: 7, title: "Preview", author: "author", headRef: "topic", baseRef: "main" } as Pr
 const comment = (id: number, body: string, at = "2026-01-01T00:00:00Z") => ({
@@ -8,7 +8,7 @@ const comment = (id: number, body: string, at = "2026-01-01T00:00:00Z") => ({
 })
 const json = JSON.stringify
 const empty = json([[]])
-const detail: PrDetail = { body: "Description", feedback: [] }
+const detail: PrDetail = { threads: [] }
 const tick = async () => { await new Promise((resolve) => setTimeout(resolve, 0)) }
 
 function deferred<T>() {
@@ -19,36 +19,42 @@ function deferred<T>() {
 }
 
 describe("PR details", () => {
-  test("combines all pages and feedback types newest first with inline thread context", () => {
+  test("groups inline replies across pages, sorts activity newest first and messages chronologically", () => {
     const root = { ...comment(1, "Root"), path: "src/file.ts", original_line: 12, diff_hunk: "@@ -1 +1 @@\n+foo" }
     const reply = { ...comment(3, "Reply", "2026-01-04T00:00:00Z"), path: root.path, in_reply_to_id: 1 }
-    const parsed = parseDetail(json({ body: "The description" }), json([[root], [reply]]), json([[
+    const earlierReply = { ...reply, id: 5, body: "Earlier reply", created_at: "2026-01-01T12:00:00Z" }
+    const otherRoot = { ...root, id: 6, body: "Other thread", created_at: "2026-01-01T18:00:00Z" }
+    const parsed = parseDetail(json([[reply, otherRoot], [root, earlierReply]]), json([[
       { ...comment(2, "Review body"), submitted_at: "2026-01-03T00:00:00Z", state: "CHANGES_REQUESTED" },
       { ...comment(9, "Pending"), submitted_at: null },
       { ...comment(10, " "), submitted_at: "2026-01-05T00:00:00Z" },
     ]]), json([[{ ...comment(4, "General", "2026-01-02T00:00:00Z"), user: null }]]))
-    expect(parsed.feedback.map((f) => [f.id, f.kind])).toEqual([[3, "inline"], [2, "review"], [4, "comment"], [1, "inline"]])
-    expect(parsed.feedback[0]).toMatchObject({ replyTo: 1, threadBody: "Root", path: "src/file.ts" })
-    expect(parsed.feedback[2]!.author).toBe("ghost")
-    expect(parsed.feedback[3]).toMatchObject({ line: 12, diff: root.diff_hunk })
-    const md = detailMarkdown(pr, parsed)
-    expect(md.indexOf("Reply")).toBeLessThan(md.indexOf("Review body"))
-    expect(md.indexOf("## Description")).toBeGreaterThan(md.indexOf("General"))
-    expect(md).toContain("reply to #1")
-    expect(md).toContain("CHANGES_REQUESTED")
-    expect(md).toContain("src/file.ts:12")
-    expect(md).toContain("All pages fetched")
+    expect(parsed.threads.map((t) => [t.kind, t.messages.map((m) => m.id)])).toEqual([
+      ["inline", [1, 5, 3]], ["review", [2]], ["comment", [4]], ["inline", [6]],
+    ])
+    expect(parsed.threads[0]).toMatchObject({ path: "src/file.ts", line: 12 })
+    expect(parsed.threads[2]!.messages[0]!.author).toBe("ghost")
+    expect(parsed.threads.flatMap((t) => t.messages).filter((m) => m.body === "Root")).toHaveLength(1)
+    expect(json(parsed)).not.toMatch(/html_url|diff_hunk|CHANGES_REQUESTED|threadBody/)
   })
 
-  test("handles absent description, missing root and empty feedback; rejects bad data", () => {
-    expect(parseDetail(json({ body: null }), empty, empty, empty)).toEqual({ body: "", feedback: [] })
-    expect(detailMarkdown(pr, { body: "", feedback: [] })).toContain("No feedback.")
-    expect(detailMarkdown(pr, { body: "", feedback: [] })).toContain("No description.")
-    const result = parseDetail(json({ body: "" }), json([[{ ...comment(2, "reply"), in_reply_to_id: 99 }]]), empty, empty)
-    expect(result.feedback[0]!.threadBody).toBe("Thread root unavailable")
-    expect(() => parseDetail("{}", empty, empty, empty)).toThrow("missing PR body")
-    expect(() => parseDetail(json({ body: "" }), "{}", empty, empty)).toThrow("paginated arrays")
-    expect(() => parseDetail("not json", empty, empty, empty)).toThrow()
+  test("handles missing roots and empty collections; rejects bad pagination data", () => {
+    expect(parseDetail(empty, empty, empty)).toEqual({ threads: [] })
+    const replies = [2, 3].map((id) => ({ ...comment(id, `reply ${id}`), in_reply_to_id: 99, path: "file.ts" }))
+    const result = parseDetail(json([replies]), empty, empty)
+    expect(result.threads).toHaveLength(1)
+    expect(result.threads[0]!.messages.map((m) => m.id)).toEqual([2, 3])
+    expect(result.threads[0]!.path).toBe("file.ts")
+    expect(() => parseDetail("{}", empty, empty)).toThrow("paginated arrays")
+    expect(() => parseDetail("not json", empty, empty)).toThrow()
+  })
+
+  test("uses creation/submission times, ignores edits, and breaks activity ties deterministically", () => {
+    const parsed = parseDetail(empty, empty, json([[
+      { ...comment(1, "Old edited"), updated_at: "2026-01-09T00:00:00Z" },
+      comment(2, "New", "2026-01-02T00:00:00Z"), comment(3, "Same time", "2026-01-02T00:00:00Z"),
+    ]]))
+    expect(parsed.threads.map((t) => t.messages[0]!.id)).toEqual([3, 2, 1])
   })
 
   test("fetch explicitly paginates all three collections in the selected repo", async () => {
@@ -57,14 +63,15 @@ describe("PR details", () => {
       expect(cmd).toBe("gh")
       expect(opts.cwd).toBe("/repo")
       calls.push(args)
-      return { code: 0, stdout: args.includes("--paginate") ? empty : json({ body: "Description" }), stderr: "" }
+      return { code: 0, stdout: empty, stderr: "" }
     }, "/repo", pr)
     expect(result).toEqual(detail)
     expect(calls.map((c) => c[1])).toEqual([
-      "repos/o/r/pulls/7", "repos/o/r/pulls/7/comments?per_page=100",
+      "repos/o/r/pulls/7/comments?per_page=100",
       "repos/o/r/pulls/7/reviews?per_page=100", "repos/o/r/issues/7/comments?per_page=100",
     ])
-    expect(calls.slice(1).every((c) => c.includes("--paginate") && c.includes("--slurp"))).toBe(true)
+    expect(calls).toHaveLength(3)
+    expect(calls.every((c) => c.includes("--paginate") && c.includes("--slurp"))).toBe(true)
   })
 
   test("fetch fails rather than presenting partial feedback as complete", async () => {
@@ -105,7 +112,7 @@ describe("preview cache", () => {
     cache.clear()
     cache.get(pr, async () => detail, notify)
     await tick()
-    old.resolve({ body: "obsolete", feedback: [] })
+    old.resolve({ threads: [{ kind: "comment", messages: [{ id: 1, author: "old", body: "obsolete", at: "" }] }] })
     await tick()
     expect(cache.get(pr, async () => detail, notify)).toEqual({ state: "ready", detail })
     expect(changed).toBe(1)
@@ -132,9 +139,10 @@ describe("preview cache", () => {
     const cache = new PreviewCache()
     const other = { ...pr, repo: "different/repo" }
     cache.get(pr, async () => detail, () => {})
-    cache.get(other, async () => ({ body: "other", feedback: [] }), () => {})
+    const otherDetail: PrDetail = { threads: [{ kind: "comment", messages: [{ id: 1, author: "other", body: "other", at: "" }] }] }
+    cache.get(other, async () => otherDetail, () => {})
     await tick()
     expect(cache.get(pr, async () => detail, () => {})).toEqual({ state: "ready", detail })
-    expect(cache.get(other, async () => detail, () => {})).toEqual({ state: "ready", detail: { body: "other", feedback: [] } })
+    expect(cache.get(other, async () => detail, () => {})).toEqual({ state: "ready", detail: otherDetail })
   })
 })
