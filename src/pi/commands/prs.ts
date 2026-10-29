@@ -105,11 +105,37 @@ async function checkout(exec: Exec, cwd: string, pr: Pr, where: CheckoutTarget):
     const r = await exec("gh", ["pr", "checkout", String(pr.number)], { cwd: root })
     return r.code === 0 ? { ok: true, text: `checked out #${pr.number} (${pr.headRef}) in ${root}`, path: root } : failed("gh pr checkout", r)
   }
-  const fetch = await exec("git", ["fetch", "origin", `pull/${pr.number}/head:${pr.headRef}`], { cwd: root })
+  const fetch = await exec("git", ["fetch", "origin", `pull/${pr.number}/head`], { cwd: root })
   if (fetch.code !== 0) return failed("git fetch", fetch)
+  const synced = await syncBranch(exec, root, pr)
+  if (!synced.ok) return synced
   const path = join(root, "worktrees", pr.headRef)
   const add = await exec("git", ["worktree", "add", path, pr.headRef], { cwd: root })
   return add.code === 0 ? { ok: true, text: `worktree for #${pr.number} at ${path}`, path } : failed("git worktree add", add)
+}
+
+/**
+ * Point the local branch at the fetched PR head: create it, fast-forward it,
+ * or keep it when it already contains the head. A diverged branch is left alone.
+ */
+async function syncBranch(exec: Exec, root: string, pr: Pr): Promise<Outcome> {
+  const ref = `refs/heads/${pr.headRef}`
+  const local = await exec("git", ["rev-parse", "--verify", "--quiet", ref], { cwd: root })
+  if (local.code !== 0) {
+    const r = await exec("git", ["branch", pr.headRef, "FETCH_HEAD"], { cwd: root })
+    return r.code === 0 ? { ok: true, text: "" } : failed("git branch", r)
+  }
+  const behind = await exec("git", ["merge-base", "--is-ancestor", ref, "FETCH_HEAD"], { cwd: root })
+  if (behind.code === 0) {
+    const r = await exec("git", ["update-ref", ref, "FETCH_HEAD"], { cwd: root })
+    return r.code === 0 ? { ok: true, text: "" } : failed("git update-ref", r)
+  }
+  const ahead = await exec("git", ["merge-base", "--is-ancestor", "FETCH_HEAD", ref], { cwd: root })
+  if (ahead.code === 0) return { ok: true, text: "" }
+  return {
+    ok: false,
+    text: `local ${pr.headRef} has diverged from PR #${pr.number} (force-push?); resolve manually`,
+  }
 }
 
 async function manifests(exec: Exec, cwd: string): Promise<string[] | { error: string }> {
