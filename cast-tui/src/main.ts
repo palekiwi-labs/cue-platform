@@ -6,6 +6,7 @@ import {
   ProcessTerminal,
   TuiAltScreen,
 } from "@earendil-works/pi-tui";
+import { builtinActions } from "./actions.js";
 import { listInstances } from "./cast.js";
 import { checkoutRoots } from "./checkouts.js";
 import { exec } from "./exec.js";
@@ -45,12 +46,14 @@ export function main(): void {
 
   const openPicker = async (): Promise<void> => {
     picker = "opening";
+    const cwd = process.cwd();
     const deps = await hostDeps({
       exec,
-      cwd: process.cwd(),
+      cwd,
       store: storeRoot(process.env, home),
       roots: checkoutRoots(home),
       previews,
+      actions: () => builtinActions(exec, cwd),
     });
     const close = (): void => {
       if (picker !== undefined && picker !== "opening") picker.hide();
