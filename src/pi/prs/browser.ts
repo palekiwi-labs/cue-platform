@@ -282,7 +282,18 @@ export class PrBrowser implements Component {
     if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
     if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
     if (matchesKey(data, "tab")) {
-      this.preset = PRESETS[(PRESETS.indexOf(this.preset) + 1) % PRESETS.length]!
+      // Skip presets with no matching PRs in the loaded view.
+      const d = this.data[this.view]
+      const empty = (p: Preset) => !d || "error" in d || applyPreset(d.prs, p, d.viewer).length === 0
+      let i = PRESETS.indexOf(this.preset)
+      for (let step = 1; step < PRESETS.length; step++) {
+        const next = PRESETS[(i + step) % PRESETS.length]!
+        if (!empty(next)) {
+          i = (i + step) % PRESETS.length
+          break
+        }
+      }
+      this.preset = PRESETS[i]!
       this.selectedId = undefined
       return this.tui.requestRender()
     }
