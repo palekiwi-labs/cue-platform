@@ -9,6 +9,7 @@ import {
 import { builtinActions } from "./actions.js";
 import { listInstances } from "./cast.js";
 import { checkoutRoots } from "./checkouts.js";
+import { configActions } from "./config.js";
 import { exec } from "./exec.js";
 import { isPickerKey, isQuitKey } from "./keys.js";
 import { PrBrowser } from "./picker/prs/browser.js";
@@ -47,13 +48,15 @@ export function main(): void {
   const openPicker = async (): Promise<void> => {
     picker = "opening";
     const cwd = process.cwd();
+    const roots = checkoutRoots(home);
+    const configured = configActions({ exec, roots });
     const deps = await hostDeps({
       exec,
       cwd,
       store: storeRoot(process.env, home),
-      roots: checkoutRoots(home),
+      roots,
       previews,
-      actions: () => builtinActions(exec, cwd),
+      actions: (pr) => [...builtinActions(exec, cwd), ...configured(pr)],
     });
     const close = (): void => {
       if (picker !== undefined && picker !== "opening") picker.hide();
