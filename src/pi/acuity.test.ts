@@ -49,6 +49,16 @@ describe("postSessionIdle", () => {
     ).resolves.toBeUndefined()
   })
 
+  test("aborts a hanging request after the timeout", async () => {
+    const fn = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason))
+      })) as unknown as typeof fetch
+    await expect(
+      postSessionIdle(fn, "http://localhost:33222", payload, 10),
+    ).resolves.toBeUndefined()
+  })
+
   test("swallows non-ok responses", async () => {
     const { fn } = makeFetch(() =>
       Promise.resolve({ ok: false, status: 500, statusText: "boom" } as unknown as Response),
@@ -119,5 +129,24 @@ describe("registerAcuityListener", () => {
     await expect(
       handlers["agent_settled"]({ type: "agent_settled" }, listenerCtx()),
     ).resolves.toBeUndefined()
+  })
+
+  test("agent_settled handler does not wait for a never-resolving fetch", async () => {
+    const { fn, calls } = makeFetch(() => new Promise<Response>(() => {}))
+    const handlers: Record<string, (e: unknown, ctx: ExtensionContext) => Promise<void>> = {}
+    const pi = {
+      on: (event: string, handler: (e: unknown, ctx: ExtensionContext) => Promise<void>) => {
+        handlers[event] = handler
+      },
+    } as unknown as ExtensionAPI
+
+    registerAcuityListener(pi, fn)
+    const settled = Symbol("settled")
+    const result = await Promise.race([
+      handlers["agent_settled"]({ type: "agent_settled" }, listenerCtx()).then(() => settled),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 100)),
+    ])
+    expect(result).toBe(settled)
+    expect(calls).toHaveLength(1)
   })
 })

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 const ACUITY_HOST = process.env.ACUITY_HOST ?? "http://localhost:33222"
+const POST_TIMEOUT_MS = 2000
 
 export interface SessionIdleEvent {
   type: "session_idle"
@@ -19,6 +20,7 @@ export async function postSessionIdle(
   fetchImpl: typeof fetch,
   host: string,
   payload: SessionIdleEvent,
+  timeoutMs: number = POST_TIMEOUT_MS,
 ): Promise<void> {
   try {
     const res = await fetchImpl(`${host}/events`, {
@@ -28,6 +30,7 @@ export async function postSessionIdle(
         "X-Acuity-Schema": "1",
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
     })
     if (!res.ok) {
       // Swallowed: acuity being down must not disturb the session.
@@ -47,7 +50,7 @@ export function registerAcuityListener(
   host: string = ACUITY_HOST,
 ): void {
   pi.on("agent_settled", async (_event, ctx) => {
-    await postSessionIdle(fetchImpl, host, {
+    void postSessionIdle(fetchImpl, host, {
       type: "session_idle",
       session_id: ctx.sessionManager.getSessionId(),
       project_dir: ctx.cwd,
