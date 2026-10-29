@@ -9,6 +9,7 @@
  *   @pi_ctx     context tokens, absolute (after each turn; same figure
  *               as the footer)
  *   @pi_prompt  last user prompt, first line, truncated
+ *   @pi_last    epoch ms of the last completed turn (age in pickers)
  *
  * blocked covers turns that ended in an error, and anything another
  * extension flags via pi.events.emit("tmux-state:blocked", { active }).
@@ -117,6 +118,7 @@ export default function (pi: ExtensionAPI) {
     await publish(true);
     const prompt = lastUserPrompt(ctx.sessionManager.getBranch());
     await setOpt("@pi_prompt", prompt ? oneLine(prompt) : "");
+    void setOpt("@pi_last", String(Date.now()));
     publishCtx(ctx);
   });
 
@@ -139,14 +141,17 @@ export default function (pi: ExtensionAPI) {
     const lastAssistant = [...msgs].reverse().find((m) => m?.role === "assistant");
     failed = lastAssistant?.stopReason === "error";
     clearIdle();
-    idleTimer = setTimeout(() => void publish(), IDLE_DEBOUNCE_MS);
+    idleTimer = setTimeout(() => {
+      void setOpt("@pi_last", String(Date.now()));
+      void publish();
+    }, IDLE_DEBOUNCE_MS);
     idleTimer.unref?.();
   });
 
   pi.on("session_shutdown", async () => {
     clearIdle();
     await tmux(["set-option", "-wu", "-t", pane, "@pi_state"]);
-    for (const key of ["@pi_unseen", "@pi_ctx", "@pi_prompt"]) {
+    for (const key of ["@pi_unseen", "@pi_ctx", "@pi_prompt", "@pi_last"]) {
       await tmux(["set-option", "-wu", "-t", pane, key]);
     }
   });

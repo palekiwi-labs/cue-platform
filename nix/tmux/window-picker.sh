@@ -3,17 +3,19 @@
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
 #   @pi_desc                         extensions/session-describe.ts
+#   @pi_last                         extensions/tmux-state.ts
 #   @review_state, @review_context,
 #   @review_title, @review_run       cue-review
 # tmux.conf colours the status-bar tabs from the same options.
 #
 # Rows are coloured like the tabs, show context tokens coloured like the
-# pi footer, and preview the review or session description.
+# pi footer, an age marker (time since the last completed turn) and
+# preview the review or session description.
 
 # Rows: id, coloured label (hidden id field used for preview).
 tmux list-windows -F \
-  '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}' \
-  | awk -F '\t' '{
+  '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}' \
+  | awk -v now="$(date +%s)" -F '\t' '{
       c = "";
       if ($7 == "failed") c = "\033[31m";
       else if ($7 == "running") c = "\033[33m";
@@ -40,7 +42,18 @@ tmux list-windows -F \
       rv = ($8 != "") ? sprintf("  \033[2m%s\033[0m", $8) : "";
       # Session description, dimmed right after the window name.
       dv = ($9 != "") ? sprintf("  \033[2m%s\033[0m", substr($9, 1, 60)) : "";
-      printf "%s\t%s %s%s\033[0m%s%s%s\n", $1, mark, c, $6, dv, pct, rv;
+      # Age since the last completed turn, dimmed.
+      av = "";
+      if ($10 != "") {
+        s = now - int($10 / 1000);
+        if (s < 0) s = 0;
+        if (s < 60) a = "now";
+        else if (s < 3600) a = sprintf("%dm", int(s / 60));
+        else if (s < 86400) a = sprintf("%dh", int(s / 3600));
+        else a = sprintf("%dd", int(s / 86400));
+        av = sprintf("  \033[2m%s\033[0m", a);
+      }
+      printf "%s\t%s %s%s\033[0m%s%s%s%s\n", $1, mark, c, $6, dv, pct, rv, av;
     }' \
   | fzf --ansi --reverse --no-sort --delimiter '\t' \
       --with-nth 2 --nth 1 \
