@@ -7,11 +7,12 @@
  * dispatches keys. Read-only towards GitHub.
  */
 
-import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import { getMarkdownTheme, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import {
   type Component,
   fuzzyFilter,
   Input,
+  Markdown,
   matchesKey,
   type TUI,
   truncateToWidth,
@@ -32,6 +33,7 @@ import {
   type View,
 } from "./model"
 import { ContextPicker } from "./context-picker"
+import { detailMarkdown, type PrDetail, PreviewCache, prKey } from "./preview"
 import type { ContextRow } from "../browser/model"
 import type { SessionRow } from "../browser/sessions"
 import type { Target } from "../lib/default-target"
@@ -48,6 +50,8 @@ export interface Loaded {
 export interface PrDeps {
   /** Open PRs for a view; error text (gh's own) on failure. */
   load(view: View): Promise<Loaded | { error: string }>
+  detail(pr: Pr): Promise<PrDetail>
+  previews: PreviewCache
   /** `owner/name` of the cwd's repo; actions only apply to its PRs. */
   localRepo: string | undefined
   /** What org view covers, for the header. */
@@ -143,6 +147,14 @@ export class PrBrowser implements Component {
   protected links = new Map<string, string>()
   protected mode: CheckoutTarget = "worktree"
   protected target: Target
+  private preview = true
+  private previewKey: string | undefined
+  protected previewScroll = 0
+  private previewCache: { detail: PrDetail; pr: Pr; width: number; lines: string[] } | undefined
+  private closed = false
+  private previewChanged = () => {
+    if (!this.closed) this.tui.requestRender()
+  }
 
   constructor(
     protected tui: TUI,
@@ -164,6 +176,7 @@ export class PrBrowser implements Component {
   }
 
   close(): void {
+    this.closed = true
     this.done()
   }
 
@@ -273,8 +286,21 @@ export class PrBrowser implements Component {
       this.selectedId = rowId(rows[i]!)
       this.tui.requestRender()
     }
-    const page = Math.max(1, this.bodyHeight() - 1)
+    const page = Math.max(1, this.listHeight() - 1)
 
+    if (matchesKey(data, "alt+p")) {
+      this.preview = !this.preview
+      return this.tui.requestRender()
+    }
+    if (this.preview && (matchesKey(data, "ctrl+d") || matchesKey(data, "ctrl+u"))) {
+      const step = Math.max(1, Math.floor(this.previewHeight() / 2))
+      this.previewScroll = Math.max(0, this.previewScroll + (matchesKey(data, "ctrl+d") ? step : -step))
+      return this.tui.requestRender()
+    }
+    if (this.preview && (matchesKey(data, "ctrl+home") || matchesKey(data, "ctrl+end"))) {
+      this.previewScroll = matchesKey(data, "ctrl+home") ? 0 : Number.MAX_SAFE_INTEGER
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "escape")) return this.close()
     if (this.kb.matches(data, "tui.select.up")) return move(-1)
     if (this.kb.matches(data, "tui.select.down")) return move(1)
@@ -307,7 +333,13 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "ctrl+down")) return this.hopRepo(rows, 1)
     if (matchesKey(data, "alt+z")) return this.toggleFold()
     if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
-    if (matchesKey(data, "alt+r")) return void this.reload()
+    if (matchesKey(data, "alt+r")) {
+      this.deps.previews.clear()
+      this.previewCache = undefined
+      this.previewScroll = 0
+      void this.reload()
+      return this.tui.requestRender()
+    }
     if (this.handleAction(data)) return
 
     const before = this.input.getValue()
@@ -547,6 +579,8 @@ export class PrBrowser implements Component {
 
   protected helpHints(): string[] {
     return [
+      `alt+p ${this.preview ? "hide" : "show"} preview`,
+      "ctrl+d/u scroll", "ctrl+home/end top/bottom",
       "tab preset",
       "alt+v view",
       "alt+z fold", "shift+tab fold all",
@@ -574,7 +608,16 @@ export class PrBrowser implements Component {
     return this.height() - 5
   }
 
+  private listHeight(): number {
+    return this.preview ? Math.max(1, Math.floor((this.bodyHeight() - 1) * 0.4)) : this.bodyHeight()
+  }
+
+  private previewHeight(): number {
+    return Math.max(1, this.bodyHeight() - this.listHeight() - 1)
+  }
+
   invalidate(): void {
+    this.previewCache = undefined
     this.input.invalidate()
     this.picker?.invalidate()
   }
@@ -602,7 +645,39 @@ export class PrBrowser implements Component {
   }
 
   protected bodyLines(width: number, height: number): string[] {
-    return this.listLines(width, height)
+    const row = this.selectedRow()
+    const key = row?.kind === "pr" ? prKey(row.pr) : undefined
+    if (key !== this.previewKey) {
+      this.previewKey = key
+      this.previewScroll = 0
+      this.previewCache = undefined
+    }
+    if (!this.preview) return this.listLines(width, height)
+    const listH = this.listHeight()
+    const list = this.listLines(width, listH)
+    while (list.length < listH) list.push("")
+    return [
+      ...list,
+      this.theme.fg("border", "─".repeat(width)),
+      ...this.previewLines(row?.kind === "pr" ? row.pr : undefined, width, this.previewHeight()),
+    ]
+  }
+
+  private previewLines(pr: Pr | undefined, width: number, height: number): string[] {
+    if (!pr) return [this.theme.fg("dim", "Select a PR to preview")]
+    const entry = this.deps.previews.get(pr, this.deps.detail, this.previewChanged)
+    if (entry.state === "loading") return [this.theme.fg("dim", `Loading ${prKey(pr)}…`)]
+    if (entry.state === "error") return [this.theme.fg("error", `Preview: ${entry.error} (alt+r to retry)`)]
+    const cache = this.previewCache
+    if (!cache || cache.detail !== entry.detail || cache.pr !== pr || cache.width !== width) {
+      this.previewCache = {
+        detail: entry.detail, pr, width,
+        lines: new Markdown(detailMarkdown(pr, entry.detail), 0, 0, getMarkdownTheme()).render(width),
+      }
+    }
+    const lines = this.previewCache!.lines
+    this.previewScroll = Math.min(this.previewScroll, Math.max(0, lines.length - height))
+    return lines.slice(this.previewScroll, this.previewScroll + height)
   }
 
   private headerLine(width: number): string {

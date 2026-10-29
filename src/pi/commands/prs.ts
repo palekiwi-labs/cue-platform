@@ -28,6 +28,7 @@ import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, st
 import { scopeOfRemote } from "../browser/sessions"
 import { currentContext } from "../lib/current-context"
 import { defaultTarget } from "../lib/default-target"
+import { fetchDetail, PreviewCache } from "../prs/preview"
 
 /** Open the GitHub PR browser. */
 export const PRS_SHORTCUT = "alt+p"
@@ -193,7 +194,7 @@ async function link(
     : failed("cue context switch", r)
 }
 
-async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: PreviewCache): Promise<void> {
   if (!ctx.hasUI) return
   const exec: Exec = (cmd, args, opts) => pi.exec(cmd, args, opts)
   const cwd = ctx.cwd
@@ -206,6 +207,8 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
   const deps: PrDeps = {
     load: (v) => loadView(exec, cwd, v, localRepo, orgs),
+    detail: (pr) => fetchDetail(exec, cwd, pr),
+    previews,
     localRepo,
     orgs,
     view,
@@ -236,12 +239,14 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 }
 
 export function registerPrBrowser(pi: ExtensionAPI): void {
+  let previews = new PreviewCache()
+  pi.on("session_start", () => { previews = new PreviewCache() })
   pi.registerCommand("cue:prs", {
     description: "Browse open GitHub PRs of this repo or its orgs (full screen)",
-    handler: async (_args, ctx) => openPrs(pi, ctx),
+    handler: async (_args, ctx) => openPrs(pi, ctx, previews),
   })
   pi.registerShortcut(PRS_SHORTCUT, {
     description: "Browse open GitHub PRs (full screen)",
-    handler: async (ctx) => openPrs(pi, ctx),
+    handler: async (ctx) => openPrs(pi, ctx, previews),
   })
 }
