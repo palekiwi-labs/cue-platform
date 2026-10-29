@@ -292,13 +292,13 @@ export class PrBrowser implements Component {
       this.preview = !this.preview
       return this.tui.requestRender()
     }
-    if (this.preview && (matchesKey(data, "ctrl+d") || matchesKey(data, "ctrl+u"))) {
+    if (this.preview && (this.kb.matches(data, "tui.altScreen.halfPageDown") || this.kb.matches(data, "tui.altScreen.halfPageUp"))) {
       const step = Math.max(1, Math.floor(this.previewHeight() / 2))
-      this.previewScroll = Math.max(0, this.previewScroll + (matchesKey(data, "ctrl+d") ? step : -step))
+      this.previewScroll = Math.max(0, this.previewScroll + (this.kb.matches(data, "tui.altScreen.halfPageDown") ? step : -step))
       return this.tui.requestRender()
     }
-    if (this.preview && (matchesKey(data, "ctrl+home") || matchesKey(data, "ctrl+end"))) {
-      this.previewScroll = matchesKey(data, "ctrl+home") ? 0 : Number.MAX_SAFE_INTEGER
+    if (this.preview && (this.kb.matches(data, "tui.altScreen.top") || this.kb.matches(data, "tui.altScreen.bottom"))) {
+      this.previewScroll = this.kb.matches(data, "tui.altScreen.top") ? 0 : Number.MAX_SAFE_INTEGER
       return this.tui.requestRender()
     }
     if (matchesKey(data, "escape")) return this.close()
@@ -578,9 +578,18 @@ export class PrBrowser implements Component {
   }
 
   protected helpHints(): string[] {
+    const previewHints = ([
+      ["tui.altScreen.halfPageUp", "scroll up"],
+      ["tui.altScreen.halfPageDown", "scroll down"],
+      ["tui.altScreen.top", "top"],
+      ["tui.altScreen.bottom", "bottom"],
+    ] as const).flatMap(([action, label]) => {
+      const keys = this.kb.getKeys(action)
+      return keys.length > 0 ? [`${keys.join("/")} ${label}`] : []
+    })
     return [
       `alt+p ${this.preview ? "hide" : "show"} preview`,
-      "ctrl+d/u scroll", "ctrl+home/end top/bottom",
+      ...previewHints,
       "tab preset",
       "alt+v view",
       "alt+z fold", "shift+tab fold all",

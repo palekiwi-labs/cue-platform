@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { initTheme, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
-import { matchesKey, type TUI, visibleWidth } from "@earendil-works/pi-tui"
+import { initTheme, type KeybindingsManager as AgentKeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
+import { KeybindingsManager, TUI_KEYBINDINGS, type TUI, visibleWidth } from "@earendil-works/pi-tui"
 import { PrBrowser, type PrDeps } from "./browser"
 import type { Pr } from "./model"
 import { PreviewCache, type PrDetail } from "./preview"
@@ -18,9 +18,16 @@ const detail = (body: string): PrDetail => ({ body, feedback: [] })
 
 class Browser extends PrBrowser {
   scroll(): number { return this.previewScroll }
+  hints(): string[] { return this.helpHints() }
 }
 
-function setup(loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Description")) {
+function setup(
+  loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Description"),
+  kb = new KeybindingsManager(TUI_KEYBINDINGS, {
+    "tui.altScreen.halfPageUp": "ctrl+u",
+    "tui.altScreen.halfPageDown": "ctrl+d",
+  }),
+) {
   let renders = 0
   let loads = 0
   let closed = false
@@ -28,17 +35,13 @@ function setup(loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("D
   const terminal = { rows: 30 }
   const tui = { requestRender: () => { renders++ }, terminal } as unknown as TUI
   const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
-  const keys: Record<string, string> = {
-    "tui.select.up": "up", "tui.select.down": "down", "tui.select.pageUp": "pageUp", "tui.select.pageDown": "pageDown",
-  }
-  const kb = { matches: (d: string, id: string) => keys[id] ? matchesKey(d, keys[id] as Parameters<typeof matchesKey>[1]) : false } as unknown as KeybindingsManager
   const deps = {
     view: "repo", orgs: ["o"], localRepo: "o/r", target: "here", previews: new PreviewCache(),
     load: async () => { loads++; return { prs: [pr(2), pr(1)], viewer: "author", failed: [], truncated: false } },
     links: async () => new Map(),
     detail: (p: Pr) => { calls.push(p.number); return loadDetail(p) },
   } as unknown as PrDeps
-  const browser = new Browser(tui, theme, kb, deps, () => { closed = true })
+  const browser = new Browser(tui, theme, kb as AgentKeybindingsManager, deps, () => { closed = true })
   return { browser, calls, terminal, renders: () => renders, loads: () => loads, closed: () => closed }
 }
 
@@ -98,6 +101,50 @@ describe("PR browser preview", () => {
     await tick()
     s.terminal.rows = 12
     expect(s.browser.render(24)).toHaveLength(12)
+  })
+
+  test("preview navigation and hints honor remapped and disabled actions", async () => {
+    const kb = new KeybindingsManager(TUI_KEYBINDINGS, {
+      "tui.altScreen.halfPageUp": "alt+u",
+      "tui.altScreen.halfPageDown": ["alt+d", "alt+j"],
+      "tui.altScreen.top": "alt+home",
+      "tui.altScreen.bottom": "alt+end",
+    })
+    const s = setup(async () => detail("paragraph\n\n".repeat(100)), kb)
+    await tick()
+    s.browser.render(80)
+    await tick()
+    s.browser.render(80)
+    for (const key of ["\x04", "\x15", "\x1b[1;5H", "\x1b[1;5F"]) {
+      s.browser.handleInput(key)
+      expect(s.browser.scroll()).toBe(0)
+    }
+    s.browser.handleInput("\x1bd")
+    expect(s.browser.scroll()).toBe(7)
+    s.browser.handleInput("\x1bj")
+    expect(s.browser.scroll()).toBe(14)
+    s.browser.handleInput("\x1bu")
+    expect(s.browser.scroll()).toBe(7)
+    s.browser.handleInput("\x1b[1;3F")
+    s.browser.render(80)
+    expect(s.browser.scroll()).toBeGreaterThan(100)
+    s.browser.handleInput("\x1b[1;3H")
+    expect(s.browser.scroll()).toBe(0)
+    expect(s.browser.hints()).toEqual(expect.arrayContaining([
+      "alt+u scroll up", "alt+d/alt+j scroll down", "alt+home top", "alt+end bottom",
+    ]))
+    expect(s.browser.hints().join(" ")).not.toContain("ctrl+d")
+    expect(s.browser.hints().join(" ")).not.toContain("ctrl+home")
+
+    const disabled = setup(undefined, new KeybindingsManager(TUI_KEYBINDINGS, {
+      "tui.altScreen.halfPageUp": [], "tui.altScreen.halfPageDown": [],
+      "tui.altScreen.top": [], "tui.altScreen.bottom": [],
+    }))
+    for (const key of ["\x04", "\x15", "\x1b[1;5H", "\x1b[1;5F"]) {
+      disabled.browser.handleInput(key)
+      expect(disabled.browser.scroll()).toBe(0)
+    }
+    expect(disabled.browser.hints().join(" ")).not.toMatch(/scroll|top|bottom/)
   })
 
   test("late result from another selection never appears in the active preview", async () => {
