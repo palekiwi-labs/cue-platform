@@ -5,6 +5,7 @@
  */
 
 import { open, stat } from "node:fs/promises"
+import { StringDecoder } from "node:string_decoder"
 import { createStream, feedLine, type StreamItem, type StreamState } from "./stream"
 
 /** Matches cue-agent's own cap on a single event line. */
@@ -15,6 +16,8 @@ export class EventTail {
   version = 0
   private offset = 0
   private rest = ""
+  private decoder = new StringDecoder("utf8")
+  private inflight: Promise<boolean> | undefined
 
   constructor(
     readonly path: string,
@@ -29,8 +32,15 @@ export class EventTail {
     return this.state.items
   }
 
-  /** Read new bytes; true when the timeline changed. */
-  async poll(): Promise<boolean> {
+  /** Read new bytes; true when the timeline changed. Overlapping calls share one read. */
+  poll(): Promise<boolean> {
+    this.inflight ??= this.read().finally(() => {
+      this.inflight = undefined
+    })
+    return this.inflight
+  }
+
+  private async read(): Promise<boolean> {
     let size: number
     try {
       size = (await stat(this.path)).size
@@ -38,9 +48,14 @@ export class EventTail {
       return false
     }
     if (size === this.offset) return false
+    let changed = false
     if (size < this.offset) {
       this.offset = 0
       this.rest = ""
+      this.decoder = new StringDecoder("utf8")
+      Object.assign(this.state, createStream())
+      this.version++
+      changed = true
     }
     // The handle lives only inside poll: a cached one would be garbage
     // collected later and crash pi for closing it implicitly.
@@ -48,15 +63,14 @@ export class EventTail {
     let text: string
     try {
       const buf = Buffer.alloc(size - this.offset)
-      await fh.read(buf, 0, buf.length, this.offset)
-      this.offset = size
-      text = this.rest + buf.toString("utf8")
+      const { bytesRead } = await fh.read(buf, 0, buf.length, this.offset)
+      this.offset += bytesRead
+      text = this.rest + this.decoder.write(buf.subarray(0, bytesRead))
     } finally {
       await fh.close()
     }
     const lines = text.split("\n")
     this.rest = lines.pop() ?? ""
-    let changed = false
     for (const line of lines) {
       if (!line.trim()) continue
       feedLine(this.state, line)
