@@ -18,6 +18,8 @@ import {
   Input,
   Markdown,
   matchesKey,
+  type KeyId,
+  type OverlayHandle,
   sliceByColumn,
   type TUI,
   truncateToWidth,
@@ -34,6 +36,7 @@ import {
   kindLabel,
 } from "./activity"
 import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
+import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -658,13 +661,14 @@ export class CueBrowser implements Component {
 
   // ---- input -----------------------------------------------------------
 
-  handleInput(data: string): void {
-    if (this.busy) return
-    if (this.wizard) return this.wizardInput(this.wizard, data)
-    if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
-    if (this.describing) return this.describeInput(this.describing, data)
-    if (this.creating) return this.creatingInput(this.creating, data)
+  /**
+   * The key table of the current view, in dispatch order. Bindings whose
+   * condition does not hold are left out, so they are neither dispatched
+   * nor listed in the help popup.
+   */
+  private bindings(): Binding[] {
     const v = this.view
+    const k = v.kind
     const move = (delta: number) => {
       const n = this.shownCount()
       v.selected = n === 0 ? 0 : Math.max(0, Math.min(n - 1, v.selected + delta))
@@ -672,128 +676,155 @@ export class CueBrowser implements Component {
       this.refresh()
     }
     const page = Math.max(1, this.bodyHeight() - 1)
+    const kbKeys = (id: string) => this.kb.getKeys(id as any) as KeyId[]
+    const out: Binding[] = []
+    const add = (keys: KeyId | KeyId[], label: string, group: KeyGroup, run: () => unknown, extra: Partial<Binding> = {}) =>
+      out.push({ keys: Array.isArray(keys) ? keys : [keys], label, group, run: () => void run(), ...extra })
+    const pushContext = (push: (c: { address: string; slug: string }) => void) => () => {
+      const c = this.selectedContext()
+      if (c) push({ address: c.address, slug: c.slug })
+    }
 
-    if (matchesKey(data, "escape")) return this.back()
-    if (this.kb.matches(data, "tui.select.up")) return move(-1)
-    if (this.kb.matches(data, "tui.select.down")) return move(1)
-    if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
-    if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
-    if (matchesKey(data, "enter")) return void this.onEnter()
-    if (matchesKey(data, "ctrl+e")) return void this.onOpen()
-    if (matchesKey(data, "ctrl+t")) {
+    add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
+    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1))
+    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1))
+    add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
+    add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
+    const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
+    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true })
+    add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
+    add("ctrl+t", "target here/tmux", "act", () => {
       this.target = this.target === "here" ? "tmux" : "here"
-      return this.tui.requestRender()
+      this.tui.requestRender()
+    })
+    if (k === "log") {
+      add("ctrl+y", "copy address", "copy", () => this.onCopyLog("address"))
+      add("ctrl+h", "copy link", "copy", () => this.onCopyLog("link"))
+    } else if (k === "activity") {
+      add("ctrl+h", "copy context", "copy", () => this.onCopyActivity("context"))
+      add("ctrl+y", "copy path/address/commit", "copy", () => this.onCopyActivity("value"))
+    } else {
+      add("ctrl+h", "copy address", "copy", () => this.onCopy("address"))
+      add("ctrl+y", "copy path", "copy", () => this.onCopy("path"))
     }
-    if (v.kind === "log") {
-      if (matchesKey(data, "ctrl+y")) return void this.onCopyLog("address")
-      if (matchesKey(data, "ctrl+h")) return void this.onCopyLog("link")
-    }
-    if (v.kind === "activity") {
-      if (matchesKey(data, "ctrl+h")) return void this.onCopyActivity("context")
-      if (matchesKey(data, "ctrl+y")) return void this.onCopyActivity("value")
-    }
-    if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
-    if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
-    if (matchesKey(data, "ctrl+n")) {
-      if (v.kind === "contexts") return this.startCreateContext()
-      return this.startWizard()
-    }
-    if (matchesKey(data, "ctrl+s")) return this.onNewSession()
-    if (matchesKey(data, "alt+r")) return this.reload()
-    if (v.kind !== "artifacts") {
-      if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
-      if (matchesKey(data, "ctrl+down")) return this.stepRecency(-1)
+    if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext())
+    else add("ctrl+n", "new artifact", "act", () => this.startWizard())
+    add("ctrl+s", "new session", "act", () => this.onNewSession())
+    add("alt+r", "reload", "view", () => this.reload())
+    if (k !== "artifacts") {
+      add("ctrl+up", "recency up", "view", () => this.stepRecency(1))
+      add("ctrl+down", "recency down", "view", () => this.stepRecency(-1))
     }
     if (v.kind === "contexts") {
-      if (matchesKey(data, "tab")) {
+      add("tab", "recent/all", "view", () => {
         const keep = this.selectedContext()?.address
         v.recent = !v.recent
         v.selected = 0
         if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
-        return this.refresh()
-      }
-      if (matchesKey(data, "ctrl+l")) return void this.onLink()
-      if (matchesKey(data, "alt+f")) return void this.onTogglePin(v)
-      if (matchesKey(data, "alt+a")) return void this.onToggleArchive(v)
-      if (matchesKey(data, "alt+v")) {
+        this.refresh()
+      }, { hint: true })
+      add("ctrl+l", "link session", "act", () => this.onLink())
+      add("alt+f", "pin", "act", () => this.onTogglePin(v))
+      add("alt+a", "archive", "act", () => this.onToggleArchive(v))
+      add("alt+v", "show archived", "view", () => {
         this.showArchived = !this.showArchived
-        return void this.loadContexts(v, this.selectedContext()?.address)
-      }
-      if (matchesKey(data, "alt+t")) {
+        return this.loadContexts(v, this.selectedContext()?.address)
+      })
+      add("alt+t", "tree/flat", "view", () => {
         const keep = this.selectedContext()?.address
         this.contextsFlat = !this.contextsFlat
         v.selected = 0
         if (keep) this.selectContext(v, keep)
-        return this.refresh()
+        this.refresh()
+      })
+      if (!this.contextsFlat) {
+        add("alt+z", "fold", "view", () => this.onToggleCollapse(v))
+        add("shift+tab", "fold all", "view", () => this.onCollapseAll(v))
       }
-      if (matchesKey(data, "alt+z") && !this.contextsFlat) return this.onToggleCollapse(v)
-      if (matchesKey(data, "shift+tab") && !this.contextsFlat) return this.onCollapseAll(v)
-      if (matchesKey(data, "ctrl+r")) {
-        const c = this.selectedContext()
-        if (c) this.pushSessions({ address: c.address, slug: c.slug })
-        return
-      }
-      if (matchesKey(data, "ctrl+a")) {
-        const c = this.selectedContext()
-        if (c) this.pushActivity({ address: c.address, slug: c.slug })
-        return
-      }
-      if (matchesKey(data, "ctrl+g")) {
-        const c = this.selectedContext()
-        if (c) this.pushLog({ address: c.address, slug: c.slug })
-        return
-      }
+      add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true })
+      add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
+      add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
     } else if (v.kind === "activity" || v.kind === "log") {
-      if (matchesKey(data, "tab")) {
+      add("tab", "recent/all", "view", () => {
         v.recent = !v.recent
         v.selected = 0
-        return this.refresh()
-      }
-    } else {
-      if (v.kind === "sessions") {
-        if (matchesKey(data, "tab")) {
-          v.subset = NEXT_SUBSET[v.subset]
-          v.selected = 0
-          this.previewScroll = this.previewStart()
-          return void this.loadSessions(v)
-        }
-        if (matchesKey(data, "ctrl+l")) return void this.onLink()
-        if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
-        if (matchesKey(data, "shift+tab")) return this.onFoldSessionsAll(v)
-        if (matchesKey(data, "alt+t")) {
-          this.sessionsFlat = !this.sessionsFlat
-          v.selected = 0
-          this.previewScroll = this.previewStart()
-          return this.refresh()
-        }
-        if (matchesKey(data, "ctrl+x")) return this.onDelete()
-        if (matchesKey(data, "alt+u")) return this.onClearLabel()
-        if (matchesKey(data, "alt+d")) return this.onDescribe()
-      }
+        this.refresh()
+      }, { hint: true })
+    } else if (v.kind === "sessions") {
+      add("tab", "recent/labeled/all", "view", () => {
+        v.subset = NEXT_SUBSET[v.subset]
+        v.selected = 0
+        this.previewScroll = this.previewStart()
+        return this.loadSessions(v)
+      }, { hint: true })
+      add("ctrl+l", "link to context", "act", () => this.onLink())
+      add("alt+z", "fold", "view", () => this.onFoldSessions(v))
+      add("shift+tab", "fold all", "view", () => this.onFoldSessionsAll(v))
+      add("alt+t", "tree/flat", "view", () => {
+        this.sessionsFlat = !this.sessionsFlat
+        v.selected = 0
+        this.previewScroll = this.previewStart()
+        this.refresh()
+      })
+      add("ctrl+x", "delete", "act", () => this.onDelete())
+      add("alt+u", "unlabel", "act", () => this.onClearLabel())
+      add("alt+d", "describe", "act", () => this.onDescribe())
     }
-    if ((v.kind === "contexts" || v.kind === "sessions") && matchesKey(data, "alt+s")) {
-      this.repoScope = !this.repoScope
-      return this.reloadIfScopeChanged()
+    if (k === "contexts" || k === "sessions") {
+      add("alt+s", "repo/all scope", "view", () => {
+        this.repoScope = !this.repoScope
+        this.reloadIfScopeChanged()
+      })
     }
-    if (v.kind !== "contexts") {
-      if (matchesKey(data, "ctrl+r") && v.kind !== "sessions") return this.jumpTo("sessions")
-      if (matchesKey(data, "ctrl+a") && v.kind !== "activity") return this.jumpTo("activity")
-      if (matchesKey(data, "ctrl+g") && v.kind !== "log") return this.jumpTo("log")
-    }
-    if (v.kind !== "contexts") {
-      if (matchesKey(data, "alt+p")) {
+    if (k !== "contexts") {
+      if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"))
+      if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"))
+      if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"))
+      add("alt+p", "preview", "view", () => {
         this.showPreview = !this.showPreview
-        return this.refresh()
+        this.refresh()
+      })
+      add("alt+l", "layout", "view", () => {
+        if (!this.stacked.delete(k)) this.stacked.add(k)
+        this.refresh()
+      })
+      if (this.showPreview) {
+        add("ctrl+d", "preview down", "view", () => this.scrollPreview(Math.floor(page / 2)))
+        add("ctrl+u", "preview up", "view", () => this.scrollPreview(-Math.floor(page / 2)))
+        add("ctrl+home", "preview top", "view", () => this.scrollTo(0))
+        add("ctrl+end", "preview bottom", "view", () => this.scrollTo(Number.MAX_SAFE_INTEGER))
       }
-      if (matchesKey(data, "alt+l")) {
-        if (!this.stacked.delete(v.kind)) this.stacked.add(v.kind)
-        return this.refresh()
-      }
-      if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+home")) return this.scrollTo(0)
-      if (this.showPreview && matchesKey(data, "ctrl+end")) return this.scrollTo(Number.MAX_SAFE_INTEGER)
     }
+    add(HELP_KEYS, "keys", "view", () => this.showHelp(), { hint: true })
+    return out
+  }
+
+  private showHelp(): void {
+    const bindings = this.bindings()
+    const title = `keys: ${this.view.kind}`
+    const rows = () => this.tui.terminal.rows
+    let handle: OverlayHandle | undefined
+    const help = new KeyHelp(this.theme, title, bindings, () => {
+      handle?.hide()
+      this.tui.requestRender()
+    }, () => rows() - 2)
+    handle = this.tui.showOverlay(help, {
+      anchor: "center",
+      width: helpWidth(bindings, this.tui.terminal.columns),
+      maxHeight: Math.max(5, rows() - 2),
+    })
+    this.tui.requestRender()
+  }
+
+  handleInput(data: string): void {
+    if (this.busy) return
+    if (this.wizard) return this.wizardInput(this.wizard, data)
+    if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
+    if (this.describing) return this.describeInput(this.describing, data)
+    if (this.creating) return this.creatingInput(this.creating, data)
+    const v = this.view
+    const hit = findBinding(this.bindings(), data)
+    if (hit) return hit.run!()
 
     const before = this.input.getValue()
     this.input.handleInput(data)
@@ -1366,39 +1397,15 @@ export class CueBrowser implements Component {
   }
 
   private helpLine(width: number): string {
-    const v = this.view
-    const esc = this.views.length > 1 ? "esc back" : "esc close"
-    let hints: string[]
     if (this.wizard) {
-      hints = this.wizard.step === "type"
+      const hints = this.wizard.step === "type"
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
-    } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "shift+tab fold all", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
-        "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
-    } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
-        "alt+z fold", "shift+tab fold all", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
-        "alt+l layout", ...this.previewHints(), esc]
-    } else if (v.kind === "activity") {
-      hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h context",
-        "ctrl+y path/address/commit", "alt+r reload", "alt+p preview", "alt+l layout",
-        ...this.previewHints(), esc]
-    } else if (v.kind === "log") {
-      hints = ["enter/ctrl+e open trace", "ctrl+a activity", "ctrl+r sessions", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
-        "ctrl+y address", "ctrl+h link", "alt+r reload", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
-    } else {
-      hints = ["enter open", "ctrl+e open", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview", "alt+l layout",
-        ...this.previewHints(), esc]
+      return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
     }
-    return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
+    return truncateToWidth(this.theme.fg("dim", hintText(this.bindings())), width, "…")
   }
 
-  private previewHints(): string[] {
-    return this.showPreview ? ["ctrl+d/u scroll", "ctrl+home/end top/bottom"] : []
-  }
 
   /** Window of `count` rows keeping `selected` visible. */
   private window(total: number, selected: number, count: number): [number, number] {
