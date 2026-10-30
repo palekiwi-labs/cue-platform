@@ -174,8 +174,7 @@ function firstLine(text: string, max = 80): string {
 }
 
 function currentText(s: StreamState): TextItem | null {
-  const it = s.textAt
-  return it && s.items.includes(it) ? it : null
+  return s.textAt
 }
 
 function lastTurn(s: StreamState): TurnItem | null {
@@ -187,11 +186,13 @@ function lastTurn(s: StreamState): TurnItem | null {
 }
 
 export function feedLine(s: StreamState, line: string): void {
-  let e: Record<string, unknown>
+  let e: Record<string, unknown> | null
   try {
-    const parsed: unknown = JSON.parse(line)
-    e = obj(parsed)!
+    e = obj(JSON.parse(line))
   } catch {
+    e = null
+  }
+  if (!e) {
     s.skipped++
     return
   }
@@ -234,10 +235,10 @@ export function feedLine(s: StreamState, line: string): void {
       } else if (ev.type === "thinking_delta") {
         const d = typeof ev.delta === "string" ? ev.delta : ""
         const it = s.thinkAt
-        if (it && s.items.includes(it) && !it.done) it.chars += d.length
+        if (it && !it.done) it.chars += d.length
       } else if (ev.type === "thinking_end") {
         const it = s.thinkAt
-        if (it && s.items.includes(it)) it.done = true
+        if (it) it.done = true
       } else if (ev.type === "toolcall_start") {
         push({ kind: "composing", id: str(ev.id) ?? "", name: str(ev.toolName) ?? "?", chars: 0 })
       } else if (ev.type === "toolcall_delta") {
@@ -268,11 +269,11 @@ export function feedLine(s: StreamState, line: string): void {
       const sc = obj(res.structuredContent) ?? {}
       const exit = num(sc.exit_code)
       const text = contentText(res.content)
-      const err = e.isError === true || exit !== null && exit !== 0
+      const err = e.isError === true || (exit !== null && exit !== 0)
       const exitDetail = exit !== null && exit !== 0 ? `exit ${exit}` : null
       const detail = err ? firstLine(text) || exitDetail || "failed" : exitDetail
       let it = s.toolAt.get(id)
-      if (!it || !s.items.includes(it)) {
+      if (!it) {
         it = { kind: "tool", id, name: str(e.toolName) ?? "?", summary: "", state: "pending", detail: null, ms: null }
         s.toolAt.set(id, it)
         push(it)
