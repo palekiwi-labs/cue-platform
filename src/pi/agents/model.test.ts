@@ -129,6 +129,7 @@ describe("groupBatches", () => {
     batchId, batchLabel: `L-${batchId}`, batchState: "running", startedAt: 0, jobId: null, jobLabel: null,
     runId: `${batchId}-${position}`, label: null, context: null, agent: "a", model: "m", position, phase: "running",
     runPath: "", elapsedSecs: null, tokensInput: null, tokensOutput: null, tokensCacheRead: null, tokensCacheWrite: null, costUsd: null,
+    harness: null, turns: null, idleSecs: null, lastTool: null,
     outcome: null, response: null, error: null, ...extra,
   })
 
@@ -153,7 +154,7 @@ describe("groupJobs", () => {
     jobId, jobLabel: jobId ? `job ${jobId}` : null, runId: `${batchId}-1`, label: null, context: null,
     agent: "a", model: "m", position: 1, phase: "finished", runPath: "", elapsedSecs: 10, tokensInput: 1,
     tokensOutput: null, tokensCacheRead: null, tokensCacheWrite: null, costUsd: 0.5, outcome: "completed",
-    response: null, error: null, ...extra,
+    harness: null, turns: null, idleSecs: null, lastTool: null, response: null, error: null, ...extra,
   })
 
   test("stages of concurrent jobs never interleave; jobs keep their place", () => {
@@ -226,6 +227,7 @@ describe("receiptStats", () => {
     position: 1, phase: "finished", runPath: "/runs/B-1", elapsedSecs: 152,
     tokensInput: 54, tokensOutput: 13495, tokensCacheRead: 465000, tokensCacheWrite: 55600,
     costUsd: 1.34, outcome: "completed", response: null, error: null,
+    harness: null, turns: null, idleSecs: null, lastTool: null,
     ...extra,
   })
 
