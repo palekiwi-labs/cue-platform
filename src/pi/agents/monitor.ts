@@ -126,6 +126,8 @@ export class AgentMonitor implements Component {
   private timer: ReturnType<typeof setInterval> | undefined
   private streamTimer: ReturnType<typeof setInterval> | undefined
   private streamSnap: StreamSnapshot | undefined
+  /** The snapshot was polled after the run had ended, so nothing follows it. */
+  private streamFinal = false
   /** Stream pane sticks to the bottom until the operator scrolls up. */
   private follow = true
   private streamMax = 0
@@ -162,11 +164,13 @@ export class AgentMonitor implements Component {
   private async refreshStream(): Promise<void> {
     const r = this.selected()
     if (!r || this.pane !== "stream" || !this.preview) return
-    if (!isLive(r) && this.streamSnap?.runId === r.runId) return
+    if (this.streamFinal && this.streamSnap?.runId === r.runId) return
+    const ended = !isLive(r)
     const snap = await this.deps.stream(r)
     if (!snap) return
     if (snap.runId === this.selected()?.runId) {
       this.streamSnap = snap
+      this.streamFinal = ended
       this.tui.requestRender()
     }
   }
@@ -624,12 +628,12 @@ export class AgentMonitor implements Component {
       "muted",
       `${this.pane} • ${r.runId} • ${this.follow ? "following" : "paused"}`,
     )
-    const body = (line: string): string[] => [head, line]
+    const withHead = (line: string): string[] => [head, line]
     if (r.harness && r.harness !== "pi") {
-      return body(t.fg("dim", `_stream not supported for harness ${r.harness}_`))
+      return withHead(t.fg("dim", `_stream not supported for harness ${r.harness}_`))
     }
     const snap = this.streamSnap?.runId === r.runId ? this.streamSnap : undefined
-    if (!snap) return body(t.fg("dim", "reading…"))
+    if (!snap) return withHead(t.fg("dim", "reading…"))
     const key = `${r.runId}:stream:${width}:${snap.version}`
     if (this.previewCache?.key !== key) {
       this.previewCache = {
