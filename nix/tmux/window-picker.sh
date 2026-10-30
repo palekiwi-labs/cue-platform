@@ -10,7 +10,18 @@
 #
 # Rows are coloured like the tabs, show context tokens coloured like the
 # pi footer, an age marker (time since the last completed turn) and the
-# session description; all info is in the rows (no preview pane).
+# session description. The preview pane repeats the row info plus the
+# last user prompt (@pi_prompt).
+
+# Preview: window description plus the last user prompt (published as
+# @pi_prompt by extensions/tmux-state.ts, first line, up to 200 chars).
+if [ "${1:-}" = preview ]; then
+  shift
+  tmux display-message -p -t "$1" \
+    '#W: #{@pi_desc}#{?@review_context,  [#{@review_title} | #{@review_context}],}'
+  tmux display-message -p -t "$1" '#{@pi_prompt}' | fold -s -w 76
+  exit 0
+fi
 
 # Rows: id, coloured label (hidden id field used for preview).
 tmux list-windows -F \
@@ -58,5 +69,6 @@ tmux list-windows -F \
   | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
       --prompt "$(tmux display-message -p '#S')> " \
+      --preview "$0 preview {1}" --preview-window 'down,40%,wrap' \
   | cut -f1 \
   | xargs -r tmux select-window -t
