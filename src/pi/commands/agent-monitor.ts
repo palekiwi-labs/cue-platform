@@ -88,7 +88,6 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     stream: async (r): Promise<StreamSnapshot | undefined> => {
       if (!r.runPath) return undefined
       if (tail?.runId !== r.runId) {
-        tail?.t.close()
         tail = { runId: r.runId, t: new EventTail(join(r.runPath, "events.jsonl")) }
       }
       await tail.t.poll()

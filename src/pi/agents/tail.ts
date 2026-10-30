@@ -15,7 +15,6 @@ export class EventTail {
   version = 0
   private offset = 0
   private rest = ""
-  private fh: Awaited<ReturnType<typeof open>> | null = null
 
   constructor(
     readonly path: string,
@@ -43,11 +42,19 @@ export class EventTail {
       this.offset = 0
       this.rest = ""
     }
-    this.fh ??= await open(this.path, "r")
-    const buf = Buffer.alloc(size - this.offset)
-    await this.fh.read(buf, 0, buf.length, this.offset)
-    this.offset = size
-    const lines = (this.rest + buf.toString("utf8")).split("\n")
+    // The handle lives only inside poll: a cached one would be garbage
+    // collected later and crash pi for closing it implicitly.
+    const fh = await open(this.path, "r")
+    let text: string
+    try {
+      const buf = Buffer.alloc(size - this.offset)
+      await fh.read(buf, 0, buf.length, this.offset)
+      this.offset = size
+      text = this.rest + buf.toString("utf8")
+    } finally {
+      await fh.close()
+    }
+    const lines = text.split("\n")
     this.rest = lines.pop() ?? ""
     let changed = false
     for (const line of lines) {
@@ -61,10 +68,5 @@ export class EventTail {
       this.rest = ""
     }
     return changed
-  }
-
-  close(): void {
-    void this.fh?.close()
-    this.fh = null
   }
 }

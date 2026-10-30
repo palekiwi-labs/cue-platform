@@ -161,7 +161,6 @@ describe("EventTail", () => {
     expect(items).toHaveLength(2)
     expect(items[1]).toMatchObject({ kind: "tool", name: "read" })
     expect(await tail.poll()).toBe(false)
-    tail.close()
   })
 
   test("parseStream equals line-by-line feeding", () => {
