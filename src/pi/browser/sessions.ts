@@ -266,8 +266,19 @@ export function recentSessions(
     .map(({ session, context }) => ({ session, context }))
 }
 
-/** A flat session row's text: `context | description [label]`. */
-export function sessionHeadline(t: Theme, where: string, description: string, label?: string): string {
+/**
+ * A flat session row's text: `context | description [label]`; the
+ * description is dropped when it repeats the context.
+ */
+export function sessionHeadline(
+  t: Theme,
+  where: string,
+  description: string,
+  label?: string,
+  current = false,
+): string {
   const tag = label ? " " + t.fg("error", `[${truncateToWidth(label, 12, "…")}]`) : ""
-  return t.fg("muted", where) + t.fg("dim", " | ") + description + tag
+  const style = (s: string) => (current ? t.fg("accent", s) : s)
+  if (description === where) return style(where) + tag
+  return t.fg("muted", where) + t.fg("dim", " | ") + style(description) + tag
 }

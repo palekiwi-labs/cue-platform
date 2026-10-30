@@ -1489,7 +1489,7 @@ export class CueBrowser implements Component {
         const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
         const desc = s.path === current ? t.fg("accent", s.description) : s.description
         // Flat rows lead with the context, as the tmux window picker does.
-        name = indent + (flat ? sessionHeadline(t, r.context.slug, desc, s.label) : desc + label(s)) + cwdTag(s)
+        name = indent + (flat ? sessionHeadline(t, r.context.slug, s.description, s.label, s.path === current) : desc + label(s)) + cwdTag(s)
         tail = s
       }
       const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)

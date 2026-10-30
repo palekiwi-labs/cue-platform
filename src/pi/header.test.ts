@@ -30,6 +30,13 @@ describe("headerLines", () => {
     expect(lines).toContain("    2h  - | loose")
   })
 
+  test("a description equal to the context shows once", () => {
+    const lines = headerLines(t, 80, rev, [
+      { session: s("inbox", 1000 - 60), context: syntheticContext("o/r/inbox") },
+    ], 3, 1000)
+    expect(lines).toContain("    1m  inbox")
+  })
+
   test("narrow terminals get the one-line logo", () => {
     expect(headerLines(t, 20, rev, [], 3, 0)).toContain("  cue platform")
   })
