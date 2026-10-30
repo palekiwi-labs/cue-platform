@@ -163,6 +163,43 @@ describe("EventTail", () => {
     expect(await tail.poll()).toBe(false)
   })
 
+  const tmpFile = () => {
+    const dir = mkdtempSync(join(tmpdir(), "cue-tail-"))
+    dirs.push(dir)
+    return join(dir, "events.jsonl")
+  }
+
+  test("concurrent polls read each byte once", async () => {
+    const path = tmpFile()
+    writeFileSync(path, `${ev.session}\n${ev.turnStart}\n${ev.turnStart}\n`)
+    const tail = new EventTail(path)
+    await Promise.all([tail.poll(), tail.poll(), tail.poll()])
+    expect(tail.items()).toHaveLength(2)
+  })
+
+  test("a truncated and rewritten file restarts the timeline", async () => {
+    const path = tmpFile()
+    writeFileSync(path, `${ev.session}\n${ev.turnStart}\n${ev.turnStart}\n`)
+    const tail = new EventTail(path)
+    await tail.poll()
+    writeFileSync(path, `${ev.turnStart}\n`)
+    expect(await tail.poll()).toBe(true)
+    expect(tail.items()).toHaveLength(1)
+    expect(tail.items()[0]).toMatchObject({ kind: "turn", index: 1 })
+  })
+
+  test("a multibyte character split across reads survives", async () => {
+    const path = tmpFile()
+    const bytes = Buffer.from(`${ev.turnStart}\n${ev.textDelta("héllo")}\n`)
+    const cut = bytes.indexOf(Buffer.from("é")) + 1
+    writeFileSync(path, bytes.subarray(0, cut))
+    const tail = new EventTail(path)
+    await tail.poll()
+    appendFileSync(path, bytes.subarray(cut))
+    await tail.poll()
+    expect(tail.items()[1]).toMatchObject({ kind: "text", head: "héllo" })
+  })
+
   test("parseStream equals line-by-line feeding", () => {
     const text = [
       ev.session,
@@ -179,5 +216,14 @@ describe("EventTail", () => {
     for (const l of text.split("\n")) feedLine(pieced, l)
     expect(whole.items).toEqual(pieced.items)
     expect(whole.startedAt).toBe(Date.parse("2026-10-30T03:51:05.602Z"))
+  })
+})
+
+describe("feedLine boundaries", () => {
+  test("non-object JSON lines are skipped", () => {
+    const s = createStream()
+    for (const l of ["null", "42", '"x"', "true", ev.turnStart]) feedLine(s, l)
+    expect(s.skipped).toBe(4)
+    expect(s.items).toHaveLength(1)
   })
 })
