@@ -27,10 +27,7 @@ class Browser extends PrBrowser {
 
 function setup(
   loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Comment body"),
-  kb = new KeybindingsManager(TUI_KEYBINDINGS, {
-    "tui.altScreen.halfPageUp": "ctrl+u",
-    "tui.altScreen.halfPageDown": "ctrl+d",
-  }),
+  kb = new KeybindingsManager(TUI_KEYBINDINGS),
 ) {
   let renders = 0
   let loads = 0
@@ -137,7 +134,16 @@ describe("PR browser preview", () => {
   })
 
   test("half-page scrolling, top/bottom clamping, resize and selection reset", async () => {
-    const s = setup(async () => detail(Array.from({ length: 100 }, (_, i) => `paragraph ${i}\n`).join("\n")))
+    const kb = new KeybindingsManager(TUI_KEYBINDINGS)
+    expect(kb.getKeys("tui.altScreen.halfPageDown")).toEqual([])
+    expect(kb.getKeys("tui.altScreen.halfPageUp")).toEqual([])
+    expect(kb.matches("\x04", "tui.altScreen.halfPageDown")).toBe(false)
+    expect(kb.matches("\x1b[1;5F", "tui.altScreen.bottom")).toBe(true)
+    const s = setup(async () => detail(Array.from({ length: 100 }, (_, i) => `paragraph ${i}\n`).join("\n")), kb)
+    expect(s.browser.hints()).toEqual(expect.arrayContaining([
+      "ctrl+u scroll up", "ctrl+d scroll down", "ctrl+home top", "ctrl+end bottom", "alt+l layout",
+    ]))
+    expect(kb.getUserBindings()).toEqual({})
     await tick()
     s.browser.render(80)
     await tick()
@@ -205,6 +211,56 @@ describe("PR browser preview", () => {
       expect(disabled.browser.scroll()).toBe(0)
     }
     expect(disabled.browser.hints().join(" ")).not.toMatch(/scroll|top|bottom/)
+  })
+
+  test("layout toggle rewraps, clamps, resizes and preserves cached selection", async () => {
+    const d = detail("A long paragraph with wide characters 界面 and readable wrapped Markdown.\n\n".repeat(100))
+    const s = setup(async () => d)
+    await tick()
+    s.browser.render(80)
+    await tick()
+    s.browser.render(80)
+    s.browser.handleInput("\x1b[1;5F")
+    s.browser.render(80)
+    const stackedBottom = s.browser.scroll()
+    s.browser.handleInput("\x1bl")
+    let lines = s.browser.render(80)
+    expect(lines.slice(4, 29).every((line) => line.includes(" │ "))).toBe(true)
+    expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true)
+    expect(s.browser.scroll()).toBe(stackedBottom)
+    s.browser.handleInput("\x1b[1;5H")
+    s.browser.render(80)
+    s.browser.handleInput("\x04")
+    s.browser.render(80)
+    expect(s.browser.scroll()).toBe(12)
+    s.browser.handleInput("\x1b[1;5F")
+    s.browser.render(80)
+    const sideWidth = 80 - Math.floor(80 * 0.55) - 3
+    expect(s.browser.scroll()).toBe(commentLines(d, sideWidth, theme).length - 25)
+    s.browser.handleInput("\x1bl")
+    s.browser.render(80)
+    expect(s.browser.scroll()).toBe(stackedBottom)
+    s.browser.handleInput("\x1bl")
+    s.browser.render(80)
+    for (const width of [24, 5, 4, 180]) {
+      s.terminal.rows = 18
+      lines = s.browser.render(width)
+      expect(lines).toHaveLength(18)
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true)
+    }
+    s.browser.handleInput("\x1b[1;5F")
+    s.browser.render(180)
+    s.terminal.rows = 3000
+    s.browser.render(180)
+    expect(s.browser.scroll()).toBe(0)
+    s.browser.handleInput("\x1bp")
+    expect(s.browser.render(80).join("\n")).not.toContain(" │ ")
+    expect(s.browser.hints().join(" ")).not.toContain("scroll")
+    s.browser.handleInput("\x1bl")
+    s.browser.handleInput("\x1bp")
+    s.terminal.rows = 30
+    expect(s.browser.render(80)[13]).toBe("─".repeat(80))
+    expect(s.calls).toEqual([2])
   })
 
   test("late result from another selection never appears in the active preview", async () => {

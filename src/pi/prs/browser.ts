@@ -12,6 +12,7 @@ import {
   type Component,
   fuzzyFilter,
   Input,
+  type KeyId,
   Markdown,
   matchesKey,
   type TUI,
@@ -153,6 +154,15 @@ export function commentLines(detail: PrDetail, width: number, theme: Theme, now 
   return lines
 }
 
+const PREVIEW_KEYS = {
+  "tui.altScreen.halfPageUp": ["ctrl+u", "scroll up"],
+  "tui.altScreen.halfPageDown": ["ctrl+d", "scroll down"],
+  "tui.altScreen.top": ["ctrl+home", "top"],
+  "tui.altScreen.bottom": ["ctrl+end", "bottom"],
+} as const
+
+type PreviewAction = keyof typeof PREVIEW_KEYS
+
 export class PrBrowser implements Component {
   protected input = new Input()
   protected view: View
@@ -167,6 +177,8 @@ export class PrBrowser implements Component {
   protected mode: CheckoutTarget = "worktree"
   protected target: Target
   private preview = true
+  private stacked = true
+  private width = 80
   private previewKey: string | undefined
   protected previewScroll = 0
   private previewCache: { detail: PrDetail; width: number; minute: number; lines: string[] } | undefined
@@ -311,13 +323,18 @@ export class PrBrowser implements Component {
       this.preview = !this.preview
       return this.tui.requestRender()
     }
-    if (this.preview && (this.kb.matches(data, "tui.altScreen.halfPageDown") || this.kb.matches(data, "tui.altScreen.halfPageUp"))) {
-      const step = Math.max(1, Math.floor(this.previewHeight() / 2))
-      this.previewScroll = Math.max(0, this.previewScroll + (this.kb.matches(data, "tui.altScreen.halfPageDown") ? step : -step))
+    if (matchesKey(data, "alt+l")) {
+      this.stacked = !this.stacked
       return this.tui.requestRender()
     }
-    if (this.preview && (this.kb.matches(data, "tui.altScreen.top") || this.kb.matches(data, "tui.altScreen.bottom"))) {
-      this.previewScroll = this.kb.matches(data, "tui.altScreen.top") ? 0 : Number.MAX_SAFE_INTEGER
+    const previewMatches = (action: PreviewAction) => this.previewKeys(action).some((key) => matchesKey(data, key))
+    if (this.preview && (previewMatches("tui.altScreen.halfPageDown") || previewMatches("tui.altScreen.halfPageUp"))) {
+      const step = Math.max(1, Math.floor(this.previewHeight() / 2))
+      this.previewScroll = Math.max(0, this.previewScroll + (previewMatches("tui.altScreen.halfPageDown") ? step : -step))
+      return this.tui.requestRender()
+    }
+    if (this.preview && (previewMatches("tui.altScreen.top") || previewMatches("tui.altScreen.bottom"))) {
+      this.previewScroll = previewMatches("tui.altScreen.top") ? 0 : Number.MAX_SAFE_INTEGER
       return this.tui.requestRender()
     }
     if (matchesKey(data, "escape")) return this.close()
@@ -596,18 +613,20 @@ export class PrBrowser implements Component {
     this.notice(`started a session for ${address} in tmux`, "success")
   }
 
+  private previewKeys(action: PreviewAction): KeyId[] {
+    const keys = this.kb.getKeys(action)
+    return keys.length > 0 || Object.hasOwn(this.kb.getUserBindings(), action)
+      ? keys : [PREVIEW_KEYS[action][0]]
+  }
+
   protected helpHints(): string[] {
-    const previewHints = ([
-      ["tui.altScreen.halfPageUp", "scroll up"],
-      ["tui.altScreen.halfPageDown", "scroll down"],
-      ["tui.altScreen.top", "top"],
-      ["tui.altScreen.bottom", "bottom"],
-    ] as const).flatMap(([action, label]) => {
-      const keys = this.kb.getKeys(action)
-      return keys.length > 0 ? [`${keys.join("/")} ${label}`] : []
-    })
+    const previewHints = this.preview ? (Object.keys(PREVIEW_KEYS) as PreviewAction[]).flatMap((action) => {
+      const keys = this.previewKeys(action)
+      return keys.length > 0 ? [`${keys.join("/")} ${PREVIEW_KEYS[action][1]}`] : []
+    }) : []
     return [
       `alt+p ${this.preview ? "hide" : "show"} preview`,
+      "alt+l layout",
       ...previewHints,
       "tab preset",
       "alt+v view",
@@ -636,12 +655,17 @@ export class PrBrowser implements Component {
     return this.height() - 5
   }
 
+  private isStacked(): boolean {
+    return this.stacked || this.width < 5
+  }
+
   private listHeight(): number {
-    return this.preview ? Math.max(1, Math.floor((this.bodyHeight() - 1) * 0.4)) : this.bodyHeight()
+    return this.preview && this.isStacked()
+      ? Math.max(1, Math.floor((this.bodyHeight() - 1) * 0.4)) : this.bodyHeight()
   }
 
   private previewHeight(): number {
-    return Math.max(1, this.bodyHeight() - this.listHeight() - 1)
+    return this.isStacked() ? Math.max(1, this.bodyHeight() - this.listHeight() - 1) : this.bodyHeight()
   }
 
   invalidate(): void {
@@ -652,6 +676,7 @@ export class PrBrowser implements Component {
 
   render(width: number): string[] {
     if (this.picker) return this.picker.render(width)
+    this.width = width
     const t = this.theme
     const height = this.height()
     const lines = [
@@ -681,13 +706,23 @@ export class PrBrowser implements Component {
       this.previewCache = undefined
     }
     if (!this.preview) return this.listLines(width, height)
+    const pr = row?.kind === "pr" ? row.pr : undefined
+    if (!this.isStacked()) {
+      const listW = Math.max(1, Math.min(width - 4, Math.floor(width * 0.55)))
+      const previewW = width - listW - 3
+      const list = this.listLines(listW, height)
+      const preview = this.previewLines(pr, previewW, height)
+      const separator = this.theme.fg("border", " │ ")
+      return Array.from({ length: height }, (_, i) =>
+        pad(list[i] ?? "", listW) + separator + pad(preview[i] ?? "", previewW))
+    }
     const listH = this.listHeight()
     const list = this.listLines(width, listH)
     while (list.length < listH) list.push("")
     return [
       ...list,
       this.theme.fg("border", "─".repeat(width)),
-      ...this.previewLines(row?.kind === "pr" ? row.pr : undefined, width, this.previewHeight()),
+      ...this.previewLines(pr, width, this.previewHeight()),
     ]
   }
 
