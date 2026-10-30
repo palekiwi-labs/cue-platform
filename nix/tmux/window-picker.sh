@@ -18,8 +18,6 @@
 # message, user/agent like the built-in session tree.
 if [ "${1:-}" = preview ]; then
   shift
-  tmux display-message -p -t "$1" \
-    '#W: #{@pi_desc}#{?@review_context,  [#{@review_title} | #{@review_context}],}'
   sess=$(tmux display-message -p -t "$1" '#{@pi_session}')
   if [ -n "$sess" ] && [ -f "$sess" ]; then
     python3 - "$sess" <<'PY'
@@ -115,6 +113,6 @@ tmux list-windows -F \
   | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
       --prompt "$(tmux display-message -p '#S')> " \
-      --preview "$0 preview {1}" --preview-window 'down,40%,wrap' \
+      --preview "$0 preview {1}" --preview-window 'down,60%,wrap' \
   | cut -f1 \
   | xargs -r tmux select-window -t
