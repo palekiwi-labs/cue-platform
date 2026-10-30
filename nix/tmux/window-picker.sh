@@ -13,13 +13,59 @@
 # session description. The preview pane repeats the row info plus the
 # last user prompt (@pi_prompt).
 
-# Preview: window description plus the last user prompt (published as
-# @pi_prompt by extensions/tmux-state.ts, first line, up to 200 chars).
+# Preview: window description plus recent turns from the session file
+# (@pi_session, published by extensions/tmux-state.ts), one line per
+# message, user/agent like the built-in session tree.
 if [ "${1:-}" = preview ]; then
   shift
   tmux display-message -p -t "$1" \
     '#W: #{@pi_desc}#{?@review_context,  [#{@review_title} | #{@review_context}],}'
-  tmux display-message -p -t "$1" '#{@pi_prompt}' | fold -s -w 76
+  sess=$(tmux display-message -p -t "$1" '#{@pi_session}')
+  if [ -n "$sess" ] && [ -f "$sess" ]; then
+    python3 - "$sess" <<'PY'
+import json, sys
+
+entries = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            pass
+
+index = {e.get("id"): e for e in entries if e.get("id")}
+chain = []
+cur = entries[-1] if entries else None
+while cur is not None:
+    chain.append(cur)
+    cur = index.get(cur.get("parentId"))
+chain.reverse()
+
+msgs = []
+for e in chain:
+    if e.get("type") != "message":
+        continue
+    m = e.get("message") or {}
+    role = m.get("role")
+    if role not in ("user", "assistant"):
+        continue
+    c = m.get("content")
+    text = c if isinstance(c, str) else next((p.get("text", "") for p in c or [] if isinstance(p, dict) and p.get("type") == "text"), "")
+    text = " ".join(text.split())
+    if not text:
+        continue
+    msgs.append((role, text))
+for role, text in msgs[-12:]:
+    text = text[:80]
+    label = "user:  " if role == "user" else "agent: "
+    print(f"\033[36m{label}\033[0m\033[2m{text}\033[0m")
+PY
+  else
+    tmux display-message -p -t "$1" '#{@pi_prompt}' | fold -s -w 76
+  fi
   exit 0
 fi
 
