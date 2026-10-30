@@ -46,9 +46,9 @@ const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null)
 
 const lastTool = (v: unknown): { name: string; pending: boolean } | null => {
-  const t = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null
-  const name = t ? str(t.name) : null
-  return name ? { name, pending: t!.pending === true } : null
+  const record = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null
+  const name = record ? str(record.name) : null
+  return name ? { name, pending: record?.pending === true } : null
 }
 
 /** Rows of `cue-agent ps --all --json`, newest batch first, runs in order. */

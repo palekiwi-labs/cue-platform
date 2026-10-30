@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TUI } from "@earendil-works/pi-tui"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { parsePs, type RunRow } from "../agents/model"
+import { isLive, parsePs, type RunRow } from "../agents/model"
 import { AgentMonitor, type MonitorDeps, type Pane, type StreamSnapshot } from "../agents/monitor"
 import { parseStream, streamLines } from "../agents/stream"
 import { EventTail } from "../agents/tail"
@@ -40,7 +40,7 @@ function timelineText(r: RunRow): string | undefined {
     return undefined
   }
   const state = parseStream(text)
-  const body = streamLines(state.items, false, 400)
+  const body = streamLines(state.items, isLive(r), Number.MAX_SAFE_INTEGER)
     .map((segs) => segs.map((s) => s.text).join(""))
     .join("\n")
   return state.skipped ? `${body}\n… ${state.skipped} unreadable lines\n` : `${body}\n`
@@ -78,7 +78,7 @@ const HISTORY = "7d"
 
 async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
-  let tail: { runId: string; t: EventTail } | undefined
+  let tail: { runId: string; tailer: EventTail } | undefined
   const deps = (tui: TUI): MonitorDeps => ({
     load: async () => {
       const r = await pi.exec("cue-agent", ["ps", "--all", "--since", HISTORY, "--json"], { cwd: ctx.cwd })
@@ -88,10 +88,11 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     stream: async (r): Promise<StreamSnapshot | undefined> => {
       if (!r.runPath) return undefined
       if (tail?.runId !== r.runId) {
-        tail = { runId: r.runId, t: new EventTail(join(r.runPath, "events.jsonl")) }
+        tail = { runId: r.runId, tailer: new EventTail(join(r.runPath, "events.jsonl")) }
       }
-      await tail.t.poll()
-      return { runId: r.runId, version: tail.t.version, items: tail.t.items() }
+      const current = tail
+      await current.tailer.poll()
+      return { runId: current.runId, version: current.tailer.version, items: current.tailer.items() }
     },
     prompt,
     receipt: readReceipt,
