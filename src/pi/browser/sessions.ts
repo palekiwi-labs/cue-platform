@@ -280,5 +280,5 @@ export function sessionHeadline(
   const tag = label ? " " + t.fg("error", `[${truncateToWidth(label, 12, "…")}]`) : ""
   const style = (s: string) => (current ? t.fg("accent", s) : s)
   if (description === where) return style(where) + tag
-  return t.fg("muted", where) + t.fg("dim", " | ") + style(description) + tag
+  return style(where) + t.fg("dim", ` | ${description}`) + tag
 }
