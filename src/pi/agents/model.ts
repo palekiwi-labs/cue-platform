@@ -120,6 +120,15 @@ export function isLive(r: RunRow): boolean {
   return (r.batchState === "running" || r.batchState === "finalizing") && r.outcome === null
 }
 
+/**
+ * The held stream snapshot of `r` needs no more polls: it was taken after
+ * the run had already ended, so no event can follow it. A snapshot taken
+ * while the run was live gets one more poll to read the final events.
+ */
+export function streamSettled(snapRunId: string | undefined, final: boolean, r: RunRow): boolean {
+  return final && snapRunId === r.runId
+}
+
 export type StateTone = "live" | "ok" | "bad" | "dim"
 
 export function stateTone(state: string): StateTone {

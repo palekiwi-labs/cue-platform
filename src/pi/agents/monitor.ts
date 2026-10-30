@@ -29,6 +29,7 @@ import {
   haystack,
   inputTokens,
   isLive,
+  streamSettled,
   parseReceipt,
   receiptStats,
   type RunRow,
@@ -164,7 +165,7 @@ export class AgentMonitor implements Component {
   private async refreshStream(): Promise<void> {
     const r = this.selected()
     if (!r || this.pane !== "stream" || !this.preview) return
-    if (this.streamFinal && this.streamSnap?.runId === r.runId) return
+    if (streamSettled(this.streamSnap?.runId, this.streamFinal, r)) return
     const ended = !isLive(r)
     const snap = await this.deps.stream(r)
     if (!snap) return

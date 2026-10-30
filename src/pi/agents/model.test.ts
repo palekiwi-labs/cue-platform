@@ -19,6 +19,7 @@ import {
   runState,
   stageLabel,
   stateTone,
+  streamSettled,
 } from "./model"
 
 const run = (agent: string, position: number, extra: Record<string, unknown> = {}) => ({
@@ -52,6 +53,25 @@ describe("parsePs", () => {
     expect(rows.map((r) => r.runId)).toEqual(["B-a-1", "B-b-2", "B-x-1"])
     expect(rows[0]!.batchState).toBe("running")
     expect(rows[2]!.batchLabel).toBe("old")
+  })
+
+  test("maps harness, turns, idle time and the last tool", () => {
+    const [r] = parsePs(ps([{
+      batch_id: "B",
+      state: "running",
+      runs: [run("a", 1, { harness: "pi", turns: 3, idle_secs: 12, last_tool: { name: "bash", pending: true } })],
+    }]))
+    expect(r).toMatchObject({ harness: "pi", turns: 3, idleSecs: 12, lastTool: { name: "bash", pending: true } })
+  })
+
+  test("a last tool without a name is dropped, pending defaults to false", () => {
+    const rows = parsePs(ps([{
+      batch_id: "B",
+      state: "running",
+      runs: [run("a", 1, { last_tool: { pending: true } }), run("b", 2, { last_tool: { name: "read" } })],
+    }]))
+    expect(rows[0]!.lastTool).toBeNull()
+    expect(rows[1]!.lastTool).toEqual({ name: "read", pending: false })
   })
 
   test("reads the result of finished runs", () => {
@@ -263,5 +283,19 @@ describe("receiptStats", () => {
 
   test("rejects unreadable receipts", () => {
     expect(parseReceipt("not json")).toBeUndefined()
+  })
+})
+
+describe("streamSettled", () => {
+  const [ended] = parsePs(ps([{ batch_id: "B", state: "finished", runs: [run("a", 1)] }]))
+  test("a snapshot taken while live gets one more poll", () => {
+    expect(streamSettled(ended!.runId, false, ended!)).toBe(false)
+  })
+  test("a snapshot taken after the end is final", () => {
+    expect(streamSettled(ended!.runId, true, ended!)).toBe(true)
+  })
+  test("another run's snapshot never settles this one", () => {
+    expect(streamSettled("other", true, ended!)).toBe(false)
+    expect(streamSettled(undefined, true, ended!)).toBe(false)
   })
 })
