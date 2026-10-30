@@ -59,7 +59,8 @@ for e in chain:
 for role, text in msgs[-12:]:
     text = text[:80]
     label = "user:  " if role == "user" else "agent: "
-    print(f"\033[36m{label}\033[0m\033[2m{text}\033[0m")
+    lc = "\033[35m" if role == "user" else "\033[34m"
+    print(f"{lc}{label}\033[0m\033[2m{text}\033[0m")
 PY
   else
     tmux display-message -p -t "$1" '#{@pi_prompt}' | fold -s -w 76
