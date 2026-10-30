@@ -8,6 +8,7 @@ let
     runtimeInputs = [
       pkgs.fzf
       pkgs.gawk
+      pkgs.python3
       pkgs.tmux
     ];
     text = builtins.readFile ./window-picker.sh;

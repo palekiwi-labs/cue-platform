@@ -10,6 +10,7 @@
  *               as the footer)
  *   @pi_prompt  last user prompt, first line, truncated
  *   @pi_last    epoch ms of the last completed turn (age in pickers)
+ *   @pi_session session file path, for the picker preview
  *
  * blocked covers turns that ended in an error, and anything another
  * extension flags via pi.events.emit("tmux-state:blocked", { active }).
@@ -119,6 +120,8 @@ export default function (pi: ExtensionAPI) {
     const prompt = lastUserPrompt(ctx.sessionManager.getBranch());
     await setOpt("@pi_prompt", prompt ? oneLine(prompt) : "");
     void setOpt("@pi_last", String(Date.now()));
+    const file = ctx.sessionManager.getSessionFile?.();
+    if (file) void setOpt("@pi_session", file);
     publishCtx(ctx);
   });
 
@@ -151,7 +154,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     clearIdle();
     await tmux(["set-option", "-wu", "-t", pane, "@pi_state"]);
-    for (const key of ["@pi_unseen", "@pi_ctx", "@pi_prompt", "@pi_last"]) {
+    for (const key of ["@pi_unseen", "@pi_ctx", "@pi_prompt", "@pi_last", "@pi_session"]) {
       await tmux(["set-option", "-wu", "-t", pane, key]);
     }
   });
