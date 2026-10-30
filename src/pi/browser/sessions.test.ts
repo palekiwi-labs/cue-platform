@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { parseContextTree } from "./model"
 import {
-  cwdMark, groupSessions, inScopes, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
+  cwdMark, groupSessions, inScopes, recentSessions, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
 } from "./sessions"
 
 let n = 0
@@ -148,5 +148,24 @@ describe("cwdMark", () => {
   test("without repos, cwds compare by path and show the directory name", () => {
     expect(cwdMark({ cwd: "/tmp/scratch" }, { cwd: "/tmp/scratch" })).toBeUndefined()
     expect(cwdMark({ cwd: "/tmp/scratch", address: "sb/sb/ctx" }, { cwd: "/x" })).toEqual({ text: "(scratch)", mismatch: false })
+  })
+})
+
+describe("recentSessions", () => {
+  const node = (context: string) => ({ context, scope: "o/r", title: context, path: "", children: [] })
+  const tree = parseContextTree(JSON.stringify({ roots: [node("a"), node("b")] }))
+  const s = (path: string, address: string | undefined, modified: number): SessionRow => ({
+    path, cwd: "/w", address, description: path, tokens: null, modified,
+  })
+  const day = 86400
+  const now = 10 * day
+
+  test("flat newest first within the window, tree contexts only, capped", () => {
+    const sessions = [
+      s("old", "o/r/a", now - 4 * day), s("a1", "o/r/a", now - 100), s("b1", "o/r/b", now - 50),
+      s("a2", "o/r/a", now - 10), s("orphan", "o/r/x", now - 5), s("none", undefined, now - 1),
+    ]
+    const rows = recentSessions(tree, sessions, now, 3, 2)
+    expect(rows.map((r) => `${r.context.slug}:${r.session.path}`)).toEqual(["a:a2", "b:b1"])
   })
 })

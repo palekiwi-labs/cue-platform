@@ -4,7 +4,8 @@
  * preview, and the grouping of sessions under the cue context tree.
  */
 
-import { calculateContextTokens } from "@earendil-works/pi-coding-agent"
+import { calculateContextTokens, type Theme } from "@earendil-works/pi-coding-agent"
+import { truncateToWidth } from "@earendil-works/pi-tui"
 import type { ContextRow } from "./model"
 
 const CUE_CONTEXT_TYPE = "cue-context"
@@ -244,4 +245,29 @@ export function inScopes(
     const scope = s.address ? scopeOf(s.address) : s.cwd ? cwdScope(s.cwd) : undefined
     return scope !== undefined && scopes.has(scope)
   })
+}
+
+/**
+ * The sessions view's default listing flattened: sessions of the context
+ * tree modified within `days`, newest first, at most `limit`.
+ */
+export function recentSessions(
+  contexts: ContextRow[],
+  sessions: SessionRow[],
+  now: number,
+  days: number,
+  limit: number,
+): { session: SessionRow; context: ContextRow }[] {
+  const since = now - days * 86400
+  return groupSessions(contexts, sessions, new Set(), false)
+    .flatMap((r) => (r.kind === "session" && r.session.modified >= since ? [r] : []))
+    .sort((a, b) => b.session.modified - a.session.modified)
+    .slice(0, limit)
+    .map(({ session, context }) => ({ session, context }))
+}
+
+/** A flat session row's text: `context | description [label]`. */
+export function sessionHeadline(t: Theme, where: string, description: string, label?: string): string {
+  const tag = label ? " " + t.fg("error", `[${truncateToWidth(label, 12, "…")}]`) : ""
+  return t.fg("muted", where) + t.fg("dim", " | ") + description + tag
 }

@@ -59,6 +59,7 @@ import {
   cwdMark,
   groupSessions,
   NO_CONTEXT,
+  sessionHeadline,
   type SessionListRow,
   type SessionRow,
   syntheticContext,
@@ -1488,8 +1489,7 @@ export class CueBrowser implements Component {
         const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
         const desc = s.path === current ? t.fg("accent", s.description) : s.description
         // Flat rows lead with the context, as the tmux window picker does.
-        const where = flat ? t.fg("muted", r.context.slug) + t.fg("dim", " | ") : ""
-        name = indent + where + desc + label(s) + cwdTag(s)
+        name = indent + (flat ? sessionHeadline(t, r.context.slug, desc, s.label) : desc + label(s)) + cwdTag(s)
         tail = s
       }
       const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)
