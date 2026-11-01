@@ -237,16 +237,18 @@ end, { buffer = true, desc = "Markdown: protected line-wrap entire file" })
 -- The table wrap runs after mdformat so single-line tables are normalized
 -- first and the wrap (which re-measures trimmed cell text) emits the canonical
 -- layout; its output is fully padded, so a later mdformat pass is a no-op on
--- it. The buffer ends at the top: the point of ,f is paste-then-read.
+-- it. Cursor position and view are preserved.
 -- Exposed on _G so headless tests can call it directly.
 _G.__markdown_format_all = function()
+  local saved_view = vim.fn.winsaveview()
+  vim.api.nvim_buf_set_mark(0, "z", saved_view.lnum, saved_view.col, {})
   vim.api.nvim_buf_set_mark(0, "[", 1, 0, {})
   local last_line = vim.api.nvim_buf_line_count(0)
   vim.api.nvim_buf_set_mark(0, "]", last_line, 0, {})
   _G.__markdown_gw_format("line")
   require("conform").format({ bufnr = 0 })
   _G.__markdown_wrap_tables(1, vim.api.nvim_buf_line_count(0))
-  vim.cmd("normal! gg")
+  vim.fn.winrestview({ lnum = vim.fn.line("'z"), col = vim.fn.col("'z"), leftcol = saved_view.leftcol })
 end
 
 vim.keymap.set("n", "<leader>f", _G.__markdown_format_all,
