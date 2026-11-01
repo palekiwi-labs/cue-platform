@@ -837,7 +837,7 @@ export class CueBrowser implements Component {
         add("alt+z", "fold", "view", () => this.onFoldArtifacts(v))
         add("shift+tab", "fold all", "view", () => this.onFoldArtifactsAll(v))
       } else {
-        add("alt+o", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
+        add("alt+k", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
       }
     } else if (v.kind === "activity" || v.kind === "log") {
       add("tab", "recent/all", "view", () => {
