@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test"
-import { buildDescription, formatReceipt, parseAgentList, selectableAliases } from "./delegate-helpers"
+import {
+  backgroundJobId,
+  buildDescription,
+  formatReceipt,
+  parseAgentList,
+  selectableAliases,
+} from "./delegate-helpers"
+
+describe("backgroundJobId", () => {
+  test("is a lowercase path-safe segment", () => {
+    const id = backgroundJobId(new Date("2026-11-01T11:46:25Z"), "a1b2c3")
+    expect(id).toBe("delegate-20261101114625-a1b2c3")
+    expect(backgroundJobId()).toMatch(/^delegate-\d{14}-[0-9a-f]+$/)
+  })
+})
 
 const listing = JSON.stringify({
   models: {

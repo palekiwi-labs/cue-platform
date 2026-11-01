@@ -139,6 +139,27 @@ export function buildDescription(roster: Roster): string {
   ].join("\n")
 }
 
+/** Job id for a background batch: a safe path segment, unique per launch. */
+export function backgroundJobId(now: Date = new Date(), rand: string = Math.random().toString(16).slice(2, 8)): string {
+  const stamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14)
+  return `delegate-${stamp}-${rand}`
+}
+
+/** What the caller needs to find a background batch again. */
+export function formatBackgroundHandle(jobId: string, dir: string): string {
+  return [
+    `Started in the background as job ${jobId}; continue with other work.`,
+    "",
+    "Check on it with cue-agent:",
+    `- cue-agent ps --all --job ${jobId} --json   (batch id, state)`,
+    "- cue-agent status <batch_id>   (per-run outcome)",
+    "- cue-agent logs <batch_id>     (events)",
+    "- cue-agent stop <batch_id>     (cancel)",
+    "",
+    `Receipt and stderr: ${dir}/receipt.json, ${dir}/stderr.log`,
+  ].join("\n")
+}
+
 function formatDuration(ms: number): string {
   const s = ms / 1000
   return s < 60 ? `${s.toFixed(0)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`
