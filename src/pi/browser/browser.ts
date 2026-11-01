@@ -52,6 +52,9 @@ import {
   recencyIndex,
   relativeAge,
   sortArtifacts,
+  compareArtifactsByTime,
+  buildArtifactTree,
+  type ArtifactTreeRow,
   typeBadge,
 } from "./model"
 import {
@@ -170,6 +173,11 @@ interface ArtifactsView {
   kind: "artifacts"
   context: ContextRef
   rows: ArtifactRow[]
+  /** Grouped by type instead of strictly newest first. */
+  byType: boolean
+  tree: boolean
+  /** Folded directory keys in the tree, e.g. `note/ideas`. */
+  folds: Set<string>
   query: string
   selected: number
   loading: boolean
@@ -324,7 +332,8 @@ export class CueBrowser implements Component {
 
   private pushArtifacts(context: ContextRef): void {
     const v: ArtifactsView = {
-      kind: "artifacts", context, rows: [], query: "", selected: 0, loading: true,
+      kind: "artifacts", context, rows: [], byType: false, tree: false, folds: new Set(),
+      query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -488,7 +497,7 @@ export class CueBrowser implements Component {
 
   private async loadArtifacts(v: ArtifactsView): Promise<void> {
     v.loading = true
-    v.rows = sortArtifacts(await this.deps.loadArtifacts(v.context.address))
+    v.rows = await this.deps.loadArtifacts(v.context.address)
     v.loading = false
     this.refresh()
   }
@@ -595,8 +604,83 @@ export class CueBrowser implements Component {
     return r?.kind === "session" ? r.session : r?.sessions[0]
   }
 
-  private shownArtifacts(v: ArtifactsView): ArtifactRow[] {
-    return fuzzyFilter(v.rows, v.query, (r) => `${r.type} ${r.title} ${r.name}`)
+  private shownArtifacts(v: ArtifactsView): ArtifactTreeRow[] {
+    const sorted = v.byType || v.tree ? sortArtifacts(v.rows) : [...v.rows].sort(compareArtifactsByTime)
+    if (v.tree && v.query.trim() === "") return buildArtifactTree(v.context.address, sorted, v.folds)
+    return fuzzyFilter(sorted, v.query, (r) => `${r.type} ${r.title} ${r.name}`)
+      .map((row) => ({ kind: "file" as const, row, name: row.name, depth: 0 }))
+  }
+
+  /** Fold the highlighted directory, or the highlighted file's directory. */
+  private onFoldArtifacts(v: ArtifactsView): void {
+    if (!v.tree || v.query.trim() !== "") return
+    const rows = this.shownArtifacts(v)
+    const r = rows[v.selected]
+    if (!r) return
+    let key: string | undefined
+    if (r.kind === "dir") key = r.key
+    else {
+      for (let i = v.selected - 1; i >= 0; i--) {
+        const p = rows[i]!
+        if (p.kind === "dir" && p.depth < r.depth) {
+          key = p.key
+          break
+        }
+      }
+    }
+    if (!key) return
+    if (!v.folds.delete(key)) v.folds.add(key)
+    this.selectArtifactDir(v, key)
+    this.refresh()
+  }
+
+  /** zM/zR: fold every type directory, or unfold everything. */
+  private onFoldArtifactsAll(v: ArtifactsView): void {
+    if (!v.tree || v.query.trim() !== "") return
+    const rows = this.shownArtifacts(v)
+    const cur = rows[v.selected]
+    const roots = buildArtifactTree(v.context.address, v.rows, new Set())
+      .flatMap((r) => (r.kind === "dir" && r.depth === 0 ? [r.key] : []))
+    if (roots.some((k) => !v.folds.has(k))) {
+      for (const k of roots) v.folds.add(k)
+      let root: string | undefined
+      if (cur?.kind === "dir") root = cur.key.split("/")[0]
+      else if (cur) {
+        for (let i = v.selected; i >= 0; i--) {
+          const p = rows[i]!
+          if (p.kind === "dir" && p.depth === 0) {
+            root = p.key
+            break
+          }
+        }
+      }
+      if (root) this.selectArtifactDir(v, root)
+    } else {
+      v.folds.clear()
+      if (cur?.kind === "dir") this.selectArtifactDir(v, cur.key)
+      else if (cur) {
+        const i = this.shownArtifacts(v).findIndex((r) => r.kind === "file" && r.row.path === cur.row.path)
+        if (i >= 0) v.selected = i
+      }
+    }
+    this.refresh()
+  }
+
+  private selectArtifactDir(v: ArtifactsView, key: string): void {
+    const i = this.shownArtifacts(v).findIndex((r) => r.kind === "dir" && r.key === key)
+    if (i >= 0) v.selected = i
+  }
+
+  /** Toggle a layout flag, keeping the highlighted artifact selected. */
+  private relayoutArtifacts(v: ArtifactsView, change: () => void): void {
+    const cur = this.shownArtifacts(v)[v.selected]
+    change()
+    const rows = this.shownArtifacts(v)
+    const i = cur?.kind === "file"
+      ? rows.findIndex((r) => r.kind === "file" && r.row.path === cur.row.path)
+      : -1
+    v.selected = Math.max(0, i)
+    this.refresh()
   }
 
   private shownCount(): number {
@@ -616,7 +700,9 @@ export class CueBrowser implements Component {
 
   private selectedArtifact(): ArtifactRow | undefined {
     const v = this.view
-    return v.kind === "artifacts" ? this.shownArtifacts(v)[v.selected] : undefined
+    if (v.kind !== "artifacts") return undefined
+    const r = this.shownArtifacts(v)[v.selected]
+    return r?.kind === "file" ? r.row : undefined
   }
 
   private selectedPath(): string | undefined {
@@ -745,6 +831,14 @@ export class CueBrowser implements Component {
       add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true })
       add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
       add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
+    } else if (v.kind === "artifacts") {
+      add("alt+t", "tree/flat", "view", () => this.relayoutArtifacts(v, () => { v.tree = !v.tree }))
+      if (v.tree) {
+        add("alt+z", "fold", "view", () => this.onFoldArtifacts(v))
+        add("shift+tab", "fold all", "view", () => this.onFoldArtifactsAll(v))
+      } else {
+        add("alt+o", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
+      }
     } else if (v.kind === "activity" || v.kind === "log") {
       add("tab", "recent/all", "view", () => {
         v.recent = !v.recent
@@ -1389,7 +1483,7 @@ export class CueBrowser implements Component {
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : v.kind === "log"
           ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
-          : `Cue artifacts ${t.fg("muted", v.context.address)}`
+          : `Cue artifacts ${t.fg("muted", `${v.tree ? "tree" : v.byType ? "flat by type" : "flat by time"} ${v.context.address}`)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
@@ -1509,8 +1603,29 @@ export class CueBrowser implements Component {
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
     for (let i = a; i < b; i++) {
-      const r = rows[i]!
+      const node = rows[i]!
       const sel = i === v.selected
+      const indent = "  ".repeat(node.depth)
+      if (node.kind === "dir") {
+        const color = node.depth === 0 ? TYPE_COLOR[node.name] ?? "muted" : "muted"
+        const count = t.fg("dim", ` (${node.count})${node.folded ? " +" : ""}`)
+        const line = pad(`${indent}${t.fg(color, `${node.name}/`)}${count}`, width)
+        out.push(sel ? t.bg("selectedBg", line) : line)
+        continue
+      }
+      const r = node.row
+      if (v.tree && v.query.trim() === "") {
+        const caret = r.priority === "critical"
+          ? t.fg("error", "»")
+          : r.priority === "high" ? t.fg("warning", "›") : " "
+        let name = pad(`${indent}${node.name}`, Math.max(10, width - 1 - 1 - 1 - 4))
+        if (r.status === "closed") name = t.fg("dim", t.strikethrough(name))
+        else if (isFinished(r.status)) name = t.fg("dim", name)
+        const age = t.fg("muted", relativeAge(r.createdAt, now).padStart(4))
+        const line = pad(`${caret} ${name} ${age}`, width)
+        out.push(sel ? t.bg("selectedBg", line) : line)
+        continue
+      }
       const badge = t.fg(TYPE_COLOR[r.type] ?? "muted", pad(typeBadge(r.type), 5))
       const caret = r.priority === "critical"
         ? t.fg("error", "»")
