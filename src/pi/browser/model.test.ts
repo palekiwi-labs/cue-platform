@@ -5,6 +5,8 @@ import {
   parseContextTree,
   relativeAge,
   sortArtifacts,
+  compareArtifactsByTime,
+  buildArtifactTree,
   treePrefix,
   artifactAddress,
   artifactFilename,
@@ -102,6 +104,37 @@ describe("sortArtifacts", () => {
       a("spec", "index.md", null, 1),
     ])
     expect(sorted.map((r) => r.title)).toEqual(["new", "old", "done", "index.md", "n1", "w"])
+  })
+})
+
+describe("compareArtifactsByTime", () => {
+  test("strictly newest first, unknown last", () => {
+    const r = (title: string, status: string | null, createdAt: number | null): ArtifactRow => ({
+      path: `/x/${title}`, name: title, type: "note", title, status, priority: null, createdAt,
+    })
+    const sorted = [r("a", null, 1), r("b", "complete", 9), r("c", null, null), r("d", "open", 5)]
+      .sort(compareArtifactsByTime)
+    expect(sorted.map((x) => x.title)).toEqual(["b", "d", "a", "c"])
+  })
+})
+
+describe("buildArtifactTree", () => {
+  const ctx = "o/r/c"
+  const r = (rel: string): ArtifactRow => ({
+    path: `/store/${ctx}/${rel}`, name: rel.split("/").pop()!, type: rel.split("/")[0]!,
+    title: rel, status: null, priority: null, createdAt: 1,
+  })
+  const rows = [r("note/ideas/x.md"), r("note/a.md"), r("task/t.md"), r("note/ideas/deep/y.md")]
+  test("type dirs in type order, files before subdirs", () => {
+    const tree = buildArtifactTree(ctx, rows, new Set())
+    expect(tree.map((t) => `${t.depth}:${t.name}${t.kind === "dir" ? `/${t.count}` : ""}`)).toEqual([
+      "0:task/1", "1:t.md", "0:note/3", "1:a.md", "1:ideas/2", "2:x.md", "2:deep/1", "3:y.md",
+    ])
+  })
+  test("folded dirs hide their contents", () => {
+    const tree = buildArtifactTree(ctx, rows, new Set(["note/ideas"]))
+    expect(tree.map((t) => t.name)).toEqual(["task", "t.md", "note", "a.md", "ideas"])
+    expect(tree[4]).toMatchObject({ kind: "dir", folded: true, count: 2 })
   })
 })
 

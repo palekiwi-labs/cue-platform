@@ -12,6 +12,7 @@ import { registerPrBrowser } from "./commands/prs"
 import { registerReviewRunCommand } from "./commands/review-run"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
+import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
 import { registerCueSkillInjection } from "./skill-injection"
 import { cueAddTool } from "./tools/cue-add"
@@ -58,6 +59,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
+  registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)
   registerSessionNaming(pi)

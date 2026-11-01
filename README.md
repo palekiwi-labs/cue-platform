@@ -139,6 +139,7 @@ nix develop --command bun install --frozen-lockfile
 nix develop --command bun run typecheck
 nix develop --command bun test ./src
 nix develop --command python3 tests/live-footer.py
+nix develop --command python3 tests/live-pr-preview.py
 ```
 
 The smoke test uses an isolated tmux server, temporary settings, and a copy
@@ -146,6 +147,10 @@ of the package. It changes a visible footer marker, checks `/reload`, opens
 a second window, checks tmux idle/blocked transitions before and after
 reload, and verifies settings remain writable. It does not call
 a model, read user credentials, or modify the working checkout.
+
+The PR preview smoke test uses fixture comments and the installed pi's real
+key manager and overlay dispatch. It checks default scrolling, layout toggling
+and resizing in both fullscreen and regular modes, without GitHub or a model.
 
 Verified on `x86_64-linux` only. Other system outputs are provided to
 match the cast flake but have not been runtime-tested.

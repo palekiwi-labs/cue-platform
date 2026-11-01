@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -10,7 +13,94 @@ import {
 } from "../lib/current-context"
 import { parseTree } from "../lib/context-tree"
 import { fuzzyNarrow } from "../lib/fuzzy-select"
-import { pinItems, registerContextPinsCommand } from "./context-pins"
+import {
+  contextOrientation,
+  pinItems,
+  registerContextPinsCommand,
+} from "./context-pins"
+
+describe("contextOrientation briefing", () => {
+  const address = "outside/repo/demo"
+  let store: string
+  let file: string
+  let pi: ExtensionAPI
+  let calls: { cmd: string; args: string[]; cwd: string }[]
+  let statusJson: string
+
+  beforeEach(async () => {
+    store = await mkdtemp(join(tmpdir(), "cue-orientation-"))
+    file = join(store, address, "context.md")
+    await mkdir(join(store, address), { recursive: true })
+    statusJson = JSON.stringify({ store, address })
+    calls = []
+    pi = {
+      exec: async (cmd: string, args: string[], opts: { cwd: string }) => {
+        calls.push({ cmd, args, cwd: opts.cwd })
+        const jsonStatus = args.join(" ") === `status --context ${address} --json`
+        return {
+          stdout: jsonStatus ? statusJson : "",
+          stderr: "",
+          code: jsonStatus ? 0 : 1,
+          killed: false,
+        }
+      },
+    } as unknown as ExtensionAPI
+  })
+
+  afterEach(async () => {
+    await rm(store, { recursive: true, force: true })
+  })
+
+  test("injects only the body labelled with the cross-scope address", async () => {
+    const body = "# Briefing\n\nFollow these instructions.\n\n---\n\nKeep this rule."
+    await writeFile(file, `---\ntitle: Private metadata\nkind: work\n---\n\n${body}\n`)
+    const out = await contextOrientation(pi, "/work", address)
+    expect(out).toContain(`<cue-context address="${address}">\n${body}\n</cue-context>`)
+    expect(out).not.toContain("Private metadata")
+    expect(out).not.toContain("kind: work")
+    expect(calls).toContainEqual({
+      cmd: "cue",
+      args: ["status", "--context", address, "--json"],
+      cwd: "/work",
+    })
+    expect(calls.some((c) => c.args.includes("context.md"))).toBe(false)
+  })
+
+  test.each([
+    ["no frontmatter", "# Plain body\n", "# Plain body"],
+    ["BOM and CRLF", "\uFEFF---\r\ntitle: Hidden\r\n---\r\nBody\r\n", "Body"],
+  ])("handles %s", async (_name, content, body) => {
+    await writeFile(file, content)
+    const out = await contextOrientation(pi, "/work", address)
+    expect(out).toContain(`<cue-context address="${address}">\n${body}\n</cue-context>`)
+    expect(out).not.toContain("title: Hidden")
+  })
+
+  test.each([
+    ["empty file", ""],
+    ["whitespace", " \n\t\n"],
+    ["metadata only", "---\ntitle: Hidden\n---\n \n\t"],
+    ["invalid YAML", "---\ntitle: [invalid\n---\nBody"],
+  ])("omits %s", async (_name, content) => {
+    await writeFile(file, content)
+    const out = await contextOrientation(pi, "/work", address)
+    expect(out).not.toContain("<cue-context")
+    expect(out).toContain("Active cue context for this session: demo")
+  })
+
+  test("missing context.md leaves orientation usable", async () => {
+    const out = await contextOrientation(pi, "/work", address)
+    expect(out).not.toContain("<cue-context")
+    expect(out).toContain("PWD: /work")
+  })
+
+  test.each(["not json", "{}"])("unavailable store (%s) is graceful", async (json) => {
+    statusJson = json
+    const out = await contextOrientation(pi, "/work", address)
+    expect(out).not.toContain("<cue-context")
+    expect(out).toContain("PWD: /work")
+  })
+})
 
 describe("current-context helpers", () => {
   test("parseTree walks nested roots with connectors, drops malformed", () => {

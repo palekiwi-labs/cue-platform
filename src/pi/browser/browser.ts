@@ -18,6 +18,8 @@ import {
   Input,
   Markdown,
   matchesKey,
+  type KeyId,
+  type OverlayHandle,
   sliceByColumn,
   type TUI,
   truncateToWidth,
@@ -34,6 +36,7 @@ import {
   kindLabel,
 } from "./activity"
 import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
+import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
   artifactAddress,
@@ -49,12 +52,17 @@ import {
   recencyIndex,
   relativeAge,
   sortArtifacts,
+  compareArtifactsByTime,
+  buildArtifactTree,
+  type ArtifactTreeRow,
   typeBadge,
 } from "./model"
 import {
   fmtTokens,
+  cwdMark,
   groupSessions,
   NO_CONTEXT,
+  sessionHeadline,
   type SessionListRow,
   type SessionRow,
   syntheticContext,
@@ -106,6 +114,8 @@ export interface BrowserDeps {
   loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
   currentSession(): string | undefined
+  /** Working directory of this pi's active session and its repo scope. */
+  currentCwd(): { cwd: string; scope?: string }
   /** Resume a session here or in tmux; returns an error message on failure. */
   resume(session: SessionRow, target: Target): string | undefined
   /** Delete a session file; resolves to what happened ("moved to trash"). */
@@ -163,6 +173,11 @@ interface ArtifactsView {
   kind: "artifacts"
   context: ContextRef
   rows: ArtifactRow[]
+  /** Grouped by type instead of strictly newest first. */
+  byType: boolean
+  tree: boolean
+  /** Folded directory keys in the tree, e.g. `note/ideas`. */
+  folds: Set<string>
   query: string
   selected: number
   loading: boolean
@@ -317,7 +332,8 @@ export class CueBrowser implements Component {
 
   private pushArtifacts(context: ContextRef): void {
     const v: ArtifactsView = {
-      kind: "artifacts", context, rows: [], query: "", selected: 0, loading: true,
+      kind: "artifacts", context, rows: [], byType: false, tree: false, folds: new Set(),
+      query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -481,7 +497,7 @@ export class CueBrowser implements Component {
 
   private async loadArtifacts(v: ArtifactsView): Promise<void> {
     v.loading = true
-    v.rows = sortArtifacts(await this.deps.loadArtifacts(v.context.address))
+    v.rows = await this.deps.loadArtifacts(v.context.address)
     v.loading = false
     this.refresh()
   }
@@ -588,8 +604,83 @@ export class CueBrowser implements Component {
     return r?.kind === "session" ? r.session : r?.sessions[0]
   }
 
-  private shownArtifacts(v: ArtifactsView): ArtifactRow[] {
-    return fuzzyFilter(v.rows, v.query, (r) => `${r.type} ${r.title} ${r.name}`)
+  private shownArtifacts(v: ArtifactsView): ArtifactTreeRow[] {
+    const sorted = v.byType || v.tree ? sortArtifacts(v.rows) : [...v.rows].sort(compareArtifactsByTime)
+    if (v.tree && v.query.trim() === "") return buildArtifactTree(v.context.address, sorted, v.folds)
+    return fuzzyFilter(sorted, v.query, (r) => `${r.type} ${r.title} ${r.name}`)
+      .map((row) => ({ kind: "file" as const, row, name: row.name, depth: 0 }))
+  }
+
+  /** Fold the highlighted directory, or the highlighted file's directory. */
+  private onFoldArtifacts(v: ArtifactsView): void {
+    if (!v.tree || v.query.trim() !== "") return
+    const rows = this.shownArtifacts(v)
+    const r = rows[v.selected]
+    if (!r) return
+    let key: string | undefined
+    if (r.kind === "dir") key = r.key
+    else {
+      for (let i = v.selected - 1; i >= 0; i--) {
+        const p = rows[i]!
+        if (p.kind === "dir" && p.depth < r.depth) {
+          key = p.key
+          break
+        }
+      }
+    }
+    if (!key) return
+    if (!v.folds.delete(key)) v.folds.add(key)
+    this.selectArtifactDir(v, key)
+    this.refresh()
+  }
+
+  /** zM/zR: fold every type directory, or unfold everything. */
+  private onFoldArtifactsAll(v: ArtifactsView): void {
+    if (!v.tree || v.query.trim() !== "") return
+    const rows = this.shownArtifacts(v)
+    const cur = rows[v.selected]
+    const roots = buildArtifactTree(v.context.address, v.rows, new Set())
+      .flatMap((r) => (r.kind === "dir" && r.depth === 0 ? [r.key] : []))
+    if (roots.some((k) => !v.folds.has(k))) {
+      for (const k of roots) v.folds.add(k)
+      let root: string | undefined
+      if (cur?.kind === "dir") root = cur.key.split("/")[0]
+      else if (cur) {
+        for (let i = v.selected; i >= 0; i--) {
+          const p = rows[i]!
+          if (p.kind === "dir" && p.depth === 0) {
+            root = p.key
+            break
+          }
+        }
+      }
+      if (root) this.selectArtifactDir(v, root)
+    } else {
+      v.folds.clear()
+      if (cur?.kind === "dir") this.selectArtifactDir(v, cur.key)
+      else if (cur) {
+        const i = this.shownArtifacts(v).findIndex((r) => r.kind === "file" && r.row.path === cur.row.path)
+        if (i >= 0) v.selected = i
+      }
+    }
+    this.refresh()
+  }
+
+  private selectArtifactDir(v: ArtifactsView, key: string): void {
+    const i = this.shownArtifacts(v).findIndex((r) => r.kind === "dir" && r.key === key)
+    if (i >= 0) v.selected = i
+  }
+
+  /** Toggle a layout flag, keeping the highlighted artifact selected. */
+  private relayoutArtifacts(v: ArtifactsView, change: () => void): void {
+    const cur = this.shownArtifacts(v)[v.selected]
+    change()
+    const rows = this.shownArtifacts(v)
+    const i = cur?.kind === "file"
+      ? rows.findIndex((r) => r.kind === "file" && r.row.path === cur.row.path)
+      : -1
+    v.selected = Math.max(0, i)
+    this.refresh()
   }
 
   private shownCount(): number {
@@ -609,7 +700,9 @@ export class CueBrowser implements Component {
 
   private selectedArtifact(): ArtifactRow | undefined {
     const v = this.view
-    return v.kind === "artifacts" ? this.shownArtifacts(v)[v.selected] : undefined
+    if (v.kind !== "artifacts") return undefined
+    const r = this.shownArtifacts(v)[v.selected]
+    return r?.kind === "file" ? r.row : undefined
   }
 
   private selectedPath(): string | undefined {
@@ -655,13 +748,14 @@ export class CueBrowser implements Component {
 
   // ---- input -----------------------------------------------------------
 
-  handleInput(data: string): void {
-    if (this.busy) return
-    if (this.wizard) return this.wizardInput(this.wizard, data)
-    if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
-    if (this.describing) return this.describeInput(this.describing, data)
-    if (this.creating) return this.creatingInput(this.creating, data)
+  /**
+   * The key table of the current view, in dispatch order. Bindings whose
+   * condition does not hold are left out, so they are neither dispatched
+   * nor listed in the help popup.
+   */
+  private bindings(): Binding[] {
     const v = this.view
+    const k = v.kind
     const move = (delta: number) => {
       const n = this.shownCount()
       v.selected = n === 0 ? 0 : Math.max(0, Math.min(n - 1, v.selected + delta))
@@ -669,126 +763,163 @@ export class CueBrowser implements Component {
       this.refresh()
     }
     const page = Math.max(1, this.bodyHeight() - 1)
+    const kbKeys = (id: string) => this.kb.getKeys(id as any) as KeyId[]
+    const out: Binding[] = []
+    const add = (keys: KeyId | KeyId[], label: string, group: KeyGroup, run: () => unknown, extra: Partial<Binding> = {}) =>
+      out.push({ keys: Array.isArray(keys) ? keys : [keys], label, group, run: () => void run(), ...extra })
+    const pushContext = (push: (c: { address: string; slug: string }) => void) => () => {
+      const c = this.selectedContext()
+      if (c) push({ address: c.address, slug: c.slug })
+    }
 
-    if (matchesKey(data, "escape")) return this.back()
-    if (this.kb.matches(data, "tui.select.up")) return move(-1)
-    if (this.kb.matches(data, "tui.select.down")) return move(1)
-    if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
-    if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
-    if (matchesKey(data, "enter")) return void this.onEnter()
-    if (matchesKey(data, "ctrl+e")) return void this.onOpen()
-    if (matchesKey(data, "ctrl+t")) {
+    add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
+    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1))
+    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1))
+    add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
+    add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
+    const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
+    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true })
+    add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
+    add("ctrl+t", "target here/tmux", "act", () => {
       this.target = this.target === "here" ? "tmux" : "here"
-      return this.tui.requestRender()
+      this.tui.requestRender()
+    })
+    if (k === "log") {
+      add("ctrl+y", "copy address", "copy", () => this.onCopyLog("address"))
+      add("ctrl+h", "copy link", "copy", () => this.onCopyLog("link"))
+    } else if (k === "activity") {
+      add("ctrl+h", "copy context", "copy", () => this.onCopyActivity("context"))
+      add("ctrl+y", "copy path/address/commit", "copy", () => this.onCopyActivity("value"))
+    } else {
+      add("ctrl+h", "copy address", "copy", () => this.onCopy("address"))
+      add("ctrl+y", "copy path", "copy", () => this.onCopy("path"))
     }
-    if (v.kind === "log") {
-      if (matchesKey(data, "ctrl+y")) return void this.onCopyLog("address")
-      if (matchesKey(data, "ctrl+h")) return void this.onCopyLog("link")
-    }
-    if (v.kind === "activity") {
-      if (matchesKey(data, "ctrl+h")) return void this.onCopyActivity("context")
-      if (matchesKey(data, "ctrl+y")) return void this.onCopyActivity("value")
-    }
-    if (matchesKey(data, "ctrl+h")) return void this.onCopy("address")
-    if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
-    if (matchesKey(data, "ctrl+n")) {
-      if (v.kind === "contexts") return this.startCreateContext()
-      return this.startWizard()
-    }
-    if (matchesKey(data, "ctrl+s")) return this.onNewSession()
-    if (matchesKey(data, "alt+r")) return this.reload()
-    if (v.kind !== "artifacts") {
-      if (matchesKey(data, "ctrl+up")) return this.stepRecency(1)
-      if (matchesKey(data, "ctrl+down")) return this.stepRecency(-1)
+    if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext())
+    else add("ctrl+n", "new artifact", "act", () => this.startWizard())
+    add("ctrl+s", "new session", "act", () => this.onNewSession())
+    add("alt+r", "reload", "view", () => this.reload())
+    if (k !== "artifacts") {
+      add("ctrl+up", "recency up", "view", () => this.stepRecency(1))
+      add("ctrl+down", "recency down", "view", () => this.stepRecency(-1))
     }
     if (v.kind === "contexts") {
-      if (matchesKey(data, "tab")) {
+      add("tab", "recent/all", "view", () => {
         const keep = this.selectedContext()?.address
         v.recent = !v.recent
         v.selected = 0
         if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
-        return this.refresh()
-      }
-      if (matchesKey(data, "ctrl+l")) return void this.onLink()
-      if (matchesKey(data, "alt+f")) return void this.onTogglePin(v)
-      if (matchesKey(data, "alt+a")) return void this.onToggleArchive(v)
-      if (matchesKey(data, "alt+v")) {
+        this.refresh()
+      }, { hint: true })
+      add("ctrl+l", "link session", "act", () => this.onLink())
+      add("alt+f", "pin", "act", () => this.onTogglePin(v))
+      add("alt+a", "archive", "act", () => this.onToggleArchive(v))
+      add("alt+v", "show archived", "view", () => {
         this.showArchived = !this.showArchived
-        return void this.loadContexts(v, this.selectedContext()?.address)
-      }
-      if (matchesKey(data, "alt+t")) {
+        return this.loadContexts(v, this.selectedContext()?.address)
+      })
+      add("alt+t", "tree/flat", "view", () => {
         const keep = this.selectedContext()?.address
         this.contextsFlat = !this.contextsFlat
         v.selected = 0
         if (keep) this.selectContext(v, keep)
-        return this.refresh()
+        this.refresh()
+      })
+      if (!this.contextsFlat) {
+        add("alt+z", "fold", "view", () => this.onToggleCollapse(v))
+        add("shift+tab", "fold all", "view", () => this.onCollapseAll(v))
       }
-      if (matchesKey(data, "alt+z") && !this.contextsFlat) return this.onToggleCollapse(v)
-      if (matchesKey(data, "ctrl+r")) {
-        const c = this.selectedContext()
-        if (c) this.pushSessions({ address: c.address, slug: c.slug })
-        return
-      }
-      if (matchesKey(data, "ctrl+a")) {
-        const c = this.selectedContext()
-        if (c) this.pushActivity({ address: c.address, slug: c.slug })
-        return
-      }
-      if (matchesKey(data, "ctrl+g")) {
-        const c = this.selectedContext()
-        if (c) this.pushLog({ address: c.address, slug: c.slug })
-        return
+      add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true })
+      add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
+      add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
+    } else if (v.kind === "artifacts") {
+      add("alt+t", "tree/flat", "view", () => this.relayoutArtifacts(v, () => { v.tree = !v.tree }))
+      if (v.tree) {
+        add("alt+z", "fold", "view", () => this.onFoldArtifacts(v))
+        add("shift+tab", "fold all", "view", () => this.onFoldArtifactsAll(v))
+      } else {
+        add("alt+k", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
       }
     } else if (v.kind === "activity" || v.kind === "log") {
-      if (matchesKey(data, "tab")) {
+      add("tab", "recent/all", "view", () => {
         v.recent = !v.recent
         v.selected = 0
-        return this.refresh()
-      }
-    } else {
-      if (v.kind === "sessions") {
-        if (matchesKey(data, "tab")) {
-          v.subset = NEXT_SUBSET[v.subset]
-          v.selected = 0
-          this.previewScroll = this.previewStart()
-          return void this.loadSessions(v)
-        }
-        if (matchesKey(data, "ctrl+l")) return void this.onLink()
-        if (matchesKey(data, "alt+z")) return this.onFoldSessions(v)
-        if (matchesKey(data, "alt+t")) {
-          this.sessionsFlat = !this.sessionsFlat
-          v.selected = 0
-          this.previewScroll = this.previewStart()
-          return this.refresh()
-        }
-        if (matchesKey(data, "ctrl+x")) return this.onDelete()
-        if (matchesKey(data, "alt+u")) return this.onClearLabel()
-        if (matchesKey(data, "alt+d")) return this.onDescribe()
-      }
+        this.refresh()
+      }, { hint: true })
+    } else if (v.kind === "sessions") {
+      add("tab", "recent/labeled/all", "view", () => {
+        v.subset = NEXT_SUBSET[v.subset]
+        v.selected = 0
+        this.previewScroll = this.previewStart()
+        return this.loadSessions(v)
+      }, { hint: true })
+      add("ctrl+l", "link to context", "act", () => this.onLink())
+      add("alt+z", "fold", "view", () => this.onFoldSessions(v))
+      add("shift+tab", "fold all", "view", () => this.onFoldSessionsAll(v))
+      add("alt+t", "tree/flat", "view", () => {
+        this.sessionsFlat = !this.sessionsFlat
+        v.selected = 0
+        this.previewScroll = this.previewStart()
+        this.refresh()
+      })
+      add("ctrl+x", "delete", "act", () => this.onDelete())
+      add("alt+u", "unlabel", "act", () => this.onClearLabel())
+      add("alt+d", "describe", "act", () => this.onDescribe())
     }
-    if ((v.kind === "contexts" || v.kind === "sessions") && matchesKey(data, "alt+s")) {
-      this.repoScope = !this.repoScope
-      return this.reloadIfScopeChanged()
+    if (k === "contexts" || k === "sessions") {
+      add("alt+s", "repo/all scope", "view", () => {
+        this.repoScope = !this.repoScope
+        this.reloadIfScopeChanged()
+      })
     }
-    if (v.kind !== "contexts") {
-      if (matchesKey(data, "ctrl+r") && v.kind !== "sessions") return this.jumpTo("sessions")
-      if (matchesKey(data, "ctrl+a") && v.kind !== "activity") return this.jumpTo("activity")
-      if (matchesKey(data, "ctrl+g") && v.kind !== "log") return this.jumpTo("log")
-    }
-    if (v.kind !== "contexts") {
-      if (matchesKey(data, "alt+p")) {
+    if (k !== "contexts") {
+      if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"))
+      if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"))
+      if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"))
+      add("alt+p", "preview", "view", () => {
         this.showPreview = !this.showPreview
-        return this.refresh()
+        this.refresh()
+      })
+      add("alt+l", "layout", "view", () => {
+        if (!this.stacked.delete(k)) this.stacked.add(k)
+        this.refresh()
+      })
+      if (this.showPreview) {
+        add("ctrl+d", "preview down", "view", () => this.scrollPreview(Math.floor(page / 2)))
+        add("ctrl+u", "preview up", "view", () => this.scrollPreview(-Math.floor(page / 2)))
+        add("ctrl+home", "preview top", "view", () => this.scrollTo(0))
+        add("ctrl+end", "preview bottom", "view", () => this.scrollTo(Number.MAX_SAFE_INTEGER))
       }
-      if (matchesKey(data, "alt+l")) {
-        if (!this.stacked.delete(v.kind)) this.stacked.add(v.kind)
-        return this.refresh()
-      }
-      if (this.showPreview && matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
-      if (this.showPreview && matchesKey(data, "ctrl+home")) return this.scrollTo(0)
-      if (this.showPreview && matchesKey(data, "ctrl+end")) return this.scrollTo(Number.MAX_SAFE_INTEGER)
     }
+    add(HELP_KEYS, "keys", "view", () => this.showHelp(), { hint: true })
+    return out
+  }
+
+  private showHelp(): void {
+    const bindings = this.bindings()
+    const title = `keys: ${this.view.kind}`
+    const rows = () => this.tui.terminal.rows
+    let handle: OverlayHandle | undefined
+    const help = new KeyHelp(this.theme, title, bindings, () => {
+      handle?.hide()
+      this.tui.requestRender()
+    }, () => rows() - 2)
+    handle = this.tui.showOverlay(help, {
+      anchor: "center",
+      width: helpWidth(bindings, this.tui.terminal.columns),
+      maxHeight: Math.max(5, rows() - 2),
+    })
+    this.tui.requestRender()
+  }
+
+  handleInput(data: string): void {
+    if (this.busy) return
+    if (this.wizard) return this.wizardInput(this.wizard, data)
+    if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
+    if (this.describing) return this.describeInput(this.describing, data)
+    if (this.creating) return this.creatingInput(this.creating, data)
+    const v = this.view
+    const hit = findBinding(this.bindings(), data)
+    if (hit) return hit.run!()
 
     const before = this.input.getValue()
     this.input.handleInput(data)
@@ -1022,6 +1153,40 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
+  /** zM/zR: collapse every root with children, or expand all. */
+  private onCollapseAll(v: ContextsView): void {
+    if (v.query.trim() !== "") return
+    const tree = this.treeRows(v)
+    const roots: string[] = []
+    for (let i = 0; i < tree.length; i++) {
+      if (tree[i]!.depth !== 0) continue
+      if (i + 1 < tree.length && tree[i + 1]!.depth > 0) roots.push(tree[i]!.address)
+    }
+    // zM when any collapsible root is open, zR when they are all folded
+    // (deeper folds clear with the roots: zR opens everything).
+    if (roots.some((a) => !this.collapsed.has(a))) {
+      for (const a of roots) this.collapsed.add(a)
+      this.growSlugWidth(v.rows)
+      // The cursor's row may hide inside a root: move to its nearest
+      // visible ancestor, scanning back through the pre-order tree.
+      const keep = this.selectedContext()?.address
+      if (!(keep && this.selectContext(v, keep))) {
+        const idx = tree.findIndex((r) => r.address === keep)
+        const depth = idx >= 0 ? tree[idx]!.depth : 0
+        let j = idx
+        while (j > 0 && tree[j]!.depth >= depth) j--
+        const up = tree[j]?.address
+        if (!(up && this.selectContext(v, up))) this.selectHere(v)
+      }
+    } else {
+      this.collapsed.clear()
+      this.growSlugWidth(v.rows)
+      const keep = this.selectedContext()?.address
+      if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
+    }
+    this.refresh()
+  }
+
   private onResume(): void {
     const s = this.selectedSession()
     if (!s) return
@@ -1041,6 +1206,24 @@ export class CueBrowser implements Component {
     else this.sessionFolds.add(address)
     const i = this.shownSessions(v).findIndex((x) => x.kind === "context" && x.context.address === address)
     if (i >= 0) v.selected = i
+    this.refresh()
+  }
+
+  /** zM/zR for sessions: fold every context with sessions, or unfold all. */
+  private onFoldSessionsAll(v: SessionsView): void {
+    if (v.query.trim() !== "" || v.subset === "labeled" || this.sessionsFlat || !this.sessionFolds) return
+    const headers = this.shownSessions(v)
+      .filter((r): r is Extract<SessionListRow, { kind: "context" }> => r.kind === "context" && r.sessions.length > 0)
+    if (headers.some((r) => !this.sessionFolds!.has(r.context.address))) {
+      const keep = this.selectedSessionRow()
+      for (const r of headers) this.sessionFolds.add(r.context.address)
+      // Session rows hid under their header: snap to the same context.
+      const address = keep?.context.address
+      const i = this.shownSessions(v).findIndex((r) => r.kind === "context" && r.context.address === address)
+      if (i >= 0) v.selected = i
+    } else {
+      this.sessionFolds.clear()
+    }
     this.refresh()
   }
 
@@ -1300,7 +1483,7 @@ export class CueBrowser implements Component {
           ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : v.kind === "log"
           ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
-          : `Cue artifacts ${t.fg("muted", v.context.address)}`
+          : `Cue artifacts ${t.fg("muted", `${v.tree ? "tree" : v.byType ? "flat by type" : "flat by time"} ${v.context.address}`)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
@@ -1309,39 +1492,15 @@ export class CueBrowser implements Component {
   }
 
   private helpLine(width: number): string {
-    const v = this.view
-    const esc = this.views.length > 1 ? "esc back" : "esc close"
-    let hints: string[]
     if (this.wizard) {
-      hints = this.wizard.step === "type"
+      const hints = this.wizard.step === "type"
         ? ["up/down type", "enter next", "esc cancel"]
         : ["enter create", "tab slug/path", "esc back"]
-    } else if (v.kind === "contexts") {
-      hints = ["enter artifacts", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+e open", "ctrl+t target", "ctrl+n new context",
-        "ctrl+s session", "ctrl+l link", "alt+f pin", "alt+s scope", "alt+a archive", "alt+v show archived", "alt+z fold", "alt+t tree/flat", "alt+r reload", "ctrl+h address",
-        "ctrl+y path", "ctrl+up/down recency", "tab recent/all", esc]
-    } else if (v.kind === "sessions") {
-      hints = ["enter resume", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+s new session", "ctrl+l link", "ctrl+x delete", "alt+u unlabel", "alt+d describe", "alt+s scope",
-        "alt+z fold", "alt+t tree/flat", "ctrl+up/down recency", "tab recent/labeled/all", "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview",
-        "alt+l layout", ...this.previewHints(), esc]
-    } else if (v.kind === "activity") {
-      hints = ["ctrl+g log", "ctrl+r sessions", "tab recent/all", "ctrl+up/down recency", "ctrl+h context",
-        "ctrl+y path/address/commit", "alt+r reload", "alt+p preview", "alt+l layout",
-        ...this.previewHints(), esc]
-    } else if (v.kind === "log") {
-      hints = ["enter/ctrl+e open trace", "ctrl+a activity", "ctrl+r sessions", "ctrl+t target", "tab recent/all", "ctrl+up/down recency",
-        "ctrl+y address", "ctrl+h link", "alt+r reload", "alt+p preview", "alt+l layout", ...this.previewHints(), esc]
-    } else {
-      hints = ["enter open", "ctrl+e open", "ctrl+r sessions", "ctrl+a activity", "ctrl+g log", "ctrl+t target", "ctrl+n new", "ctrl+s session",
-        "ctrl+h address", "ctrl+y path", "alt+r reload", "alt+p preview", "alt+l layout",
-        ...this.previewHints(), esc]
+      return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
     }
-    return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
+    return truncateToWidth(this.theme.fg("dim", hintText(this.bindings())), width, "…")
   }
 
-  private previewHints(): string[] {
-    return this.showPreview ? ["ctrl+d/u scroll", "ctrl+home/end top/bottom"] : []
-  }
 
   /** Window of `count` rows keeping `selected` visible. */
   private window(total: number, selected: number, count: number): [number, number] {
@@ -1398,6 +1557,11 @@ export class CueBrowser implements Component {
       return tok + " " + t.fg("muted", relativeAge(s.modified, now).padStart(4))
     }
     const label = (s: SessionRow) => (s.label ? " " + t.fg("error", `[${truncateToWidth(s.label, 12, "…")}]`) : "")
+    const hereCwd = this.deps.currentCwd()
+    const cwdTag = (s: SessionRow) => {
+      const m = cwdMark(s, hereCwd)
+      return m ? " " + t.fg(m.mismatch ? "error" : "dim", m.text) : ""
+    }
     const nameWidth = Math.max(10, width - 12)
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
@@ -1419,8 +1583,7 @@ export class CueBrowser implements Component {
         const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
         const desc = s.path === current ? t.fg("accent", s.description) : s.description
         // Flat rows lead with the context, as the tmux window picker does.
-        const where = flat ? t.fg("muted", r.context.slug) + t.fg("dim", " | ") : ""
-        name = indent + where + desc + label(s)
+        name = indent + (flat ? sessionHeadline(t, r.context.slug, s.description, s.label, s.path === current) : desc + label(s)) + cwdTag(s)
         tail = s
       }
       const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)
@@ -1440,8 +1603,29 @@ export class CueBrowser implements Component {
     const [a, b] = this.window(rows.length, v.selected, height)
     const out: string[] = []
     for (let i = a; i < b; i++) {
-      const r = rows[i]!
+      const node = rows[i]!
       const sel = i === v.selected
+      const indent = "  ".repeat(node.depth)
+      if (node.kind === "dir") {
+        const color = node.depth === 0 ? TYPE_COLOR[node.name] ?? "muted" : "muted"
+        const count = t.fg("dim", ` (${node.count})${node.folded ? " +" : ""}`)
+        const line = pad(`${indent}${t.fg(color, `${node.name}/`)}${count}`, width)
+        out.push(sel ? t.bg("selectedBg", line) : line)
+        continue
+      }
+      const r = node.row
+      if (v.tree && v.query.trim() === "") {
+        const caret = r.priority === "critical"
+          ? t.fg("error", "»")
+          : r.priority === "high" ? t.fg("warning", "›") : " "
+        let name = pad(`${indent}${node.name}`, Math.max(10, width - 1 - 1 - 1 - 4))
+        if (r.status === "closed") name = t.fg("dim", t.strikethrough(name))
+        else if (isFinished(r.status)) name = t.fg("dim", name)
+        const age = t.fg("muted", relativeAge(r.createdAt, now).padStart(4))
+        const line = pad(`${caret} ${name} ${age}`, width)
+        out.push(sel ? t.bg("selectedBg", line) : line)
+        continue
+      }
       const badge = t.fg(TYPE_COLOR[r.type] ?? "muted", pad(typeBadge(r.type), 5))
       const caret = r.priority === "critical"
         ? t.fg("error", "»")

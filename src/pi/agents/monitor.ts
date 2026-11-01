@@ -29,14 +29,18 @@ import {
   haystack,
   inputTokens,
   isLive,
+  streamSettled,
   parseReceipt,
   receiptStats,
   type RunRow,
   runState,
   stateTone,
 } from "./model"
+import { type Seg, type SegTone, streamLines, type StreamItem } from "./stream"
 
 export const POLL_MS = 5000
+/** Stream pane tick while it shows a live run: stat plus appended bytes. */
+export const STREAM_POLL_MS = 1000
 
 export interface MonitorDeps {
   /** Every run cue-agent knows, newest batch first; error text on failure. */
@@ -45,6 +49,8 @@ export interface MonitorDeps {
   prompt(runPath: string): string | undefined
   /** The run's receipt.json text, if readable. */
   receipt(runPath: string): string | undefined
+  /** The selected run's activity timeline, tailed by the caller. */
+  stream(r: RunRow): Promise<StreamSnapshot | undefined>
   /** File holding the document shown in a pane; undefined if none. */
   documentPath(r: RunRow, pane: Pane): string | undefined
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
@@ -80,13 +86,19 @@ export function runSessionNote(r: RunRow): string {
   return `This session was started from cue-agent run ${id}`
 }
 
+export interface StreamSnapshot {
+  runId: string
+  version: number
+  items: StreamItem[]
+}
+
 export type { Target } from "../lib/default-target"
 
 type Subset = "running" | "all"
 
 /** Preview panes; ctrl+r cycles through them in this order. */
-export type Pane = "prompt" | "response" | "stats"
-const PANES: readonly Pane[] = ["prompt", "response", "stats"]
+export type Pane = "prompt" | "stream" | "response" | "stats"
+const PANES: readonly Pane[] = ["prompt", "stream", "response", "stats"]
 
 /** A selectable list line: a run, or the heading of a folded group. */
 interface Entry {
@@ -113,6 +125,13 @@ export class AgentMonitor implements Component {
   private previewScroll = 0
   private previewCache: { key: string; lines: string[] } | undefined
   private timer: ReturnType<typeof setInterval> | undefined
+  private streamTimer: ReturnType<typeof setInterval> | undefined
+  private streamSnap: StreamSnapshot | undefined
+  /** The snapshot was polled after the run had ended, so nothing follows it. */
+  private streamFinal = false
+  /** Stream pane sticks to the bottom until the operator scrolls up. */
+  private follow = true
+  private streamMax = 0
   private target: Target
   private status = ""
   private busy = false
@@ -131,12 +150,30 @@ export class AgentMonitor implements Component {
     this.input.focused = true
     void this.reload(true)
     this.timer = setInterval(() => void this.reload(false), POLL_MS)
+    this.streamTimer = setInterval(() => void this.refreshStream(), STREAM_POLL_MS)
   }
 
   close(): void {
     if (this.timer) clearInterval(this.timer)
+    if (this.streamTimer) clearInterval(this.streamTimer)
     this.timer = undefined
+    this.streamTimer = undefined
     this.done()
+  }
+
+  /** Tail the selected run's events while the stream pane shows it. */
+  private async refreshStream(): Promise<void> {
+    const r = this.selected()
+    if (!r || this.pane !== "stream" || !this.preview) return
+    if (streamSettled(this.streamSnap?.runId, this.streamFinal, r)) return
+    const ended = !isLive(r)
+    const snap = await this.deps.stream(r)
+    if (!snap) return
+    if (snap.runId === this.selected()?.runId) {
+      this.streamSnap = snap
+      this.streamFinal = ended
+      this.tui.requestRender()
+    }
   }
 
   private async reload(first: boolean): Promise<void> {
@@ -219,6 +256,24 @@ export class AgentMonitor implements Component {
     this.tui.requestRender()
   }
 
+  /** zM/zR: fold every group, or unfold them all. */
+  private toggleFoldAll(): void {
+    const groups = this.groups()
+    if (groups.length === 0) return
+    const e = this.selectedEntry()
+    if (groups.some((g) => !this.isFolded(g))) {
+      for (const g of groups) this.foldOverride.set(g.key, true)
+      // A run hid under its group heading: snap to it.
+      this.selectedId = `group:${e?.group.key ?? groups[0]!.key}`
+    } else {
+      for (const g of groups) this.foldOverride.set(g.key, false)
+      // A group heading became its first run.
+      if (e && e.folded) this.selectedId = e.group.runs[0]!.row.runId
+    }
+    this.previewScroll = 0
+    this.tui.requestRender()
+  }
+
   // ---- input -----------------------------------------------------------
 
   handleInput(data: string): void {
@@ -229,6 +284,8 @@ export class AgentMonitor implements Component {
       const i = Math.max(0, Math.min(rows.length - 1, this.selectedIndex(rows) + delta))
       this.selectedId = rows[i]!.id
       this.previewScroll = 0
+      this.follow = true
+      void this.refreshStream()
       this.tui.requestRender()
     }
     const page = Math.max(1, this.bodyHeight() - 1)
@@ -243,7 +300,10 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "alt+r")) return void this.reload(false)
+    if (matchesKey(data, "alt+r")) {
+      void this.reload(false)
+      return void this.refreshStream()
+    }
     if (matchesKey(data, "enter")) return void this.onOpen()
     if (matchesKey(data, "ctrl+t")) {
       this.target = this.target === "here" ? "tmux" : "here"
@@ -252,9 +312,12 @@ export class AgentMonitor implements Component {
     if (matchesKey(data, "ctrl+r")) {
       this.pane = PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]!
       this.previewScroll = 0
+      this.follow = true
+      void this.refreshStream()
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
+    if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
     if (matchesKey(data, "ctrl+s")) return this.onSession()
     if (matchesKey(data, "ctrl+h")) return void this.onCopy("id")
     if (matchesKey(data, "ctrl+y")) return void this.onCopy("path")
@@ -339,6 +402,7 @@ export class AgentMonitor implements Component {
   }
 
   private scrollPreview(delta: number): void {
+    if (this.pane === "stream" && delta < 0) this.follow = false
     this.previewScroll = Math.max(0, this.previewScroll + delta)
     this.tui.requestRender()
   }
@@ -391,7 +455,7 @@ export class AgentMonitor implements Component {
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
-      "alt+z fold",
+      "alt+z fold", "shift+tab fold all",
       "ctrl+s session",
       "ctrl+h id",
       "ctrl+y dir",
@@ -486,12 +550,13 @@ export class AgentMonitor implements Component {
     }
     const runLine = (indent: string, r: RunRow, label: string) => {
       const state = runState(r)
+      const doing = isLive(r) && r.lastTool ? `${label} ▸ ${r.lastTool.name}${r.lastTool.pending ? "…" : ""}` : label
       return pad(
         indent + [
           t.fg(toneColor[stateTone(state)], pad(state, stateW)),
           pad(r.agent, agentW),
           t.fg("muted", pad(r.model.replace(/^[^/]+\//, ""), modelW)),
-          pad(label, labelW + indentW - indent.length),
+          pad(doing, labelW + indentW - indent.length),
           t.fg("muted", nums(r.elapsedSecs, inputTokens(r), r.costUsd)),
         ].join(" "),
         rowW,
@@ -527,6 +592,7 @@ export class AgentMonitor implements Component {
   private previewLines(width: number, height: number): string[] {
     const r = this.selected()
     if (!r) return []
+    if (this.pane === "stream") return this.streamPreviewLines(width, height, r)
     const key = `${r.runId}:${this.pane}:${width}`
     if (this.previewCache?.key !== key) {
       const src = this.previewSource(r)
@@ -539,6 +605,48 @@ export class AgentMonitor implements Component {
     const head = t.fg("muted", `${this.pane} • ${r.runId}`)
     const lines = this.previewCache.lines
     const max = Math.max(0, lines.length - (height - 1))
+    this.previewScroll = Math.min(this.previewScroll, max)
+    return [head, ...lines.slice(this.previewScroll, this.previewScroll + height - 1)]
+  }
+
+  private segColor: Record<SegTone, Parameters<Theme["fg"]>[0]> = {
+    live: "warning",
+    ok: "success",
+    bad: "error",
+    dim: "dim",
+    muted: "muted",
+    accent: "accent",
+    border: "border",
+  }
+
+  private renderSegs(segs: Seg[]): string {
+    return segs.map((s) => this.theme.fg(this.segColor[s.tone], s.text)).join("")
+  }
+
+  private streamPreviewLines(width: number, height: number, r: RunRow): string[] {
+    const t = this.theme
+    const head = t.fg(
+      "muted",
+      `${this.pane} • ${r.runId} • ${this.follow ? "following" : "paused"}`,
+    )
+    const withHead = (line: string): string[] => [head, line]
+    if (r.harness && r.harness !== "pi") {
+      return withHead(t.fg("dim", `_stream not supported for harness ${r.harness}_`))
+    }
+    const snap = this.streamSnap?.runId === r.runId ? this.streamSnap : undefined
+    if (!snap) return withHead(t.fg("dim", "reading…"))
+    const key = `${r.runId}:stream:${width}:${snap.version}`
+    if (this.previewCache?.key !== key) {
+      this.previewCache = {
+        key,
+        lines: streamLines(snap.items, isLive(r), width).map((segs) => this.renderSegs(segs)),
+      }
+    }
+    const lines = this.previewCache.lines
+    const max = Math.max(0, lines.length - (height - 1))
+    this.streamMax = max
+    if (this.follow) this.previewScroll = max
+    else if (this.previewScroll >= max) this.follow = true
     this.previewScroll = Math.min(this.previewScroll, max)
     return [head, ...lines.slice(this.previewScroll, this.previewScroll + height - 1)]
   }

@@ -13,7 +13,7 @@ import type { SessionRow } from "../browser/sessions"
 
 export type View = "repo" | "org"
 export type Preset = "all" | "mine" | "review"
-export const PRESETS: Preset[] = ["all", "mine", "review"]
+export const PRESETS: Preset[] = ["all", "review", "mine"]
 
 /** Combined CI state of the head commit; null when it has no checks. */
 export type Checks = "SUCCESS" | "FAILURE" | "ERROR" | "PENDING" | "EXPECTED" | null

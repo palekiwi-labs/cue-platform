@@ -4,7 +4,8 @@
  * preview, and the grouping of sessions under the cue context tree.
  */
 
-import { calculateContextTokens } from "@earendil-works/pi-coding-agent"
+import { calculateContextTokens, type Theme } from "@earendil-works/pi-coding-agent"
+import { truncateToWidth } from "@earendil-works/pi-tui"
 import type { ContextRow } from "./model"
 
 const CUE_CONTEXT_TYPE = "cue-context"
@@ -13,6 +14,8 @@ const DESCRIPTION_TYPE = "session-description"
 export interface SessionRow {
   path: string
   cwd: string
+  /** `<org>/<repo>` of the cwd's git origin, when it has one. */
+  cwdScope?: string
   /** Newest cue context linked on the mainline. */
   address?: string
   /** session-description, else session name, else first message. */
@@ -203,6 +206,26 @@ export function groupSessions(
   return out
 }
 
+/**
+ * The `(org/repo)` marker of a session in another project than the
+ * current session (`here`: its cwd and that cwd's repo). Repos compare by
+ * scope, so worktrees of one repo count as the same project; cwds without
+ * a repo compare by path. `mismatch` when the cwd repo is not the scope
+ * of the session's own context: the session was created in another repo,
+ * and resuming it moves pi there. Mismatches always show.
+ */
+export function cwdMark(
+  s: Pick<SessionRow, "cwd" | "cwdScope" | "address">,
+  here: { cwd: string; scope?: string },
+): { text: string; mismatch: boolean } | undefined {
+  if (!s.cwd) return undefined
+  const mismatch = s.address !== undefined && s.cwdScope !== undefined && s.cwdScope !== scopeOf(s.address)
+  const same = s.cwdScope !== undefined && here.scope !== undefined ? s.cwdScope === here.scope : s.cwd === here.cwd
+  if (!mismatch && same) return undefined
+  const name = s.cwdScope ?? s.cwd.split("/").filter(Boolean).pop() ?? s.cwd
+  return { text: `(${name})`, mismatch }
+}
+
 /** `<org>/<repo>` of a git remote URL (https, ssh or scp form). */
 export function scopeOfRemote(url: string): string | undefined {
   const m = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url.trim())
@@ -222,4 +245,40 @@ export function inScopes(
     const scope = s.address ? scopeOf(s.address) : s.cwd ? cwdScope(s.cwd) : undefined
     return scope !== undefined && scopes.has(scope)
   })
+}
+
+/**
+ * The sessions view's default listing flattened: sessions of the context
+ * tree modified within `days`, newest first, at most `limit`.
+ */
+export function recentSessions(
+  contexts: ContextRow[],
+  sessions: SessionRow[],
+  now: number,
+  days: number,
+  limit: number,
+): { session: SessionRow; context: ContextRow }[] {
+  const since = now - days * 86400
+  return groupSessions(contexts, sessions, new Set(), false)
+    .flatMap((r) => (r.kind === "session" && r.session.modified >= since ? [r] : []))
+    .sort((a, b) => b.session.modified - a.session.modified)
+    .slice(0, limit)
+    .map(({ session, context }) => ({ session, context }))
+}
+
+/**
+ * A flat session row's text: `context | description [label]`; the
+ * description is dropped when it repeats the context.
+ */
+export function sessionHeadline(
+  t: Theme,
+  where: string,
+  description: string,
+  label?: string,
+  current = false,
+): string {
+  const tag = label ? " " + t.fg("error", `[${truncateToWidth(label, 12, "…")}]`) : ""
+  const style = (s: string) => (current ? t.fg("accent", s) : s)
+  if (description === where) return style(where) + tag
+  return style(where) + t.fg("dim", ` | ${description}`) + tag
 }

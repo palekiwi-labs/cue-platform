@@ -20,6 +20,12 @@ export interface RunRow {
   context: string | null
   agent: string
   model: string
+  /** pi | claude, from ps; the stream pane supports pi only. */
+  harness: string | null
+  turns: number | null
+  idleSecs: number | null
+  /** What the run is doing right now, while it is live. */
+  lastTool: { name: string; pending: boolean } | null
   position: number
   /** preparing | running | finishing | finished | crashed */
   phase: string
@@ -38,6 +44,12 @@ export interface RunRow {
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null)
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null)
+
+const lastTool = (v: unknown): { name: string; pending: boolean } | null => {
+  const record = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null
+  const name = record ? str(record.name) : null
+  return name ? { name, pending: record?.pending === true } : null
+}
 
 /** Rows of `cue-agent ps --all --json`, newest batch first, runs in order. */
 export function parsePs(json: string): RunRow[] {
@@ -73,6 +85,10 @@ export function parsePs(json: string): RunRow[] {
         context: str(r.context),
         agent: str(r.agent) ?? "?",
         model: str(r.model) ?? "",
+        harness: str(r.harness),
+        turns: num(r.turns),
+        idleSecs: num(r.idle_secs),
+        lastTool: lastTool(r.last_tool),
         position: num(r.position) ?? 0,
         phase: str(r.phase) ?? "",
         runPath: str(r.run_path) ?? "",
@@ -102,6 +118,15 @@ export function runState(r: RunRow): string {
 /** Still going: the batch supervisor is alive and the run has no receipt. */
 export function isLive(r: RunRow): boolean {
   return (r.batchState === "running" || r.batchState === "finalizing") && r.outcome === null
+}
+
+/**
+ * The held stream snapshot of `r` needs no more polls: it was taken after
+ * the run had already ended, so no event can follow it. A snapshot taken
+ * while the run was live gets one more poll to read the final events.
+ */
+export function streamSettled(snapRunId: string | undefined, final: boolean, r: RunRow): boolean {
+  return final && snapRunId === r.runId
 }
 
 export type StateTone = "live" | "ok" | "bad" | "dim"
@@ -157,7 +182,7 @@ export function inputTokens(r: RunRow): number | null {
 
 /** Text the fuzzy query matches against. */
 export function haystack(r: RunRow): string {
-  return [r.label, r.batchLabel, r.jobLabel, r.agent, r.model, r.context, r.batchId, r.jobId]
+  return [r.label, r.batchLabel, r.jobLabel, r.agent, r.model, r.context, r.batchId, r.jobId, r.lastTool?.name]
     .filter(Boolean)
     .join(" ")
 }

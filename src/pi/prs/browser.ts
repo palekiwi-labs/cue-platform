@@ -7,14 +7,17 @@
  * dispatches keys. Read-only towards GitHub.
  */
 
-import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import { getMarkdownTheme, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import {
   type Component,
   fuzzyFilter,
   Input,
+  type KeyId,
+  Markdown,
   matchesKey,
   type TUI,
   truncateToWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import {
   applyPreset,
@@ -32,6 +35,7 @@ import {
   type View,
 } from "./model"
 import { ContextPicker } from "./context-picker"
+import { type PrDetail, PreviewCache, prKey } from "./preview"
 import type { ContextRow } from "../browser/model"
 import type { SessionRow } from "../browser/sessions"
 import type { Target } from "../lib/default-target"
@@ -48,6 +52,8 @@ export interface Loaded {
 export interface PrDeps {
   /** Open PRs for a view; error text (gh's own) on failure. */
   load(view: View): Promise<Loaded | { error: string }>
+  detail(pr: Pr): Promise<PrDetail>
+  previews: PreviewCache
   /** `owner/name` of the cwd's repo; actions only apply to its PRs. */
   localRepo: string | undefined
   /** What org view covers, for the header. */
@@ -130,6 +136,33 @@ const checksGlyph = (c: Pr["checks"]): string =>
 
 const rowId = (r: Row): string => (r.kind === "repo" ? `repo:${r.repo}` : `pr:${r.pr.repo}#${r.pr.number}`)
 
+export function commentLines(detail: PrDetail, width: number, theme: Theme, now = Date.now()): string[] {
+  if (detail.threads.length === 0) return wrapTextWithAnsi(theme.fg("dim", "No comments yet"), width)
+  const lines = [...wrapTextWithAnsi(theme.fg("muted", "COMMENTS / newest first"), width), ""]
+  for (const [index, thread] of detail.threads.entries()) {
+    if (index > 0) lines.push("", theme.fg("border", "─".repeat(width)), "")
+    const label = thread.kind === "inline"
+      ? `${thread.path ?? "Inline conversation"}${thread.line ? `:${thread.line}` : ""}`
+      : thread.kind === "review" ? "Review summary" : "Conversation"
+    lines.push(...wrapTextWithAnsi(theme.fg("muted", label), width))
+    for (const [i, message] of thread.messages.entries()) {
+      if (i > 0) lines.push("")
+      lines.push(...wrapTextWithAnsi(theme.fg("dim", `@${message.author} · ${fmtAge(message.at, now)} ago`), width))
+      lines.push(...new Markdown(message.body || "(empty comment)", 0, 0, getMarkdownTheme()).render(width))
+    }
+  }
+  return lines
+}
+
+const PREVIEW_KEYS = {
+  "tui.altScreen.halfPageUp": ["ctrl+u", "scroll up"],
+  "tui.altScreen.halfPageDown": ["ctrl+d", "scroll down"],
+  "tui.altScreen.top": ["ctrl+home", "top"],
+  "tui.altScreen.bottom": ["ctrl+end", "bottom"],
+} as const
+
+type PreviewAction = keyof typeof PREVIEW_KEYS
+
 export class PrBrowser implements Component {
   protected input = new Input()
   protected view: View
@@ -143,6 +176,16 @@ export class PrBrowser implements Component {
   protected links = new Map<string, string>()
   protected mode: CheckoutTarget = "worktree"
   protected target: Target
+  private preview = true
+  private stacked = true
+  private width = 80
+  private previewKey: string | undefined
+  protected previewScroll = 0
+  private previewCache: { detail: PrDetail; width: number; minute: number; lines: string[] } | undefined
+  private closed = false
+  private previewChanged = () => {
+    if (!this.closed) this.tui.requestRender()
+  }
 
   constructor(
     protected tui: TUI,
@@ -164,6 +207,7 @@ export class PrBrowser implements Component {
   }
 
   close(): void {
+    this.closed = true
     this.done()
   }
 
@@ -182,8 +226,7 @@ export class PrBrowser implements Component {
     if ("error" in r) this.error = r.error
     else {
       this.error = r.failed.length > 0 ? `${r.failed.length} repo(s) failed: ${r.failed.join("; ")}` : ""
-      // Org view starts with every repo collapsed; refreshes keep the folds.
-      if (view === "org" && !this.data.org) for (const p of r.prs) this.folded.add(p.repo)
+      // Refreshes keep the operator's folds; the org view starts unfolded.
       this.data[view] = r
     }
     this.tui.requestRender()
@@ -274,15 +317,44 @@ export class PrBrowser implements Component {
       this.selectedId = rowId(rows[i]!)
       this.tui.requestRender()
     }
-    const page = Math.max(1, this.bodyHeight() - 1)
+    const page = Math.max(1, this.listHeight() - 1)
 
+    if (matchesKey(data, "alt+p")) {
+      this.preview = !this.preview
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "alt+l")) {
+      this.stacked = !this.stacked
+      return this.tui.requestRender()
+    }
+    const previewMatches = (action: PreviewAction) => this.previewKeys(action).some((key) => matchesKey(data, key))
+    if (this.preview && (previewMatches("tui.altScreen.halfPageDown") || previewMatches("tui.altScreen.halfPageUp"))) {
+      const step = Math.max(1, Math.floor(this.previewHeight() / 2))
+      this.previewScroll = Math.max(0, this.previewScroll + (previewMatches("tui.altScreen.halfPageDown") ? step : -step))
+      return this.tui.requestRender()
+    }
+    if (this.preview && (previewMatches("tui.altScreen.top") || previewMatches("tui.altScreen.bottom"))) {
+      this.previewScroll = previewMatches("tui.altScreen.top") ? 0 : Number.MAX_SAFE_INTEGER
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "escape")) return this.close()
     if (this.kb.matches(data, "tui.select.up")) return move(-1)
     if (this.kb.matches(data, "tui.select.down")) return move(1)
     if (this.kb.matches(data, "tui.select.pageUp")) return move(-page)
     if (this.kb.matches(data, "tui.select.pageDown")) return move(page)
     if (matchesKey(data, "tab")) {
-      this.preset = PRESETS[(PRESETS.indexOf(this.preset) + 1) % PRESETS.length]!
+      // Skip presets with no matching PRs in the loaded view.
+      const d = this.data[this.view]
+      const empty = (p: Preset) => !d || "error" in d || applyPreset(d.prs, p, d.viewer).length === 0
+      let i = PRESETS.indexOf(this.preset)
+      for (let step = 1; step < PRESETS.length; step++) {
+        const next = PRESETS[(i + step) % PRESETS.length]!
+        if (!empty(next)) {
+          i = (i + step) % PRESETS.length
+          break
+        }
+      }
+      this.preset = PRESETS[i]!
       this.selectedId = undefined
       return this.tui.requestRender()
     }
@@ -297,7 +369,13 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "ctrl+down")) return this.hopRepo(rows, 1)
     if (matchesKey(data, "alt+z")) return this.toggleFold()
     if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
-    if (matchesKey(data, "alt+r")) return void this.reload()
+    if (matchesKey(data, "alt+r")) {
+      this.deps.previews.clear()
+      this.previewCache = undefined
+      this.previewScroll = 0
+      void this.reload()
+      return this.tui.requestRender()
+    }
     if (this.handleAction(data)) return
 
     const before = this.input.getValue()
@@ -535,8 +613,21 @@ export class PrBrowser implements Component {
     this.notice(`started a session for ${address} in tmux`, "success")
   }
 
+  private previewKeys(action: PreviewAction): KeyId[] {
+    const keys = this.kb.getKeys(action)
+    return keys.length > 0 || Object.hasOwn(this.kb.getUserBindings(), action)
+      ? keys : [PREVIEW_KEYS[action][0]]
+  }
+
   protected helpHints(): string[] {
+    const previewHints = this.preview ? (Object.keys(PREVIEW_KEYS) as PreviewAction[]).flatMap((action) => {
+      const keys = this.previewKeys(action)
+      return keys.length > 0 ? [`${keys.join("/")} ${PREVIEW_KEYS[action][1]}`] : []
+    }) : []
     return [
+      `alt+p ${this.preview ? "hide" : "show"} preview`,
+      "alt+l layout",
+      ...previewHints,
       "tab preset",
       "alt+v view",
       "alt+z fold", "shift+tab fold all",
@@ -564,13 +655,28 @@ export class PrBrowser implements Component {
     return this.height() - 5
   }
 
+  private isStacked(): boolean {
+    return this.stacked || this.width < 5
+  }
+
+  private listHeight(): number {
+    return this.preview && this.isStacked()
+      ? Math.max(1, Math.floor((this.bodyHeight() - 1) * 0.4)) : this.bodyHeight()
+  }
+
+  private previewHeight(): number {
+    return this.isStacked() ? Math.max(1, this.bodyHeight() - this.listHeight() - 1) : this.bodyHeight()
+  }
+
   invalidate(): void {
+    this.previewCache = undefined
     this.input.invalidate()
     this.picker?.invalidate()
   }
 
   render(width: number): string[] {
     if (this.picker) return this.picker.render(width)
+    this.width = width
     const t = this.theme
     const height = this.height()
     const lines = [
@@ -592,7 +698,51 @@ export class PrBrowser implements Component {
   }
 
   protected bodyLines(width: number, height: number): string[] {
-    return this.listLines(width, height)
+    const row = this.selectedRow()
+    const key = row?.kind === "pr" ? prKey(row.pr) : undefined
+    if (key !== this.previewKey) {
+      this.previewKey = key
+      this.previewScroll = 0
+      this.previewCache = undefined
+    }
+    if (!this.preview) return this.listLines(width, height)
+    const pr = row?.kind === "pr" ? row.pr : undefined
+    if (!this.isStacked()) {
+      const listW = Math.max(1, Math.min(width - 4, Math.floor(width * 0.55)))
+      const previewW = width - listW - 3
+      const list = this.listLines(listW, height)
+      const preview = this.previewLines(pr, previewW, height)
+      const separator = this.theme.fg("border", " │ ")
+      return Array.from({ length: height }, (_, i) =>
+        pad(list[i] ?? "", listW) + separator + pad(preview[i] ?? "", previewW))
+    }
+    const listH = this.listHeight()
+    const list = this.listLines(width, listH)
+    while (list.length < listH) list.push("")
+    return [
+      ...list,
+      this.theme.fg("border", "─".repeat(width)),
+      ...this.previewLines(pr, width, this.previewHeight()),
+    ]
+  }
+
+  private previewLines(pr: Pr | undefined, width: number, height: number): string[] {
+    if (!pr) return [this.theme.fg("dim", "Select a PR to preview")]
+    const entry = this.deps.previews.get(pr, this.deps.detail, this.previewChanged)
+    if (entry.state === "loading") return [this.theme.fg("dim", `Loading ${prKey(pr)}…`)]
+    if (entry.state === "error") return [this.theme.fg("error", `Preview: ${entry.error} (alt+r to retry)`)]
+    const cache = this.previewCache
+    const now = Date.now()
+    const minute = Math.floor(now / 60_000)
+    if (!cache || cache.detail !== entry.detail || cache.width !== width || cache.minute !== minute) {
+      this.previewCache = {
+        detail: entry.detail, width, minute,
+        lines: commentLines(entry.detail, width, this.theme, now),
+      }
+    }
+    const lines = this.previewCache!.lines
+    this.previewScroll = Math.min(this.previewScroll, Math.max(0, lines.length - height))
+    return lines.slice(this.previewScroll, this.previewScroll + height)
   }
 
   private headerLine(width: number): string {
@@ -667,10 +817,10 @@ export class PrBrowser implements Component {
     const author = t.fg("muted", pad(pr.author, w.authorW))
     const checks = t.fg(checksTone(pr.checks), checksGlyph(pr.checks))
     const forMe = reviewRequested(pr, viewer)
-    const title = pr.isDraft
-      ? t.fg("muted", pr.title)
-      : forMe
-        ? t.fg("warning", pr.title)
+    const title = forMe
+      ? t.fg("warning", pr.title)
+      : pr.isDraft
+        ? t.fg("muted", pr.title)
         : pr.title
     const labels = pr.labels.length > 0 ? " " + pr.labels.map((l) => t.fg("accent", `[${l}]`)).join(" ") : ""
     const branch = t.fg("dim", `(${pr.headRef})`)

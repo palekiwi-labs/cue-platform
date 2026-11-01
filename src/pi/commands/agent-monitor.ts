@@ -4,8 +4,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TUI } from "@earendil-works/pi-tui"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { parsePs, type RunRow } from "../agents/model"
-import { AgentMonitor, type MonitorDeps, type Pane } from "../agents/monitor"
+import { isLive, parsePs, type RunRow } from "../agents/model"
+import { AgentMonitor, type MonitorDeps, type Pane, type StreamSnapshot } from "../agents/monitor"
+import { parseStream, streamLines } from "../agents/stream"
+import { EventTail } from "../agents/tail"
 import { editInTerminal, newSession, openInTmux } from "./cue-browser"
 
 /** Open the cue-agent monitor. */
@@ -28,12 +30,35 @@ function readReceipt(runPath: string): string | undefined {
   }
 }
 
+/** A whole timeline as plain text, nothing truncated by the pane width. */
+function timelineText(r: RunRow): string | undefined {
+  if (!r.runPath) return undefined
+  let text: string
+  try {
+    text = readFileSync(join(r.runPath, "events.jsonl"), "utf8")
+  } catch {
+    return undefined
+  }
+  const state = parseStream(text)
+  const body = streamLines(state.items, isLive(r), Number.MAX_SAFE_INTEGER)
+    .map((segs) => segs.map((s) => s.text).join(""))
+    .join("\n")
+  return state.skipped ? `${body}\n… ${state.skipped} unreadable lines\n` : `${body}\n`
+}
+
 /**
  * Documents live in the run dir. Runs from before cue-agent wrote
  * response.md, and runs that failed without one, get their response or
  * error from ps written to a temp file instead.
  */
 function documentPath(r: RunRow, pane: Pane): string | undefined {
+  if (pane === "stream") {
+    const text = timelineText(r)
+    if (!text) return undefined
+    const p = join(tmpdir(), `cue-agent-${r.runId}-stream.txt`)
+    writeFileSync(p, text)
+    return p
+  }
   if (pane === "stats") {
     const p = r.runPath ? join(r.runPath, "receipt.json") : ""
     return p && existsSync(p) ? p : undefined
@@ -53,11 +78,21 @@ const HISTORY = "7d"
 
 async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
+  let tail: { runId: string; tailer: EventTail } | undefined
   const deps = (tui: TUI): MonitorDeps => ({
     load: async () => {
       const r = await pi.exec("cue-agent", ["ps", "--all", "--since", HISTORY, "--json"], { cwd: ctx.cwd })
       if (r.code !== 0) return { error: (r.stderr || r.stdout).trim() || `ps failed (${r.code})` }
       return { rows: parsePs(r.stdout) }
+    },
+    stream: async (r): Promise<StreamSnapshot | undefined> => {
+      if (!r.runPath) return undefined
+      if (tail?.runId !== r.runId) {
+        tail = { runId: r.runId, tailer: new EventTail(join(r.runPath, "events.jsonl")) }
+      }
+      const current = tail
+      await current.tailer.poll()
+      return { runId: current.runId, version: current.tailer.version, items: current.tailer.items() }
     },
     prompt,
     receipt: readReceipt,

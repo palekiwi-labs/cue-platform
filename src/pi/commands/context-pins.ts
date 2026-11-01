@@ -2,6 +2,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
+import { stripFrontmatter } from "@earendil-works/pi-coding-agent"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { recordActivity, type ActivityCtx } from "../lib/activity"
 import { contextRecency } from "../lib/context-recency"
 import {
@@ -15,12 +18,30 @@ import { fuzzySelect, type PickItem } from "../lib/fuzzy-select"
 import { formatGitContext, gitContext } from "../lib/git-context"
 import { composeMessage, cueBestEffort } from "./common"
 
+/** Read the briefing without render's artifact framing or metadata. */
+async function contextBody(
+  pi: ExtensionAPI,
+  cwd: string,
+  address: string,
+): Promise<string> {
+  try {
+    const status = JSON.parse(await cueBestEffort(pi, cwd, [
+      "status", "--context", address, "--json",
+    ]))
+    const body = stripFrontmatter(
+      await readFile(join(status.store, address, "context.md"), "utf8"),
+    ).trim()
+    return body ? `<cue-context address="${address}">\n${body}\n</cue-context>` : ""
+  } catch {
+    return ""
+  }
+}
+
 /**
- * Gather the orientation block for a context: pwd, git, status, last
- * activity with a children table, log, recent artifacts and master plan.
- * Data only, except one hint line when children have been active since
- * this context's last log entry; the operator's next prompt decides what
- * to do with it. Queries pass the
+ * Gather the orientation block for a context: briefing, pwd, git, status,
+ * last activity with children, log, recent artifacts and master plan.
+ * The context body may carry context-local behavioral instructions; the
+ * remaining blocks provide orientation data. Queries pass the
  * full canonical address, so contexts outside the cwd's scope resolve.
  */
 export async function contextOrientation(
@@ -47,6 +68,7 @@ export async function contextOrientation(
   ])
   return composeMessage([
     `Active cue context for this session: ${slug}`,
+    await contextBody(pi, cwd, address),
     `PWD: ${cwd}`,
     git,
     `<status>\n${status}\n</status>`,

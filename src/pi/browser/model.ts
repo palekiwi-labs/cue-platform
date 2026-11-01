@@ -178,6 +178,69 @@ export function sortArtifacts(rows: readonly ArtifactRow[]): ArtifactRow[] {
   return [...rows].sort(compareArtifacts)
 }
 
+/** Strictly newest first, unknown times last, then path for stability. */
+export function compareArtifactsByTime(a: ArtifactRow, b: ArtifactRow): number {
+  return (b.createdAt ?? 0) - (a.createdAt ?? 0) || a.path.localeCompare(b.path)
+}
+
+export type ArtifactTreeRow =
+  | { kind: "dir"; key: string; name: string; depth: number; count: number; folded: boolean }
+  | { kind: "file"; row: ArtifactRow; name: string; depth: number }
+
+interface DirNode {
+  key: string
+  name: string
+  files: { row: ArtifactRow; name: string }[]
+  dirs: Map<string, DirNode>
+  count: number
+}
+
+/**
+ * Directory tree of a context's artifacts: type directories at the root,
+ * then nested subdirectories. Within a directory, files keep the input
+ * order and come before subdirectories; root directories follow
+ * TYPE_ORDER. Folded directory keys (e.g. `note/ideas`) hide their
+ * contents.
+ */
+export function buildArtifactTree(
+  contextAddress: string,
+  rows: readonly ArtifactRow[],
+  folded: ReadonlySet<string>,
+): ArtifactTreeRow[] {
+  const root: DirNode = { key: "", name: "", files: [], dirs: new Map(), count: 0 }
+  for (const row of rows) {
+    const addr = artifactAddress(contextAddress, row.path)
+    const rel = addr ? addr.slice(contextAddress.length + 1) : `${row.type}/${row.name}`
+    const parts = rel.split("/")
+    const file = parts.pop()!
+    let node = root
+    node.count++
+    for (const part of parts) {
+      let next = node.dirs.get(part)
+      if (!next) {
+        next = { key: node.key ? `${node.key}/${part}` : part, name: part, files: [], dirs: new Map(), count: 0 }
+        node.dirs.set(part, next)
+      }
+      next.count++
+      node = next
+    }
+    node.files.push({ row, name: file })
+  }
+  const out: ArtifactTreeRow[] = []
+  const walk = (node: DirNode, depth: number): void => {
+    for (const f of node.files) out.push({ kind: "file", row: f.row, name: f.name, depth })
+    let dirs = [...node.dirs.values()]
+    if (depth === 0) dirs = dirs.sort((a, b) => typeRank(a.name) - typeRank(b.name) || a.name.localeCompare(b.name))
+    for (const d of dirs) {
+      const isFolded = folded.has(d.key)
+      out.push({ kind: "dir", key: d.key, name: d.name, depth, count: d.count, folded: isFolded })
+      if (!isFolded) walk(d, depth + 1)
+    }
+  }
+  walk(root, 0)
+  return out
+}
+
 /** Compact age: now, 12m, 3h, 6d, 1y; "—" when unknown. */
 export function relativeAge(ts: number | null, now: number): string {
   if (ts === null) return "—"
