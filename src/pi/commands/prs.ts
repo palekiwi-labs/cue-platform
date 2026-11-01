@@ -1,4 +1,5 @@
-import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { copyToClipboard, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { Markdown } from "@earendil-works/pi-tui"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import {
@@ -25,7 +26,7 @@ import {
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
 import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays } from "./cue-browser"
-import { scopeOfRemote } from "../browser/sessions"
+import { scopeOfRemote, type SessionRow } from "../browser/sessions"
 import { currentContext } from "../lib/current-context"
 import { defaultTarget } from "../lib/default-target"
 import { fetchDetail, PreviewCache } from "../prs/preview"
@@ -239,21 +240,24 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
     orgs,
     view,
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
-    manifests: () => manifests(exec, cwd),
-    contexts: () => contexts(exec, cwd),
-    recencyDays: () => storedRecencyDays(cwd),
-    saveRecencyDays: (d) => saveRecencyDays(cwd, d),
-    launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
-    scope,
-    links: () => links(exec, cwd, scope),
-    link: (branch, context, create) => link(exec, cwd, scope, branch, context, create),
-    latestSession: async (address) => latestSession(await loadSessions(pi, cwd), address),
-    resume: (session, target) => resumeSession(pi, ctx, session, target),
-    currentSession: () => ctx.sessionManager.getSessionFile(),
-    sessionContext: () => currentContext(ctx.sessionManager.getBranch()),
-    startSession: (address, target, note) => newSession(pi, ctx, address, target, note),
-    target: defaultTarget(ctx.sessionManager.getEntries()),
+    markdown: (body, width) => new Markdown(body, 0, 0, getMarkdownTheme()).render(width),
+    sessions: {
+      manifests: () => manifests(exec, cwd),
+      contexts: () => contexts(exec, cwd),
+      recencyDays: () => storedRecencyDays(cwd),
+      saveRecencyDays: (d) => saveRecencyDays(cwd, d),
+      launchReview: (req) => launchReview(exec, cwd, req),
+      scope,
+      links: () => links(exec, cwd, scope),
+      link: (branch, context, create) => link(exec, cwd, scope, branch, context, create),
+      latestSession: async (address) => latestSession(await loadSessions(pi, cwd), address),
+      resume: (session, target) => resumeSession(pi, ctx, session as SessionRow, target),
+      currentSession: () => ctx.sessionManager.getSessionFile(),
+      sessionContext: () => currentContext(ctx.sessionManager.getBranch()),
+      startSession: (address, target, note) => newSession(pi, ctx, address, target, note),
+      target: defaultTarget(ctx.sessionManager.getEntries()),
+    },
   }
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
