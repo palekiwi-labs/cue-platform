@@ -12,6 +12,7 @@ import {
   artifactFilename,
   collapseTree,
   filterRecent,
+  ancestorsOf,
   pinnedFirst,
   recencyIndex,
 } from "./model"
@@ -233,6 +234,22 @@ describe("filterRecent", () => {
   test("extra activity counts like a log entry", () => {
     const rows = filterRecent(tree(), now, 3, new Map([["org/repo/gone", now]]))
     expect(rows.map((r) => r.slug)).toContain("gone")
+  })
+})
+
+describe("ancestorsOf", () => {
+  const tree = () => parseContextTree(JSON.stringify({
+    roots: [node("a", { children: [node("b", { children: [node("c")] }), node("d")] }), node("e")],
+  }))
+
+  test("nearest first up to the root", () => {
+    expect(ancestorsOf(tree(), "org/repo/c")).toEqual(["org/repo/a", "org/repo/b"])
+    expect(ancestorsOf(tree(), "org/repo/b")).toEqual(["org/repo/a"])
+  })
+
+  test("a root or unknown address has none", () => {
+    expect(ancestorsOf(tree(), "org/repo/a")).toEqual([])
+    expect(ancestorsOf(tree(), "org/repo/missing")).toEqual([])
   })
 })
 

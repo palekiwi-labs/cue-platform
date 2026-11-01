@@ -39,6 +39,7 @@ import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath
 import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
+  ancestorsOf,
   artifactAddress,
   artifactFilename,
   type ArtifactRow,
@@ -510,7 +511,7 @@ export class CueBrowser implements Component {
   // ---- filtering -------------------------------------------------------
 
   private shownContexts(v: ContextsView): ContextRow[] {
-    // A query searches the whole tree, collapsed, old or not.
+    // With a query, fuzzy matches over the recency-filtered set, flat.
     return shownContexts(v.rows, v.query, this.treeRows(v), this.collapsed, this.contextsFlat)
   }
 
@@ -829,6 +830,9 @@ export class CueBrowser implements Component {
         add("shift+tab", "fold all", "view", () => this.onCollapseAll(v))
       }
       add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true })
+      add("alt+enter", "reveal in tree", "view", () => this.onReveal(v), {
+        hint: this.contextsFlat || v.query.trim() !== "",
+      })
       add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
       add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
     } else if (v.kind === "artifacts") {
@@ -925,8 +929,13 @@ export class CueBrowser implements Component {
     this.input.handleInput(data)
     const after = this.input.getValue()
     if (after !== before) {
+      // Emptying the query keeps the last match selected in the tree.
+      const keep = before.trim() !== "" && after.trim() === "" && v.kind === "contexts"
+        ? this.selectedContext()?.address
+        : undefined
       v.query = after
       v.selected = 0
+      if (keep && v.kind === "contexts") this.selectContext(v, keep)
       this.previewScroll = this.previewStart()
       this.refresh()
     }
@@ -1141,6 +1150,31 @@ export class CueBrowser implements Component {
       return this.refresh()
     }
     await this.loadContexts(v, c.address)
+  }
+
+  /**
+   * alt+enter: show the highlighted context in the tree — clear the
+   * query, leave flat, unfold its ancestors (structural, from the
+   * pre-order rows) and select it. The recency window and unrelated
+   * folds stay; zv-style, the unfolds persist.
+   */
+  private onReveal(v: ContextsView): void {
+    const c = this.selectedContext()
+    if (!c) return
+    if (!this.contextsFlat && v.query.trim() === "") return this.notify("already in tree")
+    const tree = this.treeRows(v)
+    for (const a of ancestorsOf(tree, c.address)) this.collapsed.delete(a)
+    this.contextsFlat = false
+    v.query = ""
+    this.input.setValue("")
+    this.previewScroll = this.previewStart()
+    this.growSlugWidth(v.rows)
+    if (this.selectContext(v, c.address)) this.notify(`revealed ${c.slug} in tree`)
+    else {
+      this.selectHere(v)
+      this.notify(`${c.slug} is outside the recency window`)
+    }
+    this.refresh()
   }
 
   private onToggleCollapse(v: ContextsView): void {

@@ -386,6 +386,27 @@ export function sortFlatContexts(rows: readonly ContextRow[]): ContextRow[] {
 }
 
 /**
+ * Ancestor addresses of `address`, nearest first, from a pre-order
+ * flattened tree. Empty when the address is a root or not found;
+ * ancestry is structural (the nesting cue reports), not address
+ * prefixes.
+ */
+export function ancestorsOf(rows: readonly ContextRow[], address: string): string[] {
+  const i = rows.findIndex((r) => r.address === address)
+  if (i < 0) return []
+  const out: string[] = []
+  let depth = rows[i]!.depth
+  for (let j = i - 1; j >= 0 && depth > 0; j--) {
+    const r = rows[j]!
+    if (r.depth < depth) {
+      out.unshift(r.address)
+      depth = r.depth
+    }
+  }
+  return out
+}
+
+/**
  * Contexts active within `days` of `now`, or pinned, plus every ancestor
  * of one up to its root. Ancestors kept only for a descendant are marked
  * ancestorOnly. A passing parent does not keep its children. `extra`
