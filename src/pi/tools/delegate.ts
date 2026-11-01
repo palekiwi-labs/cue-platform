@@ -1,12 +1,16 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { execFileSync, spawn } from "node:child_process"
-import { resolve } from "node:path"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { Type } from "typebox"
 import {
   type BatchReceipt,
   type Roster,
   MAX_TASKS,
+  backgroundJobId,
   buildDescription,
+  formatBackgroundHandle,
   formatReceipt,
   parseAgentList,
   selectableAliases,
@@ -89,6 +93,14 @@ function makeParameters(names: string[], aliases: string[]) {
           "skip capture.",
       }),
     ),
+    background: Type.Optional(
+      Type.Boolean({
+        description:
+          "Run the batch in a detached tmux window and return at once with " +
+          "a job id; check on it later with cue-agent ps/status/logs/stop. " +
+          "Pair with context to get the results as traces.",
+      }),
+    ),
   })
 }
 
@@ -132,6 +144,23 @@ function runBatch(
   })
 }
 
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
+
+/** Start `cue-agent run --spec` in a detached tmux window and return its job id. */
+function launchBackground(spec: Record<string, unknown>, cwd: string): { jobId: string; dir: string } {
+  const jobId = backgroundJobId()
+  const dir = mkdtempSync(join(tmpdir(), `${jobId}-`))
+  const specPath = join(dir, "spec.json")
+  writeFileSync(specPath, JSON.stringify({ ...spec, job: { id: jobId, label: jobId } }), { mode: 0o600 })
+  const command =
+    `${BINARY} run --spec ${shellQuote(specPath)} --json` +
+    ` > ${shellQuote(join(dir, "receipt.json"))} 2> ${shellQuote(join(dir, "stderr.log"))}`
+  execFileSync("tmux", ["new-window", "-d", "-n", jobId, "-c", cwd, command], {
+    stdio: ["ignore", "ignore", "pipe"],
+  })
+  return { jobId, dir }
+}
+
 export function delegateTool(cwd: string = process.cwd()) {
   const { roster, error } = loadRoster(cwd)
   const names = roster.agents.map((a) => a.name)
@@ -170,6 +199,13 @@ export function delegateTool(cwd: string = process.cwd()) {
           ...(t.worktree ? { worktree: toWorktree(t.worktree) } : {}),
           ...(args.context ? { context: args.context } : {}),
         })),
+      }
+      if (args.background) {
+        const { jobId, dir } = launchBackground(spec, ctx.cwd)
+        return {
+          content: [{ type: "text", text: formatBackgroundHandle(jobId, dir) }],
+          details: { job_id: jobId, dir },
+        }
       }
       const { code, stdout, stderr } = await runBatch(spec, ctx.cwd, signal)
 
