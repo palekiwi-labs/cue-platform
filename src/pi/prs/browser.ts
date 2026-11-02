@@ -201,7 +201,7 @@ export class PrBrowser implements Component {
   protected folded = new Set<string>()
   protected selectedId: string | undefined
   protected links = new Map<string, string>()
-  protected mode: CheckoutTarget = "worktree"
+  protected mode: CheckoutTarget = "root"
   protected target: Target | undefined
   private preview = true
   private stacked = true
