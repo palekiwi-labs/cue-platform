@@ -441,7 +441,7 @@ export class AgentMonitor implements Component {
   private headerLine(width: number): string {
     const t = this.theme
     const live = this.rows.filter(isLive).length
-    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const target = t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`)
     const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
       t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`)
     return truncateToWidth(title, width)

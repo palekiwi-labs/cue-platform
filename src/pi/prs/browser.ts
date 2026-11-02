@@ -755,7 +755,7 @@ export class PrBrowser implements Component {
       : ""
     const parts = [
       t.fg("accent", t.bold("pull requests")),
-      t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`),
+      t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`),
       t.fg(this.mode === "root" ? "warning" : "muted", `[${this.mode}]`),
       t.fg("muted", `[${this.view}]`),
       t.fg("muted", scope),

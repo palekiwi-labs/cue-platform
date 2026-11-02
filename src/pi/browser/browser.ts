@@ -1518,7 +1518,7 @@ export class CueBrowser implements Component {
           : v.kind === "log"
           ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
           : `Cue artifacts ${t.fg("muted", `${v.tree ? "tree" : v.byType ? "flat by type" : "flat by time"} ${v.context.address}`)}`
-    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const target = t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
