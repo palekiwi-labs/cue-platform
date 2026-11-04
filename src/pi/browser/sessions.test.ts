@@ -160,6 +160,12 @@ describe("recentSessions", () => {
   const day = 86400
   const now = 10 * day
 
+  test("all-time includes old sessions and still caps newest first", () => {
+    const sessions = [s("old", "o/r/a", 0), s("newer", "o/r/b", now - day)]
+    expect(recentSessions(tree, sessions, now, 0, 2).map(r => r.session.path)).toEqual(["newer", "old"])
+    expect(recentSessions(tree, sessions, now, 0, 1).map(r => r.session.path)).toEqual(["newer"])
+  })
+
   test("flat newest first within the window, tree contexts only, capped", () => {
     const sessions = [
       s("old", "o/r/a", now - 4 * day), s("a1", "o/r/a", now - 100), s("b1", "o/r/b", now - 50),

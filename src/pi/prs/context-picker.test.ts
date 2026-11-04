@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { matchesKey, type TUI } from "@earendil-works/pi-tui"
-import type { ContextRow } from "../browser/model"
+import { ALL_TIME_DAYS, RECENCY_STEPS, type ContextRow } from "../browser/model"
 import type { Pr } from "./model"
 import { type PickerResult, ContextPicker } from "./context-picker"
 
@@ -11,9 +11,10 @@ const row = (slug: string, depth = 0): ContextRow => ({
 })
 
 function setup(extra: {
-  purpose?: "review" | "parent"; scope?: string; branch?: string; linked?: string; here?: string; context?: string; rows?: ContextRow[]
+  purpose?: "review" | "parent"; scope?: string; branch?: string; linked?: string; here?: string; context?: string; rows?: ContextRow[]; recencyDays?: number
 } = {}) {
   const results: PickerResult[] = []
+  const saved: number[] = []
   let cancelled = false
   const tui = { requestRender: () => {}, terminal: { rows: 30 } } as unknown as TUI
   const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
@@ -30,10 +31,10 @@ function setup(extra: {
   }, {
     submit: (r) => results.push(r),
     cancel: () => (cancelled = true),
-    saveRecencyDays: () => {},
+    saveRecencyDays: (days) => saved.push(days),
   })
   const type = (s: string) => [...s].forEach((c) => p.handleInput(c))
-  return { p, results, type, cancelled: () => cancelled }
+  return { p, results, saved, type, cancelled: () => cancelled }
 }
 
 describe("ContextPicker", () => {
@@ -143,6 +144,48 @@ describe("ContextPicker", () => {
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "alpha-2" }])
   })
+
+  for (const purpose of ["review", "parent"] as const) {
+    test(`${purpose}: recency cycles through all-time and wraps in both directions`, () => {
+      const old = { ...row("old"), lastLoggedAt: null }
+      const s = setup({ purpose, rows: [row("fresh"), old], recencyDays: 30 })
+      expect(s.p.render(160).join("\n")).not.toContain("old")
+      s.p.handleInput("\x1b[1;5A")
+      expect(s.p.render(160)[0]).toContain("all-time")
+      expect(s.p.render(160).join("\n")).toContain("old")
+      expect(s.p.render(160).join("\n")).not.toContain("alt+a")
+      s.p.handleInput("\x1ba")
+      expect(s.p.render(160)[0]).toContain("all-time")
+      s.p.handleInput("\x1b[1;5A")
+      expect(s.p.render(160)[0]).toContain("recent 1d")
+      s.p.handleInput("\x1b[1;5B")
+      expect(s.p.render(160)[0]).toContain("all-time")
+      s.p.handleInput("\x1b[1;5B")
+      expect(s.p.render(160)[0]).toContain("recent 30d")
+      expect(s.saved).toEqual([ALL_TIME_DAYS, 1, ALL_TIME_DAYS, 30])
+      for (let i = 0; i < RECENCY_STEPS.length; i++) s.p.handleInput("\x1b[1;5A")
+      expect(s.saved.slice(4)).toEqual([ALL_TIME_DAYS, 1, 2, 3, 7, 14, 30])
+    })
+
+    test(`${purpose}: stored all-time includes old query matches`, () => {
+      const s = setup({ purpose, rows: [{ ...row("old"), lastLoggedAt: null }], recencyDays: ALL_TIME_DAYS })
+      s.type("old")
+      expect(s.p.render(160)[0]).toContain("all-time")
+      s.p.handleInput("\r")
+      expect(s.results).toEqual(purpose === "review"
+        ? [{ context: "old", manifest: "default" }]
+        : [{ context: "review-t", parent: "o/r/old" }])
+    })
+
+    test(`${purpose}: preselection widens locally and the next step wraps to 1d`, () => {
+      const s = setup({ purpose, rows: [{ ...row("old"), lastLoggedAt: null }], linked: "o/r/old", here: "o/r/old" })
+      expect(s.p.render(160)[0]).toContain("all-time")
+      expect(s.saved).toEqual([])
+      s.p.handleInput("\x1b[1;5A")
+      expect(s.p.render(160)[0]).toContain("recent 1d")
+      expect(s.saved).toEqual([1])
+    })
+  }
 
   test("esc goes back", () => {
     const s = setup()
