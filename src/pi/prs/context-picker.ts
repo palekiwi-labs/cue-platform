@@ -16,7 +16,7 @@
 
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { Input, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui"
-import { collapseTree, type ContextRow, RECENCY_STEPS, recencyIndex } from "../browser/model"
+import { collapseTree, type ContextRow, ALL_TIME_DAYS, RECENCY_STEPS, recencyIndex, recencyLabel } from "../browser/model"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "../browser/context-list"
 import type { Pr } from "./model"
 
@@ -66,7 +66,6 @@ export class ContextPicker {
   private editing = false
   private under: ContextRow | undefined
   private manifest: number
-  private recent = true
   private step: number
   /** Index into the shown contexts. */
   private selected = 0
@@ -111,9 +110,10 @@ export class ContextPicker {
   private preselect(address: string): void {
     let i = this.shown().findIndex((r) => r.address === address)
     if (i < 0) {
-      this.recent = false
+      const previous = this.step
+      this.step = recencyIndex(ALL_TIME_DAYS)
       i = this.shown().findIndex((r) => r.address === address)
-      if (i < 0) this.recent = true
+      if (i < 0) this.step = previous
     }
     this.selected = i < 0 ? 0 : i + this.top()
   }
@@ -145,7 +145,7 @@ export class ContextPicker {
   }
 
   private tree(): ContextRow[] {
-    return treeRows(this.init.rows, this.recent, this.now(), this.days)
+    return treeRows(this.init.rows, this.days !== ALL_TIME_DAYS, this.now(), this.days)
   }
 
   private shown(): ContextRow[] {
@@ -202,20 +202,11 @@ export class ContextPicker {
       this.name.handleInput("\x05")
       return this.say(`new context ${this.under ? `under ${this.under.address}` : "at the top level"}: enter create, esc back`)
     }
-    if (matchesKey(data, "alt+a")) {
-      this.recent = !this.recent
-      this.selected = 0
-      return this.say(this.recent ? `recent: ${this.days}d and pinned` : "all contexts")
-    }
     if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
-      const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.step + (matchesKey(data, "ctrl+up") ? 1 : -1)))
-      this.recent = true
+      this.step = (this.step + (matchesKey(data, "ctrl+up") ? 1 : -1) + RECENCY_STEPS.length) % RECENCY_STEPS.length
       this.selected = 0
-      if (next !== this.step) {
-        this.step = next
-        this.host.saveRecencyDays(this.days)
-      }
-      return this.say(`recency window ${this.days}d`)
+      this.host.saveRecencyDays(this.days)
+      return this.say(`recency window: ${recencyLabel(this.days)}`)
     }
     const before = this.query.getValue()
     this.query.handleInput(data)
@@ -311,11 +302,11 @@ export class ContextPicker {
       .map((m, i) => (i === this.manifest ? t.fg("accent", t.bold(`[${m}]`)) : t.fg("dim", m)))
       .join(" ")
     const label = (s: string) => t.fg("muted", s) + " "
-    const scope = this.recent ? `recent ${this.days}d` : "all"
+    const scope = recencyLabel(this.days)
     if (this.parentMode) return this.renderParent(width, label, scope)
     const hints = this.editing
       ? ["enter create", "esc back"]
-      : ["enter review here", "ctrl+n new under", "tab manifest", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+      : ["enter review here", "ctrl+n new under", "tab manifest", "ctrl+up/down recency", "esc back"]
     const head = t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
       t.fg("muted", `pick the context (${scope})`)
     const settings = this.editing
@@ -330,7 +321,7 @@ export class ContextPicker {
     const { pr } = this.init
     const hints = this.editing
       ? ["enter keep", "esc undo"]
-      : ["enter create and link", "ctrl+e edit name", "alt+a recent/all", "ctrl+up/down recency", "esc cancel"]
+      : ["enter create and link", "ctrl+e edit name", "ctrl+up/down recency", "esc cancel"]
     const head = t.fg("accent", t.bold(`#${pr.number}`)) + "  " + pr.title + "  " +
       t.fg("muted", `no context: pick its parent (${scope})`)
     const row = this.highlighted()
@@ -369,7 +360,7 @@ export class ContextPicker {
       contextLine(t, r, { tree, here: undefined, tones: this.tones, mixed, hidden, slugWidth: this.slugWidth, now, width }))
     if (this.top() > 0) all.unshift(t.fg("muted", "(no parent)"))
     if (rows.length === 0) {
-      all.push(t.fg("warning", q ? "no matching contexts" : `no contexts active in ${this.days}d (alt+a: all)`))
+      all.push(t.fg("warning", q ? "no matching contexts" : this.days === ALL_TIME_DAYS ? "no contexts" : `no contexts active in ${this.days}d (ctrl+up: widen)`))
     }
     const start = Math.max(0, Math.min(this.selected - Math.floor(height / 2), all.length - height))
     return all.slice(start, start + height).map((l, i) =>

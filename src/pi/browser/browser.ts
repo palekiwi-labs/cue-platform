@@ -49,7 +49,9 @@ import {
   filterRecent,
   isFinished,
   pinnedFirst,
+  ALL_TIME_DAYS,
   RECENCY_STEPS,
+  recencyLabel,
   recencyIndex,
   relativeAge,
   sortArtifacts,
@@ -162,8 +164,6 @@ interface ContextsView {
   kind: "contexts"
   /** The scope the rows were loaded with, to reload when it changed. */
   repoScope: boolean
-  /** Recent contexts only, or the whole tree. */
-  recent: boolean
   rows: ContextRow[]
   query: string
   selected: number
@@ -184,8 +184,7 @@ interface ArtifactsView {
   loading: boolean
 }
 
-/** Which sessions tab lists: grouped recent/all, or flat labeled. */
-type SessionSubset = "all" | "recent" | "labeled"
+type SessionSubset = "recent" | "labeled"
 
 interface SessionsView {
   kind: "sessions"
@@ -204,8 +203,6 @@ interface SessionsView {
 interface ActivityView {
   kind: "activity"
   context: ContextRef
-  /** Events within the recency window, or all of them. */
-  recent: boolean
   rows: ActivityEvent[]
   query: string
   selected: number
@@ -215,8 +212,6 @@ interface ActivityView {
 interface LogView {
   kind: "log"
   context: ContextRef
-  /** Entries within the recency window, or all of them. */
-  recent: boolean
   rows: LogEntry[]
   query: string
   selected: number
@@ -227,8 +222,7 @@ type View = ContextsView | ArtifactsView | SessionsView | ActivityView | LogView
 
 const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
   recent: "labeled",
-  labeled: "all",
-  all: "recent",
+  labeled: "recent",
 }
 
 
@@ -285,7 +279,6 @@ export class CueBrowser implements Component {
   private describing: { session: SessionRow; input: Input } | undefined
   /** Creating a child of this context, with its own prompt on the bottom line. */
   private creating: { parent: ContextRef; input: Input } | undefined
-  /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
   private sessionsFlat = true
@@ -307,7 +300,7 @@ export class CueBrowser implements Component {
     this.target = target
     this.input.focused = true
     this.recencyStep = recencyIndex(deps.recencyDays())
-    if (start.view === "contexts") this.pushContexts(true)
+    if (start.view === "contexts") this.pushContexts()
     else if (start.view === "sessions") this.pushSessions()
     else if (start.view === "activity") this.pushActivity(start.context)
     else if (start.view === "log") this.pushLog(start.context)
@@ -322,9 +315,9 @@ export class CueBrowser implements Component {
     return RECENCY_STEPS[this.recencyStep]!
   }
 
-  private pushContexts(recent: boolean): void {
+  private pushContexts(): void {
     const v: ContextsView = {
-      kind: "contexts", repoScope: this.repoScope, recent, rows: [], query: "", selected: 0, loading: true,
+      kind: "contexts", repoScope: this.repoScope, rows: [], query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -369,16 +362,14 @@ export class CueBrowser implements Component {
     this.recencyStep = next
     this.deps.saveRecencyDays(this.recencyDays)
     if (v.kind === "contexts") {
-      if (!v.recent) v.recent = true
       if (!(keep && this.selectContext(v, keep))) v.selected = 0
     } else if (v.kind === "sessions") {
       if (v.subset !== "recent") v.subset = "recent"
       v.selected = 0
     } else if (v.kind === "activity" || v.kind === "log") {
-      if (!v.recent) v.recent = true
       v.selected = 0
     }
-    this.notify(`recency window ${this.recencyDays}d`)
+    this.notify(`recency window: ${recencyLabel(this.recencyDays)}`)
     this.refresh()
   }
 
@@ -395,8 +386,7 @@ export class CueBrowser implements Component {
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
       kind: "sessions", repoScope: this.repoScope, context,
-      // A context's own sessions may be old, so that view starts on all.
-      subset: context ? "all" : "recent", contexts: [], sessions: [], query: "",
+      subset: "recent", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
     }
     this.views.push(v)
@@ -463,7 +453,7 @@ export class CueBrowser implements Component {
 
   private pushActivity(context: ContextRef): void {
     const v: ActivityView = {
-      kind: "activity", context, recent: true, rows: [], query: "", selected: 0,
+      kind: "activity", context, rows: [], query: "", selected: 0,
       loading: true,
     }
     this.views.push(v)
@@ -473,7 +463,7 @@ export class CueBrowser implements Component {
 
   private pushLog(context: ContextRef): void {
     const v: LogView = {
-      kind: "log", context, recent: true, rows: [], query: "", selected: 0,
+      kind: "log", context, rows: [], query: "", selected: 0,
       loading: true,
     }
     this.views.push(v)
@@ -520,7 +510,7 @@ export class CueBrowser implements Component {
   }
 
   private treeRows(v: ContextsView): ContextRow[] {
-    return treeRows(v.rows, v.recent, this.now(), this.recencyDays)
+    return treeRows(v.rows, this.recencyDays !== ALL_TIME_DAYS, this.now(), this.recencyDays)
   }
 
   /** Contexts to group sessions under: recent ones count session activity too. */
@@ -541,10 +531,10 @@ export class CueBrowser implements Component {
       const labeled = v.sessions.filter((s) => s.label !== undefined)
       return flat(v.query.trim() === "" ? labeled : this.matchSessions(v, labeled))
     }
-    const orphans = v.subset === "all" && !v.context
+    const orphans = this.recencyDays === ALL_TIME_DAYS && !v.context
     if (this.sessionsFlat && v.query.trim() === "") {
       // Newest first across contexts; recent keeps the window by session time.
-      const since = this.now() - this.recencyDays * 86400
+      const since = this.recencyDays === ALL_TIME_DAYS ? -Infinity : this.now() - this.recencyDays * 86400
       const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
         .flatMap((r) => (r.kind === "session" ? [r.session] : []))
       return flat(v.subset === "recent" ? pool.filter((s) => s.modified >= since) : pool)
@@ -569,7 +559,7 @@ export class CueBrowser implements Component {
   }
 
   private shownActivity(v: ActivityView): ActivityEvent[] {
-    const rows = v.recent
+    const rows = this.recencyDays !== ALL_TIME_DAYS
       ? v.rows.filter((e) => e.timestamp >= Date.now() - this.recencyDays * 86400_000)
       : v.rows
     const q = v.query.trim()
@@ -577,7 +567,7 @@ export class CueBrowser implements Component {
   }
 
   private shownLog(v: LogView): LogEntry[] {
-    const rows = v.recent
+    const rows = this.recencyDays !== ALL_TIME_DAYS
       ? v.rows.filter((e) => e.timestamp >= Date.now() - this.recencyDays * 86400_000)
       : v.rows
     const q = v.query.trim()
@@ -804,13 +794,6 @@ export class CueBrowser implements Component {
       add("ctrl+down", "recency down", "view", () => this.stepRecency(-1))
     }
     if (v.kind === "contexts") {
-      add("tab", "recent/all", "view", () => {
-        const keep = this.selectedContext()?.address
-        v.recent = !v.recent
-        v.selected = 0
-        if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
-        this.refresh()
-      }, { hint: true })
       add("ctrl+l", "link session", "act", () => this.onLink())
       add("alt+f", "pin", "act", () => this.onTogglePin(v))
       add("alt+a", "archive", "act", () => this.onToggleArchive(v))
@@ -843,14 +826,8 @@ export class CueBrowser implements Component {
       } else {
         add("alt+k", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
       }
-    } else if (v.kind === "activity" || v.kind === "log") {
-      add("tab", "recent/all", "view", () => {
-        v.recent = !v.recent
-        v.selected = 0
-        this.refresh()
-      }, { hint: true })
     } else if (v.kind === "sessions") {
-      add("tab", "recent/labeled/all", "view", () => {
+      add("tab", "window/labeled", "view", () => {
         v.subset = NEXT_SUBSET[v.subset]
         v.selected = 0
         this.previewScroll = this.previewStart()
@@ -1510,13 +1487,13 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
+      ? `Cue contexts ${t.fg("muted", `(${recencyLabel(this.recencyDays)})`)}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? recencyLabel(this.recencyDays) : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
-          ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
+          ? `Cue activity ${t.fg("muted", `${recencyLabel(this.recencyDays)} ${v.context.address}`)}`
           : v.kind === "log"
-          ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
+          ? `Cue log ${t.fg("muted", `${recencyLabel(this.recencyDays)} ${v.context.address}`)}`
           : `Cue artifacts ${t.fg("muted", `${v.tree ? "tree" : v.byType ? "flat by type" : "flat by time"} ${v.context.address}`)}`
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
@@ -1547,7 +1524,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownContexts(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no contexts")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen)` : "no contexts")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const tree = !this.contextsFlat && v.query.trim() === ""
@@ -1571,7 +1548,7 @@ export class CueBrowser implements Component {
     const t = this.theme
     if (v.loading && v.sessions.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownSessions(v)
-    if (rows.length === 0) return [t.fg("warning", v.subset === "all" ? "no sessions" : `no ${v.subset} sessions (tab: next)`)]
+    if (rows.length === 0) return [t.fg("warning", v.subset === "labeled" ? "no labeled sessions (tab: window)" : "no sessions (ctrl+up: widen, tab: labeled)")]
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Math.floor(Date.now() / 1000)
     const here = this.deps.sessionAddress()
@@ -1679,7 +1656,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownActivity(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no activity in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no activity")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no activity in ${this.recencyDays}d (ctrl+up: widen)` : "no activity")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()
@@ -1703,7 +1680,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownLog(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no log entries in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no log entries")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no log entries in ${this.recencyDays}d (ctrl+up: widen)` : "no log entries")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()

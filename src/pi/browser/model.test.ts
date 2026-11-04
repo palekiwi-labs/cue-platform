@@ -199,6 +199,14 @@ describe("collapseTree", () => {
 })
 
 describe("filterRecent", () => {
+  test("all-time retains unknown and old contexts without ancestor-only markers", () => {
+    const rows = parseContextTree(JSON.stringify({ roots: [
+      node("old", { last_logged_at: 1, children: [node("never")] }),
+    ] }))
+    expect(filterRecent(rows, 100 * 86400, 0)).toEqual(rows)
+    expect(filterRecent(rows, 100 * 86400, 30)).toEqual([])
+  })
+
   const DAY = 86400
   const now = 100 * DAY
   // root (old) > mid (old) > leaf (recent); root > stale (old); fresh (created recently, never logged)
@@ -264,6 +272,8 @@ describe("pinnedFirst", () => {
 
 describe("recencyIndex", () => {
   test("maps stored days to a step, defaulting to 3 days", () => {
+    expect(recencyIndex(0)).toBe(6)
+    expect(recencyIndex(30)).toBe(5)
     expect(recencyIndex(7)).toBe(3)
     expect(recencyIndex(undefined)).toBe(2)
     expect(recencyIndex(5)).toBe(2)

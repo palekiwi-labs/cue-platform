@@ -321,13 +321,18 @@ export function collapseTree(
 }
 
 /** Recency windows in days, narrowest first. */
-export const RECENCY_STEPS = [1, 2, 3, 7, 14, 30] as const
+export const ALL_TIME_DAYS = 0
+export const RECENCY_STEPS = [1, 2, 3, 7, 14, 30, ALL_TIME_DAYS] as const
 export const DEFAULT_RECENCY_DAYS = 3
 
 /** Step index for a stored day count; the default when unknown. */
 export function recencyIndex(days: number | undefined): number {
   const i = (RECENCY_STEPS as readonly number[]).indexOf(days ?? DEFAULT_RECENCY_DAYS)
   return i >= 0 ? i : (RECENCY_STEPS as readonly number[]).indexOf(DEFAULT_RECENCY_DAYS)
+}
+
+export function recencyLabel(days: number): string {
+  return days === ALL_TIME_DAYS ? "all-time" : `recent ${days}d`
 }
 
 /** Newest activity of a context: its last log entry or its creation. */
@@ -418,6 +423,7 @@ export function filterRecent(
   days: number,
   extra?: ReadonlyMap<string, number>,
 ): ContextRow[] {
+  if (days === ALL_TIME_DAYS) return [...rows]
   const since = now - days * 86400
   const prune = (nodes: Node[]): Node[] => {
     const out: Node[] = []

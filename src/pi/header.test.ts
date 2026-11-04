@@ -41,6 +41,12 @@ describe("headerLines", () => {
     expect(headerLines(t, 20, rev, [], 3, 0)).toContain("  cue platform")
   })
 
+  test("all-time is labeled without a day count", () => {
+    const lines = headerLines(t, 100, rev, [], 0, 1000).join("\n")
+    expect(lines).toContain("(all-time)")
+    expect(lines).not.toContain("0d")
+  })
+
   test("loading state before sessions arrive", () => {
     expect(headerLines(t, 80, rev, undefined, 3, 0)).toContain("  loading…")
   })
