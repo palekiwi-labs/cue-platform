@@ -14,6 +14,7 @@ import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
+import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
 import { cueAddTool } from "./tools/cue-add"
 import { cueContextTool } from "./tools/cue-context"
@@ -59,6 +60,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
+  registerStoreCommit(pi)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)
