@@ -58,13 +58,18 @@ afterEach(() => {
 })
 
 describe("registerStoreCommit", () => {
-  test("commits every change with the address and log title", async () => {
+  test("commits the logged context only, with the address and log title", async () => {
     initRepo()
-    writeFileSync(join(store, "a.json"), "{}")
+    mkdirSync(join(store, ADDRESS), { recursive: true })
+    writeFileSync(join(store, ADDRESS, "a.json"), "{}")
+    mkdirSync(join(store, "org/repo/other"), { recursive: true })
+    writeFileSync(join(store, "org/repo/other/b.json"), "{}")
+    git("add", "org/repo/other/b.json")
     const h = harness()
     await h.fire(logged("Add the thing\nsecond line"))
     expect(git("log", "--format=%s")).toBe(`${ADDRESS}: Add the thing`)
-    expect(git("status", "--porcelain")).toBe("")
+    expect(git("show", "--name-only", "--format=")).toBe(`${ADDRESS}/a.json`)
+    expect(git("status", "--porcelain")).toBe("A  org/repo/other/b.json")
     expect(h.warnings).toEqual([])
     expect(h.cueCalls[0]).toEqual(["status", "--json", "--context", "ctx"])
   })
@@ -118,7 +123,8 @@ describe("registerStoreCommit", () => {
 
   test("warns when the commit fails", async () => {
     initRepo()
-    writeFileSync(join(store, "a.json"), "{}")
+    mkdirSync(join(store, ADDRESS), { recursive: true })
+    writeFileSync(join(store, ADDRESS, "a.json"), "{}")
     writeFileSync(join(store, ".git", "index.lock"), "")
     const h = harness()
     await h.fire(logged("x"))
