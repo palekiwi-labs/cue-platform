@@ -34,7 +34,7 @@ import {
   type Row,
   type View,
 } from "./model"
-import { ContextPicker } from "./context-picker"
+import { ContextPicker, type PickerResult } from "./context-picker"
 import { type PrDetail, PreviewCache, prKey } from "./preview"
 import type { ContextRow } from "../browser/model"
 import type { SessionRow } from "../browser/sessions"
@@ -515,30 +515,33 @@ export class PrBrowser implements Component {
   }
 
   /**
-   * The PR branch's context, linking it first when needed: to the repo
-   * scope's context named after the branch, or, when there is none, to a
-   * new one under a parent picked by the operator. Undefined on cancel.
+   * The PR branch's context, explicitly selecting and linking an existing
+   * context or creating one under a chosen parent. Undefined on cancel.
    */
   private async ensureLinked(pr: Pr): Promise<string | undefined> {
     const linked = this.links.get(pr.headRef)
     if (linked) return linked
     const slug = prContext(pr)
     const rows = await this.deps.contexts()
-    const existing = rows.find((r) => r.scope === this.deps.scope && r.slug === slug)
-    if (existing) return this.linkTo(pr, existing.address)
-    const picked = await this.pickParent(pr, slug, rows)
-    if (!picked) return undefined
-    return this.linkTo(pr, picked.context, picked.parent ? { parent: picked.parent } : {})
+    const selected = await this.pickContext(pr, slug, rows, "conversation")
+    if (!selected) return undefined
+    if (!selected.create) return this.linkTo(pr, selected.context)
+    const created = await this.pickContext(pr, selected.context, rows, "parent")
+    if (!created) return undefined
+    return this.linkTo(pr, created.context, created.parent ? { parent: created.parent } : {})
   }
 
-  /** Full-screen parent picker for a new PR context; undefined on cancel. */
-  private pickParent(pr: Pr, slug: string, rows: ContextRow[]): Promise<{ context: string; parent?: string } | undefined> {
+  /** Full-screen conversation or creation picker; undefined on cancel. */
+  private pickContext(
+    pr: Pr, slug: string, rows: ContextRow[], purpose: "conversation" | "parent",
+  ): Promise<PickerResult | undefined> {
     return new Promise((resolve) => {
       const here = this.deps.sessionContext()
       this.picker = new ContextPicker(this.tui, this.theme, this.kb, {
-        purpose: "parent",
+        purpose,
         pr,
         context: slug,
+        branch: slug,
         manifests: [],
         manifest: 0,
         rows,
@@ -553,7 +556,7 @@ export class PrBrowser implements Component {
         saveRecencyDays: (d) => this.deps.saveRecencyDays(d),
         submit: (r) => {
           this.closePicker()
-          resolve({ context: r.context, ...(r.parent ? { parent: r.parent } : {}) })
+          resolve(r)
         },
       })
       this.input.focused = false
