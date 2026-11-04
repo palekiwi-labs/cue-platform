@@ -121,6 +121,19 @@ describe("registerStoreCommit", () => {
     expect(h.warnings[0]).toContain("no context")
   })
 
+  test("retries while another process holds the index lock", async () => {
+    initRepo()
+    mkdirSync(join(store, ADDRESS), { recursive: true })
+    writeFileSync(join(store, ADDRESS, "a.json"), "{}")
+    const lock = join(store, ".git", "index.lock")
+    writeFileSync(lock, "")
+    setTimeout(() => rmSync(lock), 300)
+    const h = harness()
+    await h.fire(logged("x"))
+    expect(git("log", "--format=%s")).toBe(`${ADDRESS}: x`)
+    expect(h.warnings).toEqual([])
+  })
+
   test("warns when the commit fails", async () => {
     initRepo()
     mkdirSync(join(store, ADDRESS), { recursive: true })
