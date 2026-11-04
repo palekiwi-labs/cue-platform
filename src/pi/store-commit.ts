@@ -2,12 +2,16 @@ import { realpathSync } from "node:fs"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { resolvePaths } from "./compaction/trigger"
 
+const LOCK_ATTEMPTS = 5
+const LOCK_RETRY_MS = 200
+
 /**
  * Snapshots the logged context after every successful cue-log call: stages
  * and commits that context's directory only, as `<context address>: <log
- * title>`. Changes elsewhere in the store are left for a manual sweep. A store
- * that is not the top of its own git repo, or has nothing to commit, is left alone. Never
- * pushes. Every failure is a warning; the next call commits what was missed.
+ * title>`. Changes elsewhere in the store are left for a manual sweep. A
+ * store that is not the top of its own git repo, or has nothing to commit,
+ * is left alone. Never pushes. A busy index.lock is retried with backoff;
+ * any other failure is a warning, and the next call commits what was missed.
  */
 export function registerStoreCommit(pi: ExtensionAPI): void {
   pi.on("tool_result", async (event, ctx) => {
@@ -16,7 +20,13 @@ export function registerStoreCommit(pi: ExtensionAPI): void {
       const input = event.input as Record<string, unknown>
       const paths = await resolvePaths(pi, input, ctx.cwd)
       if (!paths) return
-      const git = (...args: string[]) => pi.exec("git", ["-C", paths.store, ...args], { cwd: ctx.cwd })
+      const git = async (...args: string[]) => {
+        for (let attempt = 1; ; attempt++) {
+          const r = await pi.exec("git", ["--no-optional-locks", "-C", paths.store, ...args], { cwd: ctx.cwd })
+          if (r.code === 0 || !r.stderr.includes("index.lock") || attempt >= LOCK_ATTEMPTS) return r
+          await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS * attempt))
+        }
+      }
       const top = await git("rev-parse", "--show-toplevel")
       if (top.code !== 0 || top.stdout.trim() !== realpathSync(paths.store)) return
       const dirty = await git("status", "--porcelain", "--", paths.address)
