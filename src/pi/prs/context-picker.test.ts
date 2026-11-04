@@ -11,7 +11,7 @@ const row = (slug: string, depth = 0): ContextRow => ({
 })
 
 function setup(extra: {
-  purpose?: "review" | "parent"; scope?: string; branch?: string; linked?: string; here?: string; context?: string; rows?: ContextRow[]; recencyDays?: number
+  purpose?: "review" | "parent" | "conversation"; scope?: string; branch?: string; linked?: string; here?: string; context?: string; rows?: ContextRow[]; recencyDays?: number
 } = {}) {
   const results: PickerResult[] = []
   const saved: number[] = []
@@ -145,7 +145,7 @@ describe("ContextPicker", () => {
     expect(s.results).toEqual([{ context: "alpha-2" }])
   })
 
-  for (const purpose of ["review", "parent"] as const) {
+  for (const purpose of ["review", "parent", "conversation"] as const) {
     test(`${purpose}: recency cycles through all-time and wraps in both directions`, () => {
       const old = { ...row("old"), lastLoggedAt: null }
       const s = setup({ purpose, rows: [row("fresh"), old], recencyDays: 30 })
@@ -174,7 +174,9 @@ describe("ContextPicker", () => {
       s.p.handleInput("\r")
       expect(s.results).toEqual(purpose === "review"
         ? [{ context: "old", manifest: "default" }]
-        : [{ context: "review-t", parent: "o/r/old" }])
+        : purpose === "conversation"
+          ? [{ context: "o/r/old" }]
+          : [{ context: "review-t", parent: "o/r/old" }])
     })
 
     test(`${purpose}: preselection widens locally and the next step wraps to 1d`, () => {
@@ -186,6 +188,46 @@ describe("ContextPicker", () => {
       expect(s.saved).toEqual([1])
     })
   }
+
+  test("conversation selects an address without manifest controls", () => {
+    const s = setup({ purpose: "conversation", context: "beta", branch: "beta", scope: "o/r" })
+    const text = s.p.render(160).join("\n")
+    expect(text).toContain("enter select and link")
+    expect(text).not.toContain("manifest")
+    s.p.handleInput("\t")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "o/r/beta" }])
+  })
+
+  test("conversation suggests review-branch but allows another selection", () => {
+    const s = setup({ purpose: "conversation", context: "t", branch: "t", scope: "o/r",
+      rows: [row("alpha"), row("t"), row("review-t")] })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "o/r/review-t" }])
+    s.type("alp")
+    s.p.handleInput("\r")
+    expect(s.results.at(-1)).toEqual({ context: "o/r/alpha" })
+  })
+
+  test("conversation creation requests a separate parent choice, including an empty tree", () => {
+    for (const rows of [[], [row("alpha")]]) {
+      const s = setup({ purpose: "conversation", context: "t", branch: "t", rows })
+      s.p.handleInput("\x0e")
+      expect(s.results).toEqual([{ context: "t", create: true }])
+    }
+  })
+
+  test("parent refuses creation over an existing context until renamed", () => {
+    const s = setup({ purpose: "parent", context: "alpha", scope: "o/r" })
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([])
+    expect(s.p.render(100).at(-1)).toContain("exists")
+    s.p.handleInput("\x05")
+    s.type("-new")
+    s.p.handleInput("\r")
+    s.p.handleInput("\r")
+    expect(s.results).toEqual([{ context: "alpha-new" }])
+  })
 
   test("esc goes back", () => {
     const s = setup()
