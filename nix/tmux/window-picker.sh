@@ -1,5 +1,6 @@
 # Fuzzy window picker for the container tmux (prefix w, C-f).
-# Lists windows running pi (@pi_state set); ctrl-a toggles all windows.
+# Lists windows running pi (@pi_state set); ctrl-a toggles to the other
+# windows, without a preview.
 #
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
@@ -73,7 +74,7 @@ fi
 rows() {
 tmux list-windows -F \
   '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}' \
-  | awk -v now="$(date +%s)" -v all="$1" -F '\t' 'all != "" || $2 != "" {
+  | awk -v now="$(date +%s)" -v other="$1" -F '\t' '(other != "") == ($2 == "") {
       c = "";
       if ($7 == "failed") c = "\033[31m";
       else if ($7 == "running") c = "\033[33m";
@@ -122,13 +123,14 @@ fi
 
 session=$(tmux display-message -p '#S')
 pi_prompt="$session> "
-all_prompt="$session (all)> "
+other_prompt="$session (non-pi)> "
+pi_preview='down,60%,wrap,nohidden'
 
 rows "" \
   | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
       --prompt "$pi_prompt" \
-      --bind "ctrl-a:transform:if [ \"\$FZF_PROMPT\" = '$pi_prompt' ]; then echo 'change-prompt($all_prompt)+reload($0 rows all)'; else echo 'change-prompt($pi_prompt)+reload($0 rows)'; fi" \
-      --preview "$0 preview {1}" --preview-window 'down,60%,wrap' \
+      --bind "ctrl-a:transform:if [ \"\$FZF_PROMPT\" = '$pi_prompt' ]; then echo 'change-prompt($other_prompt)+change-preview-window(hidden)+reload($0 rows other)'; else echo 'change-prompt($pi_prompt)+change-preview-window($pi_preview)+reload($0 rows)'; fi" \
+      --preview "$0 preview {1}" --preview-window "$pi_preview" \
   | cut -f1 \
   | xargs -r tmux select-window -t
