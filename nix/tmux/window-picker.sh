@@ -1,4 +1,5 @@
 # Fuzzy window picker for the container tmux (prefix w, C-f).
+# Lists only windows running pi (@pi_state set).
 #
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
@@ -71,7 +72,7 @@ fi
 # Rows: id, coloured label (hidden id field used for preview).
 tmux list-windows -F \
   '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}' \
-  | awk -v now="$(date +%s)" -F '\t' '{
+  | awk -v now="$(date +%s)" -F '\t' '$2 != "" {
       c = "";
       if ($7 == "failed") c = "\033[31m";
       else if ($7 == "running") c = "\033[33m";
