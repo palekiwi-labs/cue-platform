@@ -1,5 +1,5 @@
 # Fuzzy window picker for the container tmux (prefix w, C-f).
-# Lists only windows running pi (@pi_state set).
+# Lists windows running pi (@pi_state set); ctrl-a toggles all windows.
 #
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
@@ -70,9 +70,10 @@ PY
 fi
 
 # Rows: id, coloured label (hidden id field used for preview).
+rows() {
 tmux list-windows -F \
   '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}' \
-  | awk -v now="$(date +%s)" -F '\t' '$2 != "" {
+  | awk -v now="$(date +%s)" -v all="$1" -F '\t' 'all != "" || $2 != "" {
       c = "";
       if ($7 == "failed") c = "\033[31m";
       else if ($7 == "running") c = "\033[33m";
@@ -111,10 +112,23 @@ tmux list-windows -F \
         av = sprintf("  \033[2m%s\033[0m", a);
       }
       printf "%s\t%s %s%s\033[0m%s%s%s%s\n", $1, mark, c, $6, dv, pct, rv, av;
-    }' \
+    }'
+}
+
+if [ "${1:-}" = rows ]; then
+  rows "${2:-}"
+  exit 0
+fi
+
+session=$(tmux display-message -p '#S')
+pi_prompt="$session> "
+all_prompt="$session (all)> "
+
+rows "" \
   | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
-      --prompt "$(tmux display-message -p '#S')> " \
+      --prompt "$pi_prompt" \
+      --bind "ctrl-a:transform:if [ \"\$FZF_PROMPT\" = '$pi_prompt' ]; then echo 'change-prompt($all_prompt)+reload($0 rows all)'; else echo 'change-prompt($pi_prompt)+reload($0 rows)'; fi" \
       --preview "$0 preview {1}" --preview-window 'down,60%,wrap' \
   | cut -f1 \
   | xargs -r tmux select-window -t
