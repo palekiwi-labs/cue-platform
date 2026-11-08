@@ -8,25 +8,20 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import { setViewSwitcher, type ViewSwitcher } from "../lib/view-switch"
-import { AGENTS_SHORTCUT, openMonitor } from "./agent-monitor"
+import { openMonitor } from "./agent-monitor"
 import {
-  ACTIVITY_SHORTCUT,
-  ARTIFACTS_SHORTCUT,
-  CONTEXTS_SHORTCUT,
   openActivity,
   openArtifacts,
   openBrowser,
-  SESSIONS_SHORTCUT,
 } from "./cue-browser"
-import { openPrBrowser, PRS_SHORTCUT } from "./prs"
+import { openPrBrowser } from "./prs"
 
 /** Open the views launcher. */
 export const VIEWS_SHORTCUT = "f2"
 
-/** A launcher entry: a view and the shortcut that also opens it. */
+/** A launcher entry: a view and how to open it. */
 export interface LauncherView {
   label: string
-  shortcut?: string
   open: (pi: ExtensionAPI, ctx: ExtensionContext) => Promise<void>
 }
 
@@ -34,18 +29,16 @@ export interface LauncherView {
 export const VIEWS: readonly LauncherView[] = [
   {
     label: "contexts",
-    shortcut: CONTEXTS_SHORTCUT,
     open: (pi, ctx) => openBrowser(pi, ctx, { view: "contexts" }),
   },
-  { label: "artifacts", shortcut: ARTIFACTS_SHORTCUT, open: openArtifacts },
+  { label: "artifacts", open: openArtifacts },
   {
     label: "sessions",
-    shortcut: SESSIONS_SHORTCUT,
     open: (pi, ctx) => openBrowser(pi, ctx, { view: "sessions" }),
   },
-  { label: "activity", shortcut: ACTIVITY_SHORTCUT, open: openActivity },
-  { label: "GitHub PRs", shortcut: PRS_SHORTCUT, open: openPrBrowser },
-  { label: "agent monitor", shortcut: AGENTS_SHORTCUT, open: openMonitor },
+  { label: "activity", open: openActivity },
+  { label: "GitHub PRs", open: openPrBrowser },
+  { label: "agent monitor", open: openMonitor },
 ]
 
 const TITLE = "views"
@@ -59,8 +52,7 @@ interface MenuTheme {
 /** Width of the boxed menu for these views. */
 export function menuWidth(views: readonly LauncherView[]): number {
   const labelWidth = Math.max(0, ...views.map((v) => visibleWidth(v.label)))
-  const keyWidth = Math.max(0, ...views.map((v) => visibleWidth(v.shortcut ?? "")))
-  const body = 2 + labelWidth + 4 + keyWidth
+  const body = 2 + labelWidth
   return Math.max(body, visibleWidth(TITLE) + 2, visibleWidth(FOOTER) + 2) + 4
 }
 
@@ -87,14 +79,9 @@ export class ViewMenu implements Component {
   render(width: number): string[] {
     const t = this.theme
     const inner = Math.max(1, width - 4)
-    const labelWidth = Math.max(0, ...this.views.map((v) => visibleWidth(v.label)))
     const body = this.views.map((v, i) => {
       const on = i === this.selected
-      const label = v.label.padEnd(labelWidth)
-      const key = t.fg("warning", v.shortcut ?? "")
-      return on
-        ? t.fg("accent", "> " + t.bold(label)) + "    " + key
-        : "  " + label + "    " + key
+      return on ? t.fg("accent", "> " + t.bold(v.label)) : "  " + v.label
     })
     const border = (s: string) => t.fg("border", s)
     const head = ` ${TITLE} `
