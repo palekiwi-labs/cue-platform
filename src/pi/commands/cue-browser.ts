@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { spawn, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
@@ -361,7 +362,8 @@ export async function openBrowser(
         storeRoot: () => storeRoot(ctx.cwd),
         sessionFile,
       }
-      return new CueBrowser(tui, theme, kb, deps, () => done(), start, target)
+      const view = new CueBrowser(tui, theme, kb, deps, () => done(), start, target)
+      return withViewSwitch(view, ctx, tui, theme, kb, () => done())
     },
     {
       overlay: true,

@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -105,7 +106,10 @@ export async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Prom
   const target = defaultTarget(ctx.sessionManager.getEntries())
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) =>
-      new AgentMonitor(tui, theme, kb, deps(tui), () => done(), target),
+      withViewSwitch(
+        new AgentMonitor(tui, theme, kb, deps(tui), () => done(), target),
+        ctx, tui, theme, kb, () => done(),
+      ),
     {
       overlay: true,
       overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },
