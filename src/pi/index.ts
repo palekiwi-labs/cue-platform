@@ -10,6 +10,7 @@ import { registerContextPinsCommand } from "./commands/context-pins"
 import { registerIdeaCommand } from "./commands/idea"
 import { registerPrBrowser } from "./commands/prs"
 import { registerReviewRunCommand } from "./commands/review-run"
+import { registerViewsLauncher } from "./commands/views-launcher"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerWelcomeHeader } from "./header"
@@ -55,6 +56,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerCueBrowser(pi)
   registerAgentMonitor(pi)
   registerPrBrowser(pi)
+  registerViewsLauncher(pi)
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
   registerAcuityListener(pi)

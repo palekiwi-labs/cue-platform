@@ -375,7 +375,7 @@ export async function openBrowser(
   )
 }
 
-async function openArtifacts(
+export async function openArtifacts(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {
@@ -390,7 +390,7 @@ async function openArtifacts(
   })
 }
 
-async function openActivity(
+export async function openActivity(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {

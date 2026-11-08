@@ -76,7 +76,7 @@ function documentPath(r: RunRow, pane: Pane): string | undefined {
 /** How far back the monitor lists batches. */
 const HISTORY = "7d"
 
-async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+export async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   let tail: { runId: string; tailer: EventTail } | undefined
   const deps = (tui: TUI): MonitorDeps => ({
