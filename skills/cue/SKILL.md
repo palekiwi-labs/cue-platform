@@ -227,10 +227,28 @@ Because cue has no default or fallback context, a new piece of work begins by
 creating its context first:
 
 ```bash
-cue context create <slug> --title "Title" --kind work --mode design
+cue context create <slug> --title "Title" --kind work --mode design \
+  --parent <scope>/<parent-context>
 ```
 
 In agent harnesses, use the `cue-context` tool.
+
+Every new context gets a parent. Real roots are rare and the existing ones
+already cover most work; a context created without a parent becomes a new
+root by accident.
+
+1. If the conversation already names the parent, use it.
+2. Otherwise search with `cue-recall` (the topic of the new context as the
+   query), inspect the strongest candidates (`cue status --context <slug>`
+   or their `context.md`), and pick the nearest context the new work fits
+   under. Fall back to the fitting root (`cue context tree`, or contexts
+   without a parent in `cue context list`).
+3. Create a context without a parent (a new root) only with the operator's
+   explicit approval.
+4. State in your reply which parent you picked, so the operator can
+   correct it.
+
+A related context that is not the parent goes in `refs`, not `parent`.
 
 ### Agent Context Isolation Rules
 
@@ -442,6 +460,8 @@ acting.
 ### Context & Task Organization
 
 - **DO** create a context first (`cue-context` or `cue context create`) before creating artifacts.
+- **DO** give every new context a parent, found via `cue-recall` when the conversation does not name it, and say which parent you picked.
+- **DON'T** create a parentless (root) context without the operator's explicit approval.
 - **DO** store task cards inside their relevant context at `task/<slug>.md`.
 - **DO** declare parent links using scalar canonical addresses in `parent:`.
 - **DO** write every reference (`parent:`, `refs:`, log `trace`) as a full canonical address, and always write `refs:` as a list.

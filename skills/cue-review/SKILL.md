@@ -31,6 +31,8 @@ review artifacts.
 
 1. **Context**: one review context per target, `review-<branch-slug>`
    (`cue context create ... --mode review`, or let cue-review create it).
+   When you create it, parent it under the context of the work being
+   reviewed, or the scope's review root if that work has no context.
    Sessions reviewing that work link/switch to it. Never run
    `cue context switch` for the operator; create or name it explicitly.
 2. **Run**: fire the pipeline, do not babysit it. One command per review
