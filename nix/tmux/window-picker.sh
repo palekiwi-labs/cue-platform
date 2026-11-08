@@ -127,7 +127,7 @@ other_prompt="$session (non-pi)> "
 pi_preview='down,60%,wrap,nohidden'
 
 rows "" \
-  | fzf --ansi --reverse --no-sort --delimiter '\t' --info=inline \
+  | fzf --ansi --reverse --no-sort --cycle --delimiter '\t' --info=inline \
       --with-nth 2 --nth 1 \
       --prompt "$pi_prompt" \
       --bind "ctrl-a:transform:if [ \"\$FZF_PROMPT\" = '$pi_prompt' ]; then echo 'change-prompt($other_prompt)+change-preview-window(hidden)+reload($0 rows other)'; else echo 'change-prompt($pi_prompt)+change-preview-window($pi_preview)+reload($0 rows)'; fi" \
