@@ -747,9 +747,15 @@ export class CueBrowser implements Component {
   private bindings(): Binding[] {
     const v = this.view
     const k = v.kind
-    const move = (delta: number) => {
+    const move = (delta: number, wrap = false) => {
       const n = this.shownCount()
-      v.selected = n === 0 ? 0 : Math.max(0, Math.min(n - 1, v.selected + delta))
+      if (n === 0) {
+        v.selected = 0
+      } else if (wrap) {
+        v.selected = (v.selected + delta + n) % n
+      } else {
+        v.selected = Math.max(0, Math.min(n - 1, v.selected + delta))
+      }
       this.previewScroll = this.previewStart()
       this.refresh()
     }
@@ -764,8 +770,8 @@ export class CueBrowser implements Component {
     }
 
     add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
-    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1))
-    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1))
+    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1, true))
+    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1, true))
     add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
     add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
     const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
