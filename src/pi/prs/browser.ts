@@ -182,8 +182,8 @@ export function commentLines(
 }
 
 const PREVIEW_KEYS = {
-  "tui.altScreen.halfPageUp": ["ctrl+u", "scroll up"],
-  "tui.altScreen.halfPageDown": ["ctrl+d", "scroll down"],
+  "tui.altScreen.halfPageUp": ["shift+up", "scroll up"],
+  "tui.altScreen.halfPageDown": ["shift+down", "scroll down"],
   "tui.altScreen.top": ["ctrl+home", "top"],
   "tui.altScreen.bottom": ["ctrl+end", "bottom"],
 } as const
