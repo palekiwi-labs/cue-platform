@@ -1,6 +1,6 @@
 import type { KeybindingsManager } from "@earendil-works/pi-coding-agent"
 import { type Component, type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { type Binding, keyName } from "./keymap"
+import type { Binding } from "./keymap"
 
 /** Opens the item-actions menu inside a view. */
 export const ACTIONS_KEY: KeyId = "f3"
@@ -25,7 +25,7 @@ export function menuColumns(bindings: Binding[]): { section: MenuSection; rows: 
   })).filter((c) => c.rows.length > 0)
 }
 
-const cellWidth = (b: Binding) => 2 + visibleWidth(b.label) + 2 + visibleWidth(keyName(b))
+const cellWidth = (b: Binding) => 2 + visibleWidth(b.label)
 
 function columnWidth(c: { section: MenuSection; rows: Binding[] }): number {
   return Math.max(visibleWidth(c.section), ...c.rows.map(cellWidth))
@@ -89,15 +89,12 @@ export class ActionMenu implements Component {
     const inner = Math.max(1, width - 4)
     const widths = this.cols.map(columnWidth)
     const cells = this.cols.map((c, ci) => {
-      const labelWidth = Math.max(0, ...c.rows.map((b) => visibleWidth(b.label)))
       return [
         t.fg("accent", c.section),
         ...c.rows.map((b, ri) => {
-          const label = b.label.padEnd(labelWidth)
-          const key = t.fg("warning", keyName(b))
           return ci === this.col && ri === this.row
-            ? t.fg("accent", "> " + t.bold(label)) + "  " + key
-            : "  " + t.fg("muted", label) + "  " + key
+            ? t.fg("accent", "> " + t.bold(b.label))
+            : "  " + t.fg("muted", b.label)
         }),
       ]
     })
