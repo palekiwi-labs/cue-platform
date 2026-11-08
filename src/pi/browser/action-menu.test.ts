@@ -11,13 +11,13 @@ const kb = { matches: () => false } as any
 describe("menuColumns", () => {
   test("keeps section order and drops untagged bindings and empty sections", () => {
     const cols = menuColumns([b("pin", "act"), b("up"), b("copy", "copy"), b("open", "open")])
-    expect(cols.map((c) => c.section)).toEqual(["open", "act", "copy"])
-    expect(cols.map((c) => c.rows.map((r) => r.label))).toEqual([["open"], ["pin"], ["copy"]])
+    expect(cols.map((c) => c.section)).toEqual(["act", "copy", "open"])
+    expect(cols.map((c) => c.rows.map((r) => r.label))).toEqual([["pin"], ["copy"], ["open"]])
   })
 })
 
 describe("ActionMenu", () => {
-  const menu = () => new ActionMenu(theme, kb, "t", [b("a", "open"), b("b", "open"), b("c", "act")], () => {})
+  const menu = () => new ActionMenu(theme, kb, "t", [b("a", "act"), b("b", "act"), b("c", "copy")], () => {})
 
   test("moving columns clamps the row to the shorter column", () => {
     const m = menu()

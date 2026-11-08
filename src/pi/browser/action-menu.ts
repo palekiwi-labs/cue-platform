@@ -7,7 +7,7 @@ export const ACTIONS_KEY: KeyId = "f3"
 
 export type MenuSection = "open" | "act" | "copy"
 
-export const SECTIONS: MenuSection[] = ["open", "act", "copy"]
+export const SECTIONS: MenuSection[] = ["act", "copy", "open"]
 
 const FOOTER = "enter run • esc close"
 const GAP = 3
