@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
@@ -256,7 +257,8 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
     target: defaultTarget(ctx.sessionManager.getEntries()),
   }
   await ctx.ui.custom<void>(
-    (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
+    (tui, theme, kb, done) =>
+      withViewSwitch(new PrBrowser(tui, theme, kb, deps, () => done()), ctx, tui, theme, kb, () => done()),
     {
       overlay: true,
       overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },

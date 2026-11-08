@@ -1,5 +1,13 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import {
+  type Component,
+  matchesKey,
+  type OverlayHandle,
+  truncateToWidth,
+  type TUI,
+  visibleWidth,
+} from "@earendil-works/pi-tui"
+import { setViewSwitcher, type ViewSwitcher } from "../lib/view-switch"
 import { AGENTS_SHORTCUT, openMonitor } from "./agent-monitor"
 import {
   ACTIVITY_SHORTCUT,
@@ -103,32 +111,57 @@ export class ViewMenu implements Component {
   }
 }
 
+/** The menu as a component that reports a pick, or null on cancel. */
+function menuComponent(
+  tui: TUI,
+  theme: Theme,
+  kb: KeybindingsManager,
+  finish: (view: LauncherView | null) => void,
+): Component {
+  const menu = new ViewMenu(theme, VIEWS)
+  return {
+    render: (width: number) => menu.render(width),
+    invalidate: () => menu.invalidate(),
+    handleInput(data: string) {
+      if (kb.matches(data, "tui.select.up")) menu.move(-1)
+      else if (kb.matches(data, "tui.select.down")) menu.move(1)
+      else if (kb.matches(data, "tui.select.confirm")) return finish(menu.current() ?? null)
+      else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, VIEWS_SHORTCUT)) {
+        return finish(null)
+      }
+      tui.requestRender()
+    },
+  }
+}
+
+const MENU_OPTIONS = { anchor: "center", width: menuWidth(VIEWS) } as const
+
 async function openLauncher(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   const view = await ctx.ui.custom<LauncherView | null>(
-    (tui, theme, kb, done) => {
-      const menu = new ViewMenu(theme, VIEWS)
-      return {
-        render: (width: number) => menu.render(width),
-        invalidate: () => menu.invalidate(),
-        handleInput(data: string) {
-          if (kb.matches(data, "tui.select.up")) menu.move(-1)
-          else if (kb.matches(data, "tui.select.down")) menu.move(1)
-          else if (kb.matches(data, "tui.select.confirm")) return done(menu.current() ?? null)
-          else if (kb.matches(data, "tui.select.cancel")) return done(null)
-          tui.requestRender()
-        },
-      }
-    },
-    {
-      overlay: true,
-      overlayOptions: { anchor: "center", width: menuWidth(VIEWS) },
-    },
+    (tui, theme, kb, done) => menuComponent(tui, theme, kb, done),
+    { overlay: true, overlayOptions: MENU_OPTIONS },
   )
   if (view) await view.open(pi, ctx)
 }
 
+function switcher(pi: ExtensionAPI): ViewSwitcher {
+  return (ctx, tui, theme, kb, close) => {
+    let handle: OverlayHandle | undefined
+    const menu = menuComponent(tui, theme, kb, (view) => {
+      handle?.hide()
+      tui.requestRender()
+      if (!view) return
+      close()
+      void view.open(pi, ctx)
+    })
+    handle = tui.showOverlay(menu, MENU_OPTIONS)
+    tui.requestRender()
+  }
+}
+
 export function registerViewsLauncher(pi: ExtensionAPI): void {
+  setViewSwitcher(VIEWS_SHORTCUT, switcher(pi))
   pi.registerCommand("cue:views", {
     description: "Pick a view to open",
     handler: async (_args, ctx) => openLauncher(pi, ctx),
