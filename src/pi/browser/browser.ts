@@ -888,8 +888,8 @@ export class CueBrowser implements Component {
         this.refresh()
       })
       if (this.showPreview) {
-        add("ctrl+d", "preview down", "view", () => this.scrollPreview(Math.floor(page / 2)))
-        add("ctrl+u", "preview up", "view", () => this.scrollPreview(-Math.floor(page / 2)))
+        add("shift+down", "preview down", "view", () => this.scrollPreview(Math.floor(page / 2)))
+        add("shift+up", "preview up", "view", () => this.scrollPreview(-Math.floor(page / 2)))
         add("ctrl+home", "preview top", "view", () => this.scrollTo(0))
         add("ctrl+end", "preview bottom", "view", () => this.scrollTo(Number.MAX_SAFE_INTEGER))
       }

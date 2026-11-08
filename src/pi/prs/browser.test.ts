@@ -141,17 +141,21 @@ describe("PR browser preview", () => {
     expect(kb.matches("\x1b[1;5F", "tui.altScreen.bottom")).toBe(true)
     const s = setup(async () => detail(Array.from({ length: 100 }, (_, i) => `paragraph ${i}\n`).join("\n")), kb)
     expect(s.browser.hints()).toEqual(expect.arrayContaining([
-      "ctrl+u scroll up", "ctrl+d scroll down", "ctrl+home top", "ctrl+end bottom", "alt+l layout",
+      "shift+up scroll up", "shift+down scroll down", "ctrl+home top", "ctrl+end bottom", "alt+l layout",
     ]))
     expect(kb.getUserBindings()).toEqual({})
     await tick()
     s.browser.render(80)
     await tick()
     s.browser.render(80)
-    s.browser.handleInput("\x04")
+    for (const key of ["\x04", "\x15"]) {
+      s.browser.handleInput(key)
+      expect(s.browser.scroll()).toBe(0)
+    }
+    s.browser.handleInput("\x1b[1;2B")
     s.browser.render(80)
     expect(s.browser.scroll()).toBe(7)
-    s.browser.handleInput("\x15")
+    s.browser.handleInput("\x1b[1;2A")
     s.browser.render(80)
     expect(s.browser.scroll()).toBe(0)
     s.browser.handleInput("\x1b[1;5F")
@@ -160,7 +164,7 @@ describe("PR browser preview", () => {
     s.browser.handleInput("\x1b[1;5H")
     s.browser.render(80)
     expect(s.browser.scroll()).toBe(0)
-    s.browser.handleInput("\x04")
+    s.browser.handleInput("\x1b[1;2B")
     s.browser.handleInput("\x1b[B")
     s.browser.render(80)
     expect(s.browser.scroll()).toBe(0)
@@ -181,7 +185,7 @@ describe("PR browser preview", () => {
     s.browser.render(80)
     await tick()
     s.browser.render(80)
-    for (const key of ["\x04", "\x15", "\x1b[1;5H", "\x1b[1;5F"]) {
+    for (const key of ["\x04", "\x15", "\x1b[1;2A", "\x1b[1;2B", "\x1b[1;5H", "\x1b[1;5F"]) {
       s.browser.handleInput(key)
       expect(s.browser.scroll()).toBe(0)
     }
@@ -199,14 +203,14 @@ describe("PR browser preview", () => {
     expect(s.browser.hints()).toEqual(expect.arrayContaining([
       "alt+u scroll up", "alt+d/alt+j scroll down", "alt+home top", "alt+end bottom",
     ]))
-    expect(s.browser.hints().join(" ")).not.toContain("ctrl+d")
+    expect(s.browser.hints().join(" ")).not.toContain("shift+down")
     expect(s.browser.hints().join(" ")).not.toContain("ctrl+home")
 
     const disabled = setup(undefined, new KeybindingsManager(TUI_KEYBINDINGS, {
       "tui.altScreen.halfPageUp": [], "tui.altScreen.halfPageDown": [],
       "tui.altScreen.top": [], "tui.altScreen.bottom": [],
     }))
-    for (const key of ["\x04", "\x15", "\x1b[1;5H", "\x1b[1;5F"]) {
+    for (const key of ["\x04", "\x15", "\x1b[1;2A", "\x1b[1;2B", "\x1b[1;5H", "\x1b[1;5F"]) {
       disabled.browser.handleInput(key)
       expect(disabled.browser.scroll()).toBe(0)
     }
@@ -230,7 +234,7 @@ describe("PR browser preview", () => {
     expect(s.browser.scroll()).toBe(stackedBottom)
     s.browser.handleInput("\x1b[1;5H")
     s.browser.render(80)
-    s.browser.handleInput("\x04")
+    s.browser.handleInput("\x1b[1;2B")
     s.browser.render(80)
     expect(s.browser.scroll()).toBe(12)
     s.browser.handleInput("\x1b[1;5F")
