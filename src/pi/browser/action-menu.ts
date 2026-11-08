@@ -5,9 +5,9 @@ import type { Binding } from "./keymap"
 /** Opens the item-actions menu inside a view. */
 export const ACTIONS_KEY: KeyId = "f3"
 
-export type MenuSection = "open" | "act" | "copy"
+export type MenuSection = "open" | "act" | "copy" | "view"
 
-export const SECTIONS: MenuSection[] = ["act", "copy", "open"]
+export const SECTIONS: MenuSection[] = ["act", "copy", "open", "view"]
 
 const FOOTER = "enter run • esc close"
 const GAP = 3
