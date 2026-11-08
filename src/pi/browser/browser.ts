@@ -36,6 +36,7 @@ import {
   kindLabel,
 } from "./activity"
 import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
+import { ActionMenu, actionMenuWidth, ACTIONS_KEY, type MenuSection } from "./action-menu"
 import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
@@ -770,6 +771,7 @@ export class CueBrowser implements Component {
       const c = this.selectedContext()
       if (c) push({ address: c.address, slug: c.slug })
     }
+    const m = (menu: MenuSection): Partial<Binding> => (k === "contexts" ? { menu } : {})
 
     add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
     add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1, true))
@@ -777,7 +779,7 @@ export class CueBrowser implements Component {
     add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
     add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
     const enterLabel = k === "contexts" || k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
-    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true })
+    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true, ...m("act") })
     add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
     add("ctrl+t", "target here/tmux", "act", () => {
       this.target = this.target === "here" ? "tmux" : "here"
@@ -790,21 +792,21 @@ export class CueBrowser implements Component {
       add("ctrl+h", "copy context", "copy", () => this.onCopyActivity("context"))
       add("ctrl+y", "copy path/address/commit", "copy", () => this.onCopyActivity("value"))
     } else {
-      add("ctrl+h", "copy address", "copy", () => this.onCopy("address"))
-      add("ctrl+y", "copy path", "copy", () => this.onCopy("path"))
+      add("ctrl+h", "copy address", "copy", () => this.onCopy("address"), m("copy"))
+      add("ctrl+y", "copy path", "copy", () => this.onCopy("path"), m("copy"))
     }
-    if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext())
+    if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext(), m("act"))
     else add("ctrl+n", "new artifact", "act", () => this.startWizard())
-    add("ctrl+s", "new session", "act", () => this.onNewSession())
+    add("ctrl+s", "new session", "act", () => this.onNewSession(), m("act"))
     add("alt+r", "reload", "view", () => this.reload())
     if (k !== "artifacts") {
       add("ctrl+up", "recency up", "view", () => this.stepRecency(1))
       add("ctrl+down", "recency down", "view", () => this.stepRecency(-1))
     }
     if (v.kind === "contexts") {
-      add("ctrl+l", "link session", "act", () => this.onLink())
-      add("alt+f", "pin", "act", () => this.onTogglePin(v))
-      add("alt+x", "archive", "act", () => this.onToggleArchive(v))
+      add("ctrl+l", "link session", "act", () => this.onLink(), m("act"))
+      add("alt+f", "pin", "act", () => this.onTogglePin(v), m("act"))
+      add("alt+x", "archive", "act", () => this.onToggleArchive(v), m("act"))
       add("alt+v", "show archived", "view", () => {
         this.showArchived = !this.showArchived
         return this.loadContexts(v, this.selectedContext()?.address)
@@ -820,13 +822,13 @@ export class CueBrowser implements Component {
         add("alt+z", "fold", "view", () => this.onToggleCollapse(v))
         add("shift+tab", "fold all", "view", () => this.onCollapseAll(v))
       }
-      add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true })
+      add("ctrl+r", "sessions", "navigate", pushContext((c) => this.pushSessions(c)), { hint: true, ...m("open") })
       add("alt+enter", "reveal in tree", "view", () => this.onReveal(v), {
         hint: this.contextsFlat || v.query.trim() !== "",
       })
-      add("alt+a", "artifacts", "navigate", pushContext((c) => this.pushArtifacts(c)))
-      add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
-      add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
+      add("alt+a", "artifacts", "navigate", pushContext((c) => this.pushArtifacts(c)), m("open"))
+      add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)), m("open"))
+      add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)), m("open"))
     } else if (v.kind === "artifacts") {
       add("alt+t", "tree/flat", "view", () => this.relayoutArtifacts(v, () => { v.tree = !v.tree }))
       if (v.tree) {
@@ -881,8 +883,30 @@ export class CueBrowser implements Component {
         add("ctrl+end", "preview bottom", "view", () => this.scrollTo(Number.MAX_SAFE_INTEGER))
       }
     }
+    if (out.some((b) => b.menu)) add(ACTIONS_KEY, "actions", "view", () => this.showActions(), { hint: true })
     add(HELP_KEYS, "keys", "view", () => this.showHelp(), { hint: true })
     return out
+  }
+
+  private showActions(): void {
+    const bindings = this.bindings()
+    const title = `actions: ${this.selectedContext()?.slug ?? this.view.kind}`
+    let handle: OverlayHandle | undefined
+    const menu = new ActionMenu(this.theme, this.kb, title, bindings, (b) => {
+      handle?.hide()
+      this.tui.requestRender()
+      b?.run?.()
+    })
+    const wrapped: Component = {
+      render: (w) => menu.render(w),
+      invalidate: () => menu.invalidate(),
+      handleInput: (data) => {
+        menu.handleInput(data)
+        this.tui.requestRender()
+      },
+    }
+    handle = this.tui.showOverlay(wrapped, { anchor: "center", width: actionMenuWidth(bindings, title) })
+    this.tui.requestRender()
   }
 
   private showHelp(): void {
