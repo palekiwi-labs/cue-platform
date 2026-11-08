@@ -54,10 +54,7 @@ const parameters = Type.Object({
         "Canonical address of the parent context (e.g. " +
         "'palekiwi/palekiwi/cue-platform-direction'). Children are derived " +
         "by scanning for this field, so the parent record needs no edit. " +
-        "Required in practice: if the conversation does not name the " +
-        "parent, find the nearest fitting context with cue-recall, falling " +
-        "back to a root. Omit it (creating a new root) only with the " +
-        "operator's explicit approval.",
+        "Omit only with the operator's approval (creates a root).",
     }),
   ),
   refs: Type.Optional(
@@ -93,9 +90,8 @@ export function cueContextTool(pi: ExtensionAPI): ToolDefinition<typeof paramete
       "unit of cue: it owns the log, the spec, the plans, the notes and " +
       "the tasks for one piece of work. Every artifact write requires an " +
       "existing context and cue has no default, so start a new piece of " +
-      "work by creating its context first. Every new context needs a " +
-      "parent (see the parent parameter); say in your reply which parent " +
-      "you picked. List existing slugs with `cue context list`.",
+      "work by creating its context first. List existing slugs with " +
+      "`cue context list`.",
     parameters,
     async execute(_toolCallId, args, _signal, _onUpdate, ctx) {
       const flags = [
