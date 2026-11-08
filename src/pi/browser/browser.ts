@@ -432,11 +432,12 @@ export class CueBrowser implements Component {
   }
 
   /**
-   * ctrl+r/a/g outside the contexts view: sessions, activity or log of
-   * the view's context (the highlighted session's in the sessions view).
-   * Activity and log replace each other so esc returns past both.
+   * ctrl+r/a/g and alt+a outside the contexts view: sessions, activity,
+   * log or artifacts of the view's context (the highlighted session's in
+   * the sessions view). Artifacts, activity and log replace each other
+   * so esc returns past all of them.
    */
-  private jumpTo(kind: "sessions" | "activity" | "log"): void {
+  private jumpTo(kind: "sessions" | "activity" | "log" | "artifacts"): void {
     const v = this.view
     const context = v.kind === "sessions"
       ? this.actionContext()
@@ -445,9 +446,10 @@ export class CueBrowser implements Component {
       this.notify(v.kind === "sessions" ? "this session has no cue context" : "no context")
       return this.tui.requestRender()
     }
-    if (v.kind === "activity" || v.kind === "log") this.views.pop()
+    if (v.kind === "activity" || v.kind === "log" || v.kind === "artifacts") this.views.pop()
     if (kind === "sessions") this.pushSessions(context)
     else if (kind === "activity") this.pushActivity(context)
+    else if (kind === "artifacts") this.pushArtifacts(context)
     else this.pushLog(context)
   }
 
@@ -774,7 +776,7 @@ export class CueBrowser implements Component {
     add(kbKeys("tui.select.down"), "down", "navigate", () => move(1, true))
     add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
     add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
-    const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
+    const enterLabel = k === "contexts" || k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
     add("enter", enterLabel, "act", () => this.onEnter(), { hint: true })
     add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
     add("ctrl+t", "target here/tmux", "act", () => {
@@ -802,7 +804,7 @@ export class CueBrowser implements Component {
     if (v.kind === "contexts") {
       add("ctrl+l", "link session", "act", () => this.onLink())
       add("alt+f", "pin", "act", () => this.onTogglePin(v))
-      add("alt+a", "archive", "act", () => this.onToggleArchive(v))
+      add("alt+x", "archive", "act", () => this.onToggleArchive(v))
       add("alt+v", "show archived", "view", () => {
         this.showArchived = !this.showArchived
         return this.loadContexts(v, this.selectedContext()?.address)
@@ -822,6 +824,7 @@ export class CueBrowser implements Component {
       add("alt+enter", "reveal in tree", "view", () => this.onReveal(v), {
         hint: this.contextsFlat || v.query.trim() !== "",
       })
+      add("alt+a", "artifacts", "navigate", pushContext((c) => this.pushArtifacts(c)))
       add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)))
       add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)))
     } else if (v.kind === "artifacts") {
@@ -862,6 +865,7 @@ export class CueBrowser implements Component {
       if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"))
       if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"))
       if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"))
+      if (k !== "artifacts") add("alt+a", "artifacts", "navigate", () => this.jumpTo("artifacts"))
       add("alt+p", "preview", "view", () => {
         this.showPreview = !this.showPreview
         this.refresh()
@@ -973,12 +977,7 @@ export class CueBrowser implements Component {
 
   private async onEnter(): Promise<void> {
     if (this.view.kind === "sessions") return this.onResume()
-    const c = this.selectedContext()
-    if (c) {
-      this.status = ""
-      this.pushArtifacts({ address: c.address, slug: c.slug })
-      return
-    }
+    if (this.view.kind === "contexts") return this.onResumeContext()
     await this.onOpen()
   }
 
@@ -1204,8 +1203,20 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
-  private onResume(): void {
-    const s = this.selectedSession()
+  /** Contexts view enter: resume the context's most recent session. */
+  private async onResumeContext(): Promise<void> {
+    const c = this.selectedContext()
+    if (!c) return
+    this.sessionsCache ??= this.deps.loadSessions(this.repoScope)
+    const sessions = await this.sessionsCache
+    const newest = sessions
+      .filter((s) => s.address === c.address)
+      .reduce<SessionRow | undefined>((a, s) => (a && a.modified >= s.modified ? a : s), undefined)
+    if (!newest) return this.notify(`no sessions in ${c.slug}; ctrl+s for a new one`)
+    this.onResume(newest)
+  }
+
+  private onResume(s = this.selectedSession()): void {
     if (!s) return
     if (s.path === this.deps.currentSession()) return this.notify("already in this session")
     const err = this.deps.resume(s, this.target)

@@ -6,6 +6,8 @@ import { parseContextTree } from "./model"
 
 async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const saved: number[] = []
+  const resumed: string[] = []
+  const artifactsOf: string[] = []
   const contexts = parseContextTree(JSON.stringify({ roots: [
     { context: "fresh", scope: "o/r", last_logged_at: Math.floor(Date.now() / 1000), children: [] },
     { context: "old-context", scope: "o/r", children: [] },
@@ -23,6 +25,8 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
     loadSessions: async () => [{ path: "/missing", cwd: "/w", address: "o/r/old-context", description: "old-session", modified: 0, tokens: null }],
     currentSession: () => undefined,
     currentCwd: () => ({ cwd: "/w" }),
+    resume: (s: { path: string }) => { resumed.push(s.path); return undefined },
+    loadArtifacts: async (address: string) => { artifactsOf.push(address); return [] },
   } as unknown as BrowserDeps
   const tui = { requestRender() {}, terminal: { rows: 30, columns: 160 } } as unknown as TUI
   const theme = { fg: (_: string, s: string) => s, bg: (_: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
@@ -33,8 +37,48 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const browser = new CueBrowser(tui, theme, kb, deps, () => {}, start, "here")
   browser.handleInput("\x1bp")
   await new Promise(resolve => setTimeout(resolve, 0))
-  return { browser, saved, text: () => browser.render(160).join("\n") }
+  return { browser, saved, resumed, artifactsOf, text: () => browser.render(160).join("\n") }
 }
+
+const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+
+describe("CueBrowser alt+a artifacts", () => {
+  test("sessions: opens the highlighted session's context, esc returns", async () => {
+    const s = await setup("sessions", 0)
+    s.browser.handleInput("\x1ba")
+    await tick()
+    expect(s.artifactsOf).toEqual(["o/r/old-context"])
+    s.browser.handleInput("\x1b")
+    expect(s.text()).toContain("old-session")
+  })
+
+  test("activity: artifacts replace activity, esc goes past both", async () => {
+    const s = await setup("contexts", 0)
+    s.browser.handleInput("\x01")
+    await tick()
+    s.browser.handleInput("\x1ba")
+    await tick()
+    expect(s.artifactsOf).toEqual(["o/r/fresh"])
+    s.browser.handleInput("\x1b")
+    expect(s.text()).toContain("old-context")
+  })
+
+  test("contexts: alt+a opens artifacts, enter resumes the newest session", async () => {
+    const s = await setup("contexts", 0)
+    s.browser.handleInput("\x1ba")
+    await tick()
+    expect(s.artifactsOf).toEqual(["o/r/fresh"])
+    s.browser.handleInput("\x1b")
+    s.browser.handleInput("\r")
+    await tick()
+    expect(s.resumed).toEqual([])
+    expect(s.text()).toContain("no sessions in fresh; ctrl+s for a new one")
+    s.browser.handleInput("\x1b[B")
+    s.browser.handleInput("\r")
+    await tick()
+    expect(s.resumed).toEqual(["/missing"])
+  })
+})
 
 describe("CueBrowser recency", () => {
   for (const view of ["contexts", "activity", "log", "sessions"] as const) {
