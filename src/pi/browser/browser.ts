@@ -773,7 +773,7 @@ export class CueBrowser implements Component {
       const c = this.selectedContext()
       if (c) push({ address: c.address, slug: c.slug })
     }
-    const m = (menu: MenuSection): Partial<Binding> => (k === "contexts" ? { menu } : {})
+    const m = (menu: MenuSection): Partial<Binding> => ({ menu })
 
     add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
     add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1))
@@ -781,24 +781,24 @@ export class CueBrowser implements Component {
     add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
     add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
     const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
-    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true, ...m("open") })
+    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true, ...m(k === "sessions" ? "act" : "open") })
     add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
     add("ctrl+t", "target here/tmux", "act", () => {
       this.target = this.target === "here" ? "tmux" : "here"
       this.tui.requestRender()
     })
     if (k === "log") {
-      add("ctrl+y", "copy address", "copy", () => this.onCopyLog("address"))
-      add("ctrl+h", "copy link", "copy", () => this.onCopyLog("link"))
+      add("ctrl+y", "copy address", "copy", () => this.onCopyLog("address"), m("copy"))
+      add("ctrl+h", "copy link", "copy", () => this.onCopyLog("link"), m("copy"))
     } else if (k === "activity") {
-      add("ctrl+h", "copy context", "copy", () => this.onCopyActivity("context"))
-      add("ctrl+y", "copy path/address/commit", "copy", () => this.onCopyActivity("value"))
+      add("ctrl+h", "copy context", "copy", () => this.onCopyActivity("context"), m("copy"))
+      add("ctrl+y", "copy path/address/commit", "copy", () => this.onCopyActivity("value"), m("copy"))
     } else {
       add("ctrl+h", "copy address", "copy", () => this.onCopy("address"), m("copy"))
       add("ctrl+y", "copy path", "copy", () => this.onCopy("path"), m("copy"))
     }
     if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext(), m("act"))
-    else add("ctrl+n", "new artifact", "act", () => this.startWizard())
+    else add("ctrl+n", "new artifact", "act", () => this.startWizard(), m("act"))
     add("ctrl+s", "new session", "act", () => this.onNewSession(), m("act"))
     add("alt+r", "reload", "view", () => this.reload())
     if (k !== "artifacts") {
@@ -858,7 +858,7 @@ export class CueBrowser implements Component {
         this.previewScroll = this.previewStart()
         return this.loadSessions(v)
       }, { hint: true })
-      add("ctrl+l", "link to context", "act", () => this.onLink())
+      add("ctrl+l", "link to context", "act", () => this.onLink(), m("act"))
       add("alt+z", "fold", "view", () => this.onFoldSessions(v))
       add("shift+tab", "fold all", "view", () => this.onFoldSessionsAll(v))
       add("alt+t", "tree/flat", "view", () => {
@@ -867,9 +867,9 @@ export class CueBrowser implements Component {
         this.previewScroll = this.previewStart()
         this.refresh()
       })
-      add("ctrl+x", "delete", "act", () => this.onDelete())
-      add("alt+u", "unlabel", "act", () => this.onClearLabel())
-      add("alt+d", "describe", "act", () => this.onDescribe())
+      add("ctrl+x", "delete", "act", () => this.onDelete(), m("act"))
+      add("alt+u", "unlabel", "act", () => this.onClearLabel(), m("act"))
+      add("alt+d", "describe", "act", () => this.onDescribe(), m("act"))
     }
     if (k === "contexts" || k === "sessions") {
       add("alt+s", "repo/all scope", "view", () => {
@@ -878,9 +878,9 @@ export class CueBrowser implements Component {
       })
     }
     if (k !== "contexts") {
-      if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"))
-      if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"))
-      if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"))
+      if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"), m("open"))
+      if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"), m("open"))
+      if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"), m("open"))
       add("alt+p", "preview", "view", () => {
         this.showPreview = !this.showPreview
         this.refresh()
@@ -903,7 +903,8 @@ export class CueBrowser implements Component {
 
   private showActions(): void {
     const bindings = this.bindings()
-    const title = `actions: ${this.selectedContext()?.slug ?? this.view.kind}`
+    const slug = this.view.kind === "contexts" ? this.selectedContext()?.slug : undefined
+    const title = `actions: ${slug ?? this.view.kind}`
     let handle: OverlayHandle | undefined
     const menu = new ActionMenu(this.theme, this.kb, title, bindings, (b) => {
       handle?.hide()
