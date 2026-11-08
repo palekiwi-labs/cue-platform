@@ -898,14 +898,8 @@ export class CueBrowser implements Component {
     const toggle = (label: string, group: Setting["group"], values: [string, string], on: boolean, set: (on: boolean) => void) =>
       out.push({ label, group, values, current: on ? 1 : 0, apply: (i) => set(i === 1) })
 
-    if (v.kind === "contexts" || v.kind === "activity" || v.kind === "log") {
-      toggle("list", "filter", ["all", "recent"], v.recent, (on) => {
-        v.recent = on
-        v.selected = 0
-      })
-    }
     if (v.kind === "sessions") {
-      const subsets: SessionSubset[] = ["recent", "labeled", "all"]
+      const subsets: SessionSubset[] = ["recent", "labeled"]
       out.push({
         label: "list", group: "filter", values: subsets, current: subsets.indexOf(v.subset),
         apply: (i) => {
@@ -918,7 +912,7 @@ export class CueBrowser implements Component {
     }
     if (k !== "artifacts") {
       out.push({
-        label: "recency", group: "filter", values: RECENCY_STEPS.map((d) => `${d}d`), current: this.recencyStep,
+        label: "recency", group: "filter", values: RECENCY_STEPS.map((d) => recencyLabel(d)), current: this.recencyStep,
         apply: (i) => {
           this.recencyStep = i
           this.deps.saveRecencyDays(this.recencyDays)
