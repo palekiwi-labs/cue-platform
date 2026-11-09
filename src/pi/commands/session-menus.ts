@@ -24,7 +24,7 @@ const action = (label: string, menu: Binding["menu"], run: () => void): Binding 
   run,
 })
 
-/** Actions on the session and the pi instance, as F3 lists them. */
+/** Actions on the session and the pi instance, as F2 lists them. */
 export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding[] {
   return [
     action("interrupt", "act", () => ctx.abort()),
@@ -42,7 +42,7 @@ export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding
   ]
 }
 
-/** Settings of the session, as F4 lists them. */
+/** Settings of the session, as F3 lists them. */
 export function sessionSettings(pi: ExtensionAPI): Setting[] {
   const level = pi.getThinkingLevel() as ThinkingLevel
   return [
@@ -88,7 +88,7 @@ async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   )
 }
 
-/** F3 session actions and F4 session settings in pi's main view. */
+/** F2 session actions and F3 session settings in pi's main view. */
 export function registerSessionMenus(pi: ExtensionAPI): void {
   pi.registerCommand(NEW_SESSION_COMMAND, {
     description: "Start a new session",
