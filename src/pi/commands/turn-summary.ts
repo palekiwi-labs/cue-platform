@@ -112,7 +112,7 @@ function popupComponent(popup: SummaryPopup, tui: TUI, kb: KeybindingsManager, d
     handleInput(data: string) {
       popup.clearFlash()
       if (matchesKey(data, "ctrl+y")) popup.copy()
-      else if (matchesKey(data, "left")) || data === "h") popup.move(-1)
+      else if (matchesKey(data, "left") || data === "h") popup.move(-1)
       else if (matchesKey(data, "right") || data === "l") popup.move(1)
       else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, SUMMARY_SHORTCUT) || data === "q") {
         return done()
