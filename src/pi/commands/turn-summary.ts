@@ -1,5 +1,6 @@
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
+import { autoSummary } from "../turn-summary/settings"
 import { summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
 
@@ -138,7 +139,20 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): 
   )
 }
 
+/** Summarize the turn that just ended, unless it already has a summary. */
+function summarizeLastTurn(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  const branch = ctx.sessionManager.getBranch() as Parameters<typeof turnsOf>[0]
+  const last = turnsOf(branch).at(-1)
+  if (!last || storedSummaries(branch).has(last.id)) return
+  ensureSummary(pi, last, ctx.cwd).catch((err) => {
+    if (ctx.hasUI) ctx.ui.notify(`turn summary failed: ${(err as Error).message ?? String(err)}`, "warning")
+  })
+}
+
 export function registerTurnSummary(pi: ExtensionAPI): void {
+  pi.on("agent_end", (_event, ctx) => {
+    if (autoSummary()) summarizeLastTurn(pi, ctx)
+  })
   pi.registerCommand("cue:summary", {
     description: "Show a short summary of the last turn and browse earlier ones",
     handler: async (_args, ctx) => openTurnSummary(pi, ctx),
