@@ -17,7 +17,7 @@ import {
 import { openPrBrowser } from "./prs"
 
 /** Open the views launcher. */
-export const VIEWS_SHORTCUT = "f2"
+export const VIEWS_SHORTCUT = "f1"
 
 /** A launcher entry: a view and how to open it. */
 export interface LauncherView {

@@ -2,7 +2,7 @@ import type { KeybindingsManager } from "@earendil-works/pi-coding-agent"
 import { type Component, type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 
 /** Opens the settings form inside a view. */
-export const SETTINGS_KEY: KeyId = "f4"
+export const SETTINGS_KEY: KeyId = "f3"
 
 export type SettingGroup = "filter" | "display"
 
