@@ -3,7 +3,7 @@ import { type Component, type KeyId, matchesKey, truncateToWidth, visibleWidth }
 import type { Binding } from "./keymap"
 
 /** Opens the item-actions menu inside a view. */
-export const ACTIONS_KEY: KeyId = "f3"
+export const ACTIONS_KEY: KeyId = "f2"
 
 export type MenuSection = "open" | "act" | "copy" | "view"
 
