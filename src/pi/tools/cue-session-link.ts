@@ -5,6 +5,7 @@ import { Type } from "typebox"
 import { linkContext } from "../commands/context-pins"
 import { storeRoot } from "../commands/cue-browser"
 import { currentContext } from "../lib/current-context"
+import { applyContextName } from "../session-name"
 
 const parameters = Type.Object({
   address: Type.String({
@@ -54,6 +55,7 @@ export function cueSessionLinkTool(pi: ExtensionAPI): ToolDefinition<typeof para
       }
       const previous = currentContext(ctx.sessionManager.getBranch())
       if (previous === address) {
+        await applyContextName(pi, address)
         return {
           content: [{ type: "text", text: `Session already linked to ${address}.` }],
           details: { address, previous },
