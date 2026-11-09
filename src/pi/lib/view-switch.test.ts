@@ -3,7 +3,7 @@ import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-work
 import type { Component, TUI } from "@earendil-works/pi-tui"
 import { setViewSwitcher, withViewSwitch } from "./view-switch"
 
-const F2 = "\x1bOQ"
+const F1 = "\x1bOP"
 
 class FakeView implements Component {
   seen: string[] = []
@@ -23,7 +23,7 @@ describe("withViewSwitch", () => {
   test("the switch key opens the switcher instead of reaching the view", () => {
     let closes = 0
     let switched = 0
-    setViewSwitcher("f2", (_ctx, _tui, _theme, _kb, close) => {
+    setViewSwitcher("f1", (_ctx, _tui, _theme, _kb, close) => {
       switched++
       close()
     })
@@ -36,7 +36,7 @@ describe("withViewSwitch", () => {
       none as KeybindingsManager,
       () => closes++,
     )
-    wrapped.handleInput!(F2)
+    wrapped.handleInput!(F1)
     wrapped.handleInput!("j")
     expect(switched).toBe(1)
     expect(closes).toBe(1)
