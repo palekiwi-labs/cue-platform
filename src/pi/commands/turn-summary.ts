@@ -1,7 +1,7 @@
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import { autoSummary } from "../turn-summary/settings"
-import { summarizeTurn } from "../turn-summary/summarize"
+import { SUMMARIZER_ENV, summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
 
 /** Open the turn summary popup. */
@@ -151,7 +151,7 @@ function summarizeLastTurn(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 export function registerTurnSummary(pi: ExtensionAPI): void {
   pi.on("agent_end", (_event, ctx) => {
-    if (autoSummary()) summarizeLastTurn(pi, ctx)
+    if (ctx.hasUI && !process.env[SUMMARIZER_ENV] && autoSummary()) summarizeLastTurn(pi, ctx)
   })
   pi.registerCommand("cue:summary", {
     description: "Show a short summary of the last turn and browse earlier ones",
