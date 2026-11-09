@@ -4,11 +4,14 @@ import { cleanSummary } from "./clean"
 /** The cue-agent agent that writes turn summaries. */
 export const SUMMARIZER_AGENT = "summarizer"
 
+/** Set in the summarizer's environment so its own pi never auto-summarizes. */
+export const SUMMARIZER_ENV = "CUE_TURN_SUMMARIZER"
+
 const MAX_INPUT = 60_000
 
 function run(argv: string[], stdin: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env }
+    const env: NodeJS.ProcessEnv = { ...process.env, [SUMMARIZER_ENV]: "1" }
     delete env.BUN_BE_BUN
     const child = spawn("cue-agent", argv, { stdio: ["pipe", "pipe", "pipe"], env })
     let stdout = ""
