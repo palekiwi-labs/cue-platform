@@ -260,7 +260,13 @@ Agents operate under strict context isolation:
 2. **Never Mutate Branch Context Associations**: Agents must never run
    `cue context switch` or alter git branch configuration; branch association is
    operator state.
-3. **Subagent Scope Propagation**: When delegating work to subagents, the
+3. **Session Linking on Intent Only**: Linking the session to a context
+   (`cue-session-link`) is allowed when the operator states clear working
+   intent ("let's work on <address>"), never because a context was merely
+   mentioned or explored. Always say in your reply which context you
+   linked. Linking only labels the session: keep passing `context`
+   explicitly on every cue tool call.
+4. **Subagent Scope Propagation**: When delegating work to subagents, the
    primary agent MUST include the context directive in the subagent prompt
    and set `$CUE_CONTEXT` for child processes when supported.
 
@@ -474,6 +480,7 @@ acting.
 - **DO** discover and inspect artifacts using `cue list` instead of searching the filesystem directly.
 - **DO** pass `context: "<slug>"` explicitly on all cue tool calls (`cue-add`, `cue-log`, `cue-plan`, `cue-task`).
 - **DO** log after every commit and during active discovery; omit empty fields.
+- **DO** link the session with `cue-session-link` when the operator says to work on a context, and announce the link.
 - **DO** resolve all open tasks or capture remaining work before concluding a session.
 - **DON'T** log test passes, linter output, or transient plan next-steps in context logs.
 - **DON'T** run `cue context switch` or alter git branch configuration (owned exclusively by the human operator).

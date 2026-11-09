@@ -33,8 +33,9 @@ review artifacts.
    (`cue context create ... --mode review`, or let cue-review create it).
    When you create it, parent it under the context of the work being
    reviewed, or the scope's review root if that work has no context.
-   Sessions reviewing that work link/switch to it. Never run
-   `cue context switch` for the operator; create or name it explicitly.
+   Sessions reviewing that work link to it (`cue-session-link`). Never
+   run `cue context switch` for the operator; create or name it
+   explicitly.
 2. **Run**: fire the pipeline, do not babysit it. One command per review
    target; all are detached by default (a window in the `review` tmux
    session) and return immediately:
