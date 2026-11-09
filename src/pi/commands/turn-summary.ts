@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import { copyToClipboard, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import { summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
@@ -6,7 +6,7 @@ import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, tu
 /** Open the turn summary popup. */
 export const SUMMARY_SHORTCUT = "f4"
 
-const FOOTER = "← → turns • esc close"
+const FOOTER = "← → turns • ctrl+y copy • esc close"
 
 const pending = new Map<string, Promise<string>>()
 
@@ -30,6 +30,7 @@ type Slot = { state: "ready"; text: string } | { state: "loading" } | { state: "
 class SummaryPopup implements Component {
   private index: number
   private slots = new Map<string, Slot>()
+  private flash = ""
 
   constructor(
     private pi: ExtensionAPI,
@@ -46,11 +47,24 @@ class SummaryPopup implements Component {
 
   invalidate(): void {}
 
+  clearFlash(): void {
+    this.flash = ""
+  }
+
   move(delta: number): void {
     const next = Math.min(this.turns.length - 1, Math.max(0, this.index + delta))
     if (next === this.index) return
     this.index = next
     this.load()
+  }
+
+  copy(): void {
+    const slot = this.slots.get(this.turns[this.index]!.id)
+    if (slot?.state !== "ready") return
+    copyToClipboard(slot.text).then(
+      () => (this.flash = "copied"),
+      (err) => (this.flash = `copy failed: ${(err as Error).message}`),
+    ).finally(() => this.tui.requestRender())
   }
 
   private load(): void {
@@ -78,7 +92,7 @@ class SummaryPopup implements Component {
           ? wrapTextWithAnsi(t.fg("error", `summary failed: ${slot.text}`), inner)
           : [t.fg("dim", "summarizing…")]
     const border = (s: string) => t.fg("border", s)
-    const foot = ` ${FOOTER} `
+    const foot = ` ${this.flash || FOOTER} `
     const top = border("╭─") + t.fg("accent", t.bold(head)) +
       border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮")
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
@@ -96,7 +110,9 @@ function popupComponent(popup: SummaryPopup, tui: TUI, kb: KeybindingsManager, d
     render: (width) => popup.render(width),
     invalidate: () => popup.invalidate(),
     handleInput(data: string) {
-      if (matchesKey(data, "left") || data === "h") popup.move(-1)
+      popup.clearFlash()
+      if (matchesKey(data, "ctrl+y")) popup.copy()
+      else if (matchesKey(data, "left")) || data === "h") popup.move(-1)
       else if (matchesKey(data, "right") || data === "l") popup.move(1)
       else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, SUMMARY_SHORTCUT) || data === "q") {
         return done()

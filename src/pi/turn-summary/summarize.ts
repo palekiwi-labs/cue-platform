@@ -24,7 +24,7 @@ function run(argv: string[], stdin: string): Promise<{ code: number | null; stdo
 export function summarizerPrompt(prompt: string, text: string): string {
   const body = text.length > MAX_INPUT ? text.slice(-MAX_INPUT) : text
   return [
-    "Summarize what the assistant said and did in this turn.",
+    "Say the assistant's reply to the user in its own voice, as one short spoken paragraph.",
     "",
     "<user-request>",
     prompt,
