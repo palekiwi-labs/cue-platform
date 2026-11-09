@@ -3,6 +3,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu"
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
+import { autoSummary, setAutoSummary } from "../turn-summary/settings"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 
@@ -52,6 +53,13 @@ export function sessionSettings(pi: ExtensionAPI): Setting[] {
       values: [...THINKING_LEVELS],
       current: Math.max(0, THINKING_LEVELS.indexOf(level)),
       apply: (i) => pi.setThinkingLevel(THINKING_LEVELS[i]!),
+    },
+    {
+      label: "auto summary",
+      group: "display",
+      values: ["off", "on"],
+      current: autoSummary() ? 1 : 0,
+      apply: (i) => setAutoSummary(i === 1),
     },
   ]
 }

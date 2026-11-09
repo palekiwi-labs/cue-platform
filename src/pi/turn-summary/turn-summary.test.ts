@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { autoSummary, setAutoSummary } from "./settings"
 import { cleanSummary } from "./clean"
 import { storedSummaries, TURN_SUMMARY_TYPE, turnsOf } from "./turns"
 
@@ -59,5 +63,16 @@ describe("cleanSummary", () => {
   test("leaves plain prose alone", () => {
     const prose = "I updated the parser so empty input no longer crashes, and the tests pass."
     expect(cleanSummary(prose)).toBe(prose)
+  })
+})
+
+describe("auto summary setting", () => {
+  test("is off by default and persists when toggled", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "turn-summary-")), "state.json")
+    expect(autoSummary(file)).toBe(false)
+    setAutoSummary(true, file)
+    expect(autoSummary(file)).toBe(true)
+    setAutoSummary(false, file)
+    expect(autoSummary(file)).toBe(false)
   })
 })
