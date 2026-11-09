@@ -100,10 +100,11 @@ export async function injectContext(
     display: true,
     details,
   })
+  const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "inject",
   })
-  await applyContextName(pi, address)
+  await naming
 }
 
 /**
@@ -121,10 +122,11 @@ export async function linkContext(
 ): Promise<void> {
   const data: CueContextDetails = { address }
   pi.appendEntry(CUE_CONTEXT_TYPE, data)
+  const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "link",
   })
-  await applyContextName(pi, address)
+  await naming
 }
 
 /**
