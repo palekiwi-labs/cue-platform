@@ -31,8 +31,9 @@ review artifacts.
 
 1. **Context**: one review context per target, `review-<branch-slug>`
    (`cue context create ... --mode review`, or let cue-review create it).
-   Sessions reviewing that work link/switch to it. Never run
-   `cue context switch` for the operator; create or name it explicitly.
+   Sessions reviewing that work link to it (`cue-session-link`). Never
+   run `cue context switch` for the operator; create or name it
+   explicitly.
 2. **Run**: fire the pipeline, do not babysit it. One command per review
    target; all are detached by default (a window in the `review` tmux
    session) and return immediately:
