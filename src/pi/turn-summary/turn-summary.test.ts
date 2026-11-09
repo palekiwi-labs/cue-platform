@@ -1,0 +1,63 @@
+import { describe, expect, test } from "bun:test"
+import { cleanSummary } from "./clean"
+import { storedSummaries, TURN_SUMMARY_TYPE, turnsOf } from "./turns"
+
+const user = (id: string, text: string) => ({ type: "message", id, message: { role: "user", content: text } })
+const assistant = (id: string, ...parts: { type: string; text?: string }[]) => ({
+  type: "message",
+  id,
+  message: { role: "assistant", content: parts },
+})
+
+describe("turnsOf", () => {
+  test("groups assistant text under the user message that started the turn", () => {
+    const turns = turnsOf([
+      user("u1", "first"),
+      assistant("a1", { type: "thinking", text: "hmm" }, { type: "text", text: "one" }),
+      assistant("a2", { type: "toolCall" }, { type: "text", text: "two" }),
+      user("u2", "second"),
+      assistant("a3", { type: "text", text: "three" }),
+    ])
+    expect(turns).toEqual([
+      { id: "u1", prompt: "first", text: "one\n\ntwo" },
+      { id: "u2", prompt: "second", text: "three" },
+    ])
+  })
+
+  test("skips turns without assistant text", () => {
+    expect(turnsOf([user("u1", "x"), assistant("a1", { type: "toolCall" })])).toEqual([])
+  })
+})
+
+describe("storedSummaries", () => {
+  test("maps turn ids to stored text, newest wins", () => {
+    const entry = (id: string, turnId: string, text: string) => ({
+      type: "custom",
+      id,
+      customType: TURN_SUMMARY_TYPE,
+      data: { turnId, text },
+    })
+    const map = storedSummaries([entry("c1", "u1", "old"), entry("c2", "u1", "new"), entry("c3", "u2", "b")])
+    expect(map.get("u1")).toBe("new")
+    expect(map.get("u2")).toBe("b")
+  })
+})
+
+describe("cleanSummary", () => {
+  test("strips markdown, code, paths and urls", () => {
+    const raw = [
+      "## Done",
+      "",
+      "- I **fixed** the `parser` in src/pi/lib/parse.ts and ./README.md.",
+      "- See https://example.com/x for [details](https://example.com).",
+      "```ts\nconst x = 1\n```",
+      "Tests pass.",
+    ].join("\n")
+    expect(cleanSummary(raw)).toBe("Done I fixed the parser in and See for details. Tests pass.")
+  })
+
+  test("leaves plain prose alone", () => {
+    const prose = "I updated the parser so empty input no longer crashes, and the tests pass."
+    expect(cleanSummary(prose)).toBe(prose)
+  })
+})
