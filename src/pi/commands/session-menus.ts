@@ -3,6 +3,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu"
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
+import { activeStyle, RESPONSE_STYLES, setActiveStyle } from "../response-style"
 import { autoSummary, setAutoSummary } from "../turn-summary/settings"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
@@ -60,6 +61,13 @@ export function sessionSettings(pi: ExtensionAPI): Setting[] {
       values: ["off", "on"],
       current: autoSummary() ? 1 : 0,
       apply: (i) => setAutoSummary(i === 1),
+    },
+    {
+      label: "style",
+      group: "display",
+      values: RESPONSE_STYLES.map((s) => s.name),
+      current: activeStyle(),
+      apply: (i) => setActiveStyle(i),
     },
   ]
 }
