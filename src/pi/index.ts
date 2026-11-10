@@ -22,6 +22,7 @@ import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
 import { cueAddTool } from "./tools/cue-add"
 import { cueContextTool } from "./tools/cue-context"
+import { cueContextExploreTool } from "./tools/cue-context-explore"
 import { cueContextUsageTool } from "./tools/cue-context-usage"
 import { cueLogTool } from "./tools/cue-log"
 import { cuePlanTool } from "./tools/cue-plan"
@@ -45,6 +46,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   // ToolDefinition, so a homogeneous loop would widen to an incompatible union.
   pi.registerTool(cueAddTool(pi))
   pi.registerTool(cueContextTool(pi))
+  pi.registerTool(cueContextExploreTool(pi))
   pi.registerTool(cueContextUsageTool())
   pi.registerTool(cueLogTool(pi))
   pi.registerTool(cuePlanTool(pi))
