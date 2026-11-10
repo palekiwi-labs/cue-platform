@@ -160,8 +160,16 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): 
   }
   const stored = storedSummaries(branch)
   const reported = await ctx.ui.custom<Reported | undefined>(
-    (tui, theme, kb, done) =>
-      popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, (r) => done(r)),
+    (tui, theme, kb, done) => {
+      const backdrop = tui.showOverlay(
+        { render: (width) => Array(tui.terminal.rows).fill(" ".repeat(width)), invalidate: () => {} },
+        { anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
+      )
+      return popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, (r) => {
+        backdrop.hide()
+        done(r)
+      })
+    },
     { overlay: true, overlayOptions: () => ({ anchor: "center", width: popupWidth() }) },
   )
   if (reported) await reportSummary(ctx, reported)
