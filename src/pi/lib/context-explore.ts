@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { contextRecency } from "./context-recency"
 
-/** Only `exec` is used, so the CLI entry point can supply its own. */
 export type Exec = Pick<ExtensionAPI, "exec">
 
 export const DETAILS = ["identity", "brief", "working"] as const
@@ -185,19 +184,50 @@ async function logBlock(
   return `<log latest="${Math.min(total, limit)}" total="${total}">\n${md}${note}\n</log>`
 }
 
+interface Handoff {
+  address: string
+  path: string
+  since: number
+}
+
 interface Documents {
   specs: ArtifactRecord[]
   masterPlan?: ArtifactRecord
   openPlans: ArtifactRecord[]
-  handoff?: string
+  handoff?: Handoff
 }
 
-function selectDocuments(artifacts: ArtifactRecord[], logs: LogRecord[]): Documents {
+const isHandoff = (a: ArtifactRecord) =>
+  a.type === "trace" && (a.name.split("/").pop() ?? "").startsWith("handoff")
+
+const createdAt = (a: ArtifactRecord) => Number(a.frontmatter?.created_at ?? 0)
+
+function latestHandoff(
+  address: string,
+  artifacts: ArtifactRecord[],
+  logs: LogRecord[],
+): Handoff | undefined {
+  const trace = artifacts
+    .filter(isHandoff)
+    .sort((a, b) => createdAt(b) - createdAt(a) || b.name.localeCompare(a.name))[0]
+  if (!trace) return undefined
+  const handoffAddress = artifactAddress(address, trace)
+  const attached = logs.find((l) => l.trace === handoffAddress)
+  const cutoff = attached ? attached.timestamp : createdAt(trace) * 1e9
+  return {
+    address: handoffAddress,
+    path: trace.path,
+    since: logs.filter((l) => l.timestamp > cutoff).length,
+  }
+}
+
+function selectDocuments(
+  address: string,
+  artifacts: ArtifactRecord[],
+  logs: LogRecord[],
+): Documents {
   const byName = (a: ArtifactRecord, b: ArtifactRecord) => a.name.localeCompare(b.name)
   const plans = artifacts.filter((a) => a.type === "plan")
-  const latestTrace = [...logs]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .find((l) => typeof l.trace === "string" && l.trace !== "")
   return {
     specs: artifacts.filter((a) => a.type === "spec").sort(byName),
     masterPlan: plans.find((p) => p.name === "index.md"),
@@ -205,7 +235,7 @@ function selectDocuments(artifacts: ArtifactRecord[], logs: LogRecord[]): Docume
       .filter((p) => p.name !== "index.md")
       .filter((p) => OPEN.has(String(p.frontmatter?.status ?? "open")))
       .sort(byName),
-    handoff: latestTrace?.trace ?? undefined,
+    handoff: latestHandoff(address, artifacts, logs),
   }
 }
 
@@ -218,36 +248,28 @@ function documentsIndex(address: string, docs: Documents): string {
   for (const p of docs.openPlans) {
     lines.push(`open plan: ${artifactAddress(address, p)}`)
   }
-  if (docs.handoff) lines.push(`latest hand-off: ${docs.handoff}`)
+  if (docs.handoff) {
+    lines.push(
+      `latest hand-off: ${docs.handoff.address} (${docs.handoff.since} log entries since)`,
+    )
+  }
   if (lines.length === 0) return ""
   return `<documents>\n${lines.join("\n")}\n</documents>`
 }
 
-async function documentBlock(address: string, path: string): Promise<string> {
-  const text = await readText(path)
-  if (text === undefined) {
-    return `<artifact address="${address}" missing="true"></artifact>`
-  }
+async function handoffBlock(handoff: Handoff): Promise<string> {
+  const attrs = `address="${handoff.address}" entries-since="${handoff.since}"`
+  const text = await readText(handoff.path)
+  if (text === undefined) return `<handoff ${attrs} missing="true"></handoff>`
   const lines = text.replace(/\r\n/g, "\n").trimEnd().split("\n")
   if (lines.length <= DOC_MAX_LINES) {
-    return `<artifact address="${address}">\n${lines.join("\n")}\n</artifact>`
+    return `<handoff ${attrs}>\n${lines.join("\n")}\n</handoff>`
   }
   const shown = lines.slice(0, DOC_MAX_LINES).join("\n")
   return (
-    `<artifact address="${address}" truncated="true">\n${shown}\n` +
-    `[truncated: ${lines.length - DOC_MAX_LINES} more lines; read ${address}]\n</artifact>`
+    `<handoff ${attrs} truncated="true">\n${shown}\n` +
+    `[truncated: ${lines.length - DOC_MAX_LINES} more lines; read ${handoff.address}]\n</handoff>`
   )
-}
-
-async function documentsFull(store: string, address: string, docs: Documents): Promise<string> {
-  const entries: [string, string][] = []
-  const add = (a: ArtifactRecord) => entries.push([artifactAddress(address, a), a.path])
-  docs.specs.forEach(add)
-  if (docs.masterPlan) add(docs.masterPlan)
-  docs.openPlans.forEach(add)
-  if (docs.handoff) entries.push([docs.handoff, join(store, docs.handoff)])
-  const blocks = await Promise.all(entries.map(([a, p]) => documentBlock(a, p)))
-  return blocks.join("\n\n")
 }
 
 function footer(store: string): string {
@@ -297,19 +319,20 @@ export async function exploreContext(
       cueJson<LogRecord[]>(pi, cwd, ["log", "list", "--context", address], []),
     ])
     const bodyText = body === undefined ? "" : stripFrontmatter(body)
-    const docs = selectDocuments(artifacts, logs)
+    const docs = selectDocuments(address, artifacts, logs)
     sections.push(
       bodyText ? `<context-body address="${address}">\n${bodyText}\n</context-body>` : "",
-      recency.recency,
-      tasksBlock(address, artifacts),
+      documentsIndex(address, docs),
+      detail === "working" && docs.handoff ? await handoffBlock(docs.handoff) : "",
+      footer(store),
       await logBlock(pi, cwd, address, logs.length, LOG_TAIL[detail]),
       recency.artifacts,
-      detail === "working"
-        ? await documentsFull(store, address, docs)
-        : documentsIndex(address, docs),
+      recency.recency,
+      tasksBlock(address, artifacts),
     )
+  } else {
+    sections.push(footer(store))
   }
-  sections.push(footer(store))
   const inner = sections.filter((s) => s !== "").join("\n\n")
   return `<cue-context-explore address="${address}" detail="${detail}">\n${inner}\n</cue-context-explore>`
 }

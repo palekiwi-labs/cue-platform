@@ -402,9 +402,8 @@ For complete command details and options, see `skills/cue/reference/cli.md`.
 ## Exploring a Context (`cue-context-explore`)
 
 To catch up on a context the operator mentions, call `cue-context-explore`
-(CLI: `cue-context-explore <address> [--detail ...]`) instead of browsing
-the store by hand. Start at the default `brief`, then go deeper only where
-needed:
+instead of browsing the store by hand. Start at the default `brief`, then
+go deeper only where needed:
 
 - `identity`: locate the context and see its links.
 - `brief` (default): decide whether it is relevant and catch up.

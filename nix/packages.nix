@@ -19,7 +19,6 @@ in
   cue-review = import ./cue-review { inherit pkgs; };
   # Called by the pi cue-recall tool; resolves scope through cue.
   cue-recall = import ./cue-recall { inherit pkgs; };
-  cue-context-explore = import ./cue-context-explore { inherit pkgs; };
   inherit (cue.packages.${system}) cue cue-agent;
   inherit (cast.packages.${system}) cast-mcp-client;
   nvim = import ./nvim { inherit pkgs nvf; };
