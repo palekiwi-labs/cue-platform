@@ -8,6 +8,8 @@ import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, tu
 export const SUMMARY_SHORTCUT = "f4"
 
 const FOOTER = "← → turns • ctrl+y copy • esc close"
+const PAD_X = 3
+const MAX_WIDTH = 86
 
 const pending = new Map<string, Promise<string>>()
 
@@ -81,7 +83,7 @@ class SummaryPopup implements Component {
 
   render(width: number): string[] {
     const t = this.theme
-    const inner = Math.max(1, width - 4)
+    const inner = Math.max(1, width - 2 - 2 * PAD_X)
     const turn = this.turns[this.index]!
     const slot = this.slots.get(turn.id)
     const head = ` turn ${this.index + 1}/${this.turns.length} `
@@ -100,10 +102,16 @@ class SummaryPopup implements Component {
       t.fg("dim", foot) + border("─╯")
     const row = (s: string) => {
       const cut = truncateToWidth(s, inner, "…")
-      return border("│ ") + cut + " ".repeat(Math.max(0, inner - visibleWidth(cut))) + border(" │")
+      const pad = " ".repeat(PAD_X)
+      return border("│") + pad + cut + " ".repeat(Math.max(0, inner - visibleWidth(cut))) + pad + border("│")
     }
-    return [top, row(prompt), row(""), ...body.map(row), bottom].map((l) => truncateToWidth(l, width))
+    return [top, row(""), row(prompt), row(""), ...body.map(row), row(""), bottom].map((l) => truncateToWidth(l, width))
   }
+}
+
+function popupWidth(): number {
+  const cols = process.stdout.columns || 80
+  return Math.min(Math.floor(cols * 0.7), MAX_WIDTH)
 }
 
 function popupComponent(popup: SummaryPopup, tui: TUI, kb: KeybindingsManager, done: () => void): Component {
@@ -135,7 +143,7 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): 
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) =>
       popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, () => done()),
-    { overlay: true, overlayOptions: { anchor: "center", width: "70%" } },
+    { overlay: true, overlayOptions: () => ({ anchor: "center", width: popupWidth() }) },
   )
 }
 
