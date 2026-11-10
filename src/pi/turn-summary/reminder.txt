@@ -1,1 +1,5 @@
-Now give the spoken update, following your rules: about two to five sentences in short paragraphs, the ask last, no question the agent did not ask, and no code, identifiers, commit hashes, branch names or paths.
+Now give only the brief spoken takeaway, about two to five short
+sentences, split into paragraphs only where the topic changes. Put any
+genuine ask about the work last; invent none. Requests to restart the
+agent session or continue from a hand-off are housekeeping, not asks:
+omit them without comment. Omit technical strings.

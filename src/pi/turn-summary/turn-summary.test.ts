@@ -127,6 +127,7 @@ describe("summarizerPrompt", () => {
     const p = summarizerPrompt("ask", "reply")
     expect(p).toStartWith("<user-request>\nask\n</user-request>\n\n<assistant-output>\nreply\n</assistant-output>\n\n")
     expect(p.endsWith(SUMMARIZER_REMINDER)).toBe(true)
-    expect(SUMMARIZER_REMINDER).toContain("no question the agent did not ask")
+    expect(SUMMARIZER_REMINDER).toContain("split into paragraphs only where the topic changes")
+    expect(SUMMARIZER_REMINDER).toContain("are housekeeping, not asks")
   })
 })
