@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { autoSummary, setAutoSummary } from "./settings"
 import { cleanSummary } from "./clean"
+import { feedbackNote } from "./feedback"
 import { storedSummaries, TURN_SUMMARY_TYPE, turnsOf } from "./turns"
 
 const user = (id: string, text: string) => ({ type: "message", id, message: { role: "user", content: text } })
@@ -42,8 +43,8 @@ describe("storedSummaries", () => {
       data: { turnId, text },
     })
     const map = storedSummaries([entry("c1", "u1", "old"), entry("c2", "u1", "new"), entry("c3", "u2", "b")])
-    expect(map.get("u1")).toBe("new")
-    expect(map.get("u2")).toBe("b")
+    expect(map.get("u1")?.text).toBe("new")
+    expect(map.get("u2")?.text).toBe("b")
   })
 })
 
@@ -74,5 +75,38 @@ describe("auto summary setting", () => {
     expect(autoSummary(file)).toBe(true)
     setAutoSummary(false, file)
     expect(autoSummary(file)).toBe(false)
+  })
+})
+
+describe("feedbackNote", () => {
+  const report = {
+    comment: "Drops context talk!\nMore detail here.",
+    summary: { turnId: "u1", text: "My context is full.", model: "m", promptHash: "abc123", runId: "r1" },
+    input: "<assistant-output>\n```ts\nx\n```\n</assistant-output>",
+    sessionFile: "/s.jsonl",
+    cwd: "/w",
+    date: new Date(2026, 10, 10),
+  }
+
+  test("names the note after the date and the comment's first line", () => {
+    const note = feedbackNote(report)
+    expect(note.filename).toBe("summarizer-feedback/2026-11-10-drops-context-talk.md")
+    expect(note.frontmatter).toEqual({
+      status: "open",
+      title: "Drops context talk!",
+      turn_id: "u1",
+      cwd: "/w",
+      model: "m",
+      prompt_hash: "abc123",
+      run_id: "r1",
+      session_file: "/s.jsonl",
+    })
+  })
+
+  test("fences the input with a fence longer than any backtick run inside it", () => {
+    const body = feedbackNote(report).body
+    expect(body).toStartWith("## Comment\n\nDrops context talk!\nMore detail here.\n")
+    expect(body).toContain("## Input\n\n````\n<assistant-output>")
+    expect(body).toContain("## Summary\n\n```\nMy context is full.\n```")
   })
 })

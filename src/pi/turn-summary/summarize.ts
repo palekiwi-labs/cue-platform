@@ -1,5 +1,16 @@
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { cleanSummary } from "./clean"
+
+/** A summary and the run that produced it. */
+export interface SummaryRun {
+  text: string
+  model?: string
+  runId?: string
+  promptHash?: string
+}
 
 /** The cue-agent agent that writes turn summaries. */
 export const SUMMARIZER_AGENT = "summarizer"
@@ -39,11 +50,31 @@ export function summarizerPrompt(prompt: string, text: string): string {
   ].join("\n")
 }
 
-/** Summarize a turn through cue-agent and return the cleaned paragraph. */
-export async function summarizeTurn(prompt: string, text: string, cwd: string): Promise<string> {
+/** Short sha256 of the system prompt a run was given, if the run kept it. */
+function promptHashOf(runPath: string | undefined): string | undefined {
+  if (!runPath) return undefined
+  try {
+    const sp = readFileSync(join(runPath, "system-prompt.md"))
+    return createHash("sha256").update(sp).digest("hex").slice(0, 12)
+  } catch {
+    return undefined
+  }
+}
+
+/** Summarize a turn through cue-agent and return the cleaned paragraph with its run details. */
+export async function summarizeTurn(prompt: string, text: string, cwd: string): Promise<SummaryRun> {
   const spec = { tasks: [{ agent: SUMMARIZER_AGENT, prompt: summarizerPrompt(prompt, text), cwd }] }
   const r = await run(["run", "-", "--json"], JSON.stringify(spec))
-  let receipt: { runs?: { outcome: string; response: string; error: string | null }[] }
+  let receipt: {
+    runs?: {
+      outcome: string
+      response: string
+      error: string | null
+      model?: string
+      run_id?: string
+      run_path?: string
+    }[]
+  }
   try {
     receipt = JSON.parse(r.stdout)
   } catch {
@@ -54,5 +85,5 @@ export async function summarizeTurn(prompt: string, text: string, cwd: string): 
   if (one.outcome !== "completed") throw new Error(`${one.outcome}: ${one.error ?? "no error"}`)
   const summary = cleanSummary(one.response)
   if (!summary) throw new Error("summarizer returned no text")
-  return summary
+  return { text: summary, model: one.model, runId: one.run_id, promptHash: promptHashOf(one.run_path) }
 }

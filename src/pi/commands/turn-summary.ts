@@ -1,26 +1,27 @@
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import { autoSummary } from "../turn-summary/settings"
-import { SUMMARIZER_ENV, summarizeTurn } from "../turn-summary/summarize"
+import { feedbackNote, writeFeedbackNote } from "../turn-summary/feedback"
+import { SUMMARIZER_ENV, summarizerPrompt, summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
 
 /** Open the turn summary popup. */
 export const SUMMARY_SHORTCUT = "f4"
 
-const FOOTER = "← → turns • ctrl+y copy • esc close"
+const FOOTER = "← → turns • ctrl+y copy • ctrl+r report • esc close"
 const PAD_X = 3
 const MAX_WIDTH = 86
 
-const pending = new Map<string, Promise<string>>()
+const pending = new Map<string, Promise<TurnSummaryData>>()
 
 /** Summarize a turn once: concurrent requests for the same turn share one run. */
-function ensureSummary(pi: ExtensionAPI, turn: Turn, cwd: string): Promise<string> {
+function ensureSummary(pi: ExtensionAPI, turn: Turn, cwd: string): Promise<TurnSummaryData> {
   let p = pending.get(turn.id)
   if (!p) {
-    p = summarizeTurn(turn.prompt, turn.text, cwd).then((text) => {
-      const data: TurnSummaryData = { turnId: turn.id, text }
+    p = summarizeTurn(turn.prompt, turn.text, cwd).then((run) => {
+      const data: TurnSummaryData = { turnId: turn.id, ...run }
       pi.appendEntry(TURN_SUMMARY_TYPE, data)
-      return text
+      return data
     })
     p.catch(() => {}).finally(() => pending.delete(turn.id))
     pending.set(turn.id, p)
@@ -28,7 +29,9 @@ function ensureSummary(pi: ExtensionAPI, turn: Turn, cwd: string): Promise<strin
   return p
 }
 
-type Slot = { state: "ready"; text: string } | { state: "loading" } | { state: "error"; text: string }
+type Reported = { turn: Turn; summary: TurnSummaryData }
+
+type Slot = { state: "ready"; data: TurnSummaryData } | { state: "loading" } | { state: "error"; text: string }
 
 class SummaryPopup implements Component {
   private index: number
@@ -41,10 +44,10 @@ class SummaryPopup implements Component {
     private tui: TUI,
     private theme: Theme,
     private turns: Turn[],
-    stored: Map<string, string>,
+    stored: Map<string, TurnSummaryData>,
   ) {
     this.index = turns.length - 1
-    for (const [id, text] of stored) this.slots.set(id, { state: "ready", text })
+    for (const [id, data] of stored) this.slots.set(id, { state: "ready", data })
     this.load()
   }
 
@@ -64,10 +67,17 @@ class SummaryPopup implements Component {
   copy(): void {
     const slot = this.slots.get(this.turns[this.index]!.id)
     if (slot?.state !== "ready") return
-    copyToClipboard(slot.text).then(
+    copyToClipboard(slot.data.text).then(
       () => (this.flash = "copied"),
       (err) => (this.flash = `copy failed: ${(err as Error).message}`),
     ).finally(() => this.tui.requestRender())
+  }
+
+  /** The shown turn and its summary, once the summary is ready. */
+  current(): Reported | undefined {
+    const turn = this.turns[this.index]!
+    const slot = this.slots.get(turn.id)
+    return slot?.state === "ready" ? { turn, summary: slot.data } : undefined
   }
 
   private load(): void {
@@ -76,7 +86,7 @@ class SummaryPopup implements Component {
     if (this.slots.get(turn.id)?.state === "loading") return
     this.slots.set(turn.id, { state: "loading" })
     ensureSummary(this.pi, turn, this.cwd).then(
-      (text) => this.slots.set(turn.id, { state: "ready", text }),
+      (data) => this.slots.set(turn.id, { state: "ready", data }),
       (err) => this.slots.set(turn.id, { state: "error", text: (err as Error).message ?? String(err) }),
     ).finally(() => this.tui.requestRender())
   }
@@ -90,7 +100,7 @@ class SummaryPopup implements Component {
     const prompt = t.fg("dim", truncateToWidth(turn.prompt.replace(/\s+/g, " "), inner, "…"))
     const body =
       slot?.state === "ready"
-        ? wrapTextWithAnsi(slot.text, inner)
+        ? wrapTextWithAnsi(slot.data.text, inner)
         : slot?.state === "error"
           ? wrapTextWithAnsi(t.fg("error", `summary failed: ${slot.text}`), inner)
           : [t.fg("dim", "summarizing…")]
@@ -114,13 +124,22 @@ function popupWidth(): number {
   return Math.min(Math.floor(cols * 0.7), MAX_WIDTH)
 }
 
-function popupComponent(popup: SummaryPopup, tui: TUI, kb: KeybindingsManager, done: () => void): Component {
+function popupComponent(
+  popup: SummaryPopup,
+  tui: TUI,
+  kb: KeybindingsManager,
+  done: (r?: Reported) => void,
+): Component {
   return {
     render: (width) => popup.render(width),
     invalidate: () => popup.invalidate(),
     handleInput(data: string) {
       popup.clearFlash()
       if (matchesKey(data, "ctrl+y")) popup.copy()
+      else if (matchesKey(data, "ctrl+r")) {
+        const r = popup.current()
+        if (r) return done(r)
+      }
       else if (matchesKey(data, "left") || data === "h") popup.move(-1)
       else if (matchesKey(data, "right") || data === "l") popup.move(1)
       else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, SUMMARY_SHORTCUT) || data === "q") {
@@ -140,11 +159,36 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): 
     return
   }
   const stored = storedSummaries(branch)
-  await ctx.ui.custom<void>(
+  const reported = await ctx.ui.custom<Reported | undefined>(
     (tui, theme, kb, done) =>
-      popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, () => done()),
+      popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, (r) => done(r)),
     { overlay: true, overlayOptions: () => ({ anchor: "center", width: popupWidth() }) },
   )
+  if (reported) await reportSummary(ctx, reported)
+}
+
+/** Ask what is wrong with a summary and file it as a feedback note; a comment is required. */
+async function reportSummary(ctx: ExtensionContext, { turn, summary }: Reported): Promise<void> {
+  let comment: string | undefined
+  while (!comment) {
+    const answer = await ctx.ui.input("What's wrong with this summary? (required, esc cancels)")
+    if (answer === undefined) return
+    comment = answer.trim()
+  }
+  const note = feedbackNote({
+    comment,
+    summary,
+    input: summarizerPrompt(turn.prompt, turn.text),
+    sessionFile: ctx.sessionManager.getSessionFile(),
+    cwd: ctx.cwd,
+    date: new Date(),
+  })
+  try {
+    await writeFeedbackNote(note)
+    ctx.ui.notify(`Reported: ${note.filename}`, "info")
+  } catch (err) {
+    ctx.ui.notify(`report failed: ${(err as Error).message}`, "error")
+  }
 }
 
 /** Summarize the turn that just ended, unless it already has a summary. */
