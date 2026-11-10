@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { autoSummary, setAutoSummary } from "./settings"
 import { cleanSummary } from "./clean"
 import { feedbackNote } from "./feedback"
+import { SUMMARIZER_REMINDER, summarizerPrompt } from "./summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, turnsOf } from "./turns"
 
 const user = (id: string, text: string) => ({ type: "message", id, message: { role: "user", content: text } })
@@ -58,7 +59,17 @@ describe("cleanSummary", () => {
       "```ts\nconst x = 1\n```",
       "Tests pass.",
     ].join("\n")
-    expect(cleanSummary(raw)).toBe("Done I fixed the parser in and See for details. Tests pass.")
+    expect(cleanSummary(raw)).toBe("Done\n\nI fixed the parser in and See for details.\n\nTests pass.")
+  })
+
+  test("keeps paragraph breaks and joins lines inside a paragraph", () => {
+    expect(cleanSummary("I fixed it.\nTests pass.\n\n\n  Want me to merge?  ")).toBe("I fixed it. Tests pass.\n\nWant me to merge?")
+  })
+
+  test("drops commit hashes but keeps ordinary words and numbers", () => {
+    expect(cleanSummary("I committed it as becb525335 and a931fe9, 114 specs pass, decaded.")).toBe(
+      "I committed it as and, 114 specs pass, decaded.",
+    )
   })
 
   test("leaves plain prose alone", () => {
@@ -108,5 +119,14 @@ describe("feedbackNote", () => {
     expect(body).toStartWith("## Comment\n\nDrops context talk!\nMore detail here.\n")
     expect(body).toContain("## Input\n\n````\n<assistant-output>")
     expect(body).toContain("## Summary\n\n```\nMy context is full.\n```")
+  })
+})
+
+describe("summarizerPrompt", () => {
+  test("wraps the turn in tags and ends with the reminder", () => {
+    const p = summarizerPrompt("ask", "reply")
+    expect(p).toStartWith("<user-request>\nask\n</user-request>\n\n<assistant-output>\nreply\n</assistant-output>\n\n")
+    expect(p.endsWith(SUMMARIZER_REMINDER)).toBe(true)
+    expect(SUMMARIZER_REMINDER).toContain("no question the agent did not ask")
   })
 })

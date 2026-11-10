@@ -20,6 +20,9 @@ export const SUMMARIZER_ENV = "CUE_TURN_SUMMARIZER"
 
 const MAX_INPUT = 60_000
 
+/** Instruction sent after the turn so the rules are fresh when the model answers. */
+export const SUMMARIZER_REMINDER = readFileSync(new URL("./reminder.txt", import.meta.url), "utf8").trim()
+
 function run(argv: string[], stdin: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, [SUMMARIZER_ENV]: "1" }
@@ -38,8 +41,6 @@ function run(argv: string[], stdin: string): Promise<{ code: number | null; stdo
 export function summarizerPrompt(prompt: string, text: string): string {
   const body = text.length > MAX_INPUT ? text.slice(-MAX_INPUT) : text
   return [
-    "Say the assistant's reply to the user in its own voice, as one short spoken paragraph.",
-    "",
     "<user-request>",
     prompt,
     "</user-request>",
@@ -47,6 +48,8 @@ export function summarizerPrompt(prompt: string, text: string): string {
     "<assistant-output>",
     body,
     "</assistant-output>",
+    "",
+    SUMMARIZER_REMINDER,
   ].join("\n")
 }
 

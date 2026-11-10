@@ -1,0 +1,1 @@
+Now give the spoken update, following your rules: about two to five sentences in short paragraphs, the ask last, no question the agent did not ask, and no code, identifiers, commit hashes, branch names or paths.
