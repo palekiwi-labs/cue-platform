@@ -123,11 +123,14 @@ describe("exploreContext", () => {
       art("plan", "index.md"),
       art("plan", "open.md", { status: "open" }),
       art("plan", "done.md", { status: "complete" }),
+      art("trace", "handoff-new.md", { created_at: 2 }),
+      art("trace", "handoff-old.md", { created_at: 1 }),
+      art("trace", "review.md", { created_at: 3 }),
     ]
     fake.logs = [
-      { timestamp: 3, trace: null },
-      { timestamp: 2, trace: `${A}/trace/handoff.md` },
-      { timestamp: 1, trace: `${A}/trace/old.md` },
+      { timestamp: 4e9, trace: `${A}/trace/review.md` },
+      { timestamp: 3e9, trace: null },
+      { timestamp: 2e9, trace: `${A}/trace/handoff-new.md` },
       { timestamp: 0, trace: null },
     ]
     const out = await exploreContext(fakeExec(store, fake), "/w", A, "brief", NOW)
@@ -140,23 +143,41 @@ describe("exploreContext", () => {
     expect(out).toContain("1 older entries omitted")
     expect(out).toContain(
       `spec: ${A}/spec/index.md\nmaster plan: ${A}/plan/index.md\n` +
-        `open plan: ${A}/plan/open.md\nlatest hand-off: ${A}/trace/handoff.md`,
+        `open plan: ${A}/plan/open.md\n` +
+        `latest hand-off: ${A}/trace/handoff-new.md (2 log entries since)`,
     )
     expect(out).not.toContain("plan/done.md")
-    expect(out).not.toContain("<artifact")
+    expect(out).not.toContain("<handoff")
+    expect(out.indexOf("<documents>")).toBeLessThan(out.indexOf("<log"))
+    expect(out.trimEnd().endsWith("</tasks>\n</cue-context-explore>")).toBe(true)
   })
 
-  test("working prints documents in full, notes truncation and missing files", async () => {
+  test("working prints only the hand-off in full, with truncation", async () => {
     await write(`${A}/spec/index.md`, "# Spec\n")
-    await write(`${A}/plan/long.md`, Array.from({ length: 305 }, (_, i) => `l${i}`).join("\n"))
-    fake.artifacts = [art("spec", "index.md"), art("plan", "long.md", { status: "open" })]
-    fake.logs = [{ timestamp: 1, trace: `${A}/trace/gone.md` }]
+    await write(
+      `${A}/trace/handoff-x.md`,
+      Array.from({ length: 305 }, (_, i) => `l${i}`).join("\n"),
+    )
+    fake.artifacts = [
+      art("spec", "index.md"),
+      art("trace", "handoff-x.md", { created_at: 1 }),
+    ]
+    fake.logs = [{ timestamp: 5e9, trace: null }]
     const out = await exploreContext(fakeExec(store, fake), "/w", A, "working", NOW)
-    expect(out).toContain(`<artifact address="${A}/spec/index.md">\n# Spec\n</artifact>`)
-    expect(out).toContain(`<artifact address="${A}/plan/long.md" truncated="true">`)
-    expect(out).toContain(`[truncated: 5 more lines; read ${A}/plan/long.md]`)
-    expect(out).toContain(`<artifact address="${A}/trace/gone.md" missing="true">`)
-    expect(out).not.toContain("<documents>")
+    expect(out).toContain(`spec: ${A}/spec/index.md`)
+    expect(out).not.toContain("# Spec")
+    expect(out).toContain(
+      `<handoff address="${A}/trace/handoff-x.md" entries-since="1" truncated="true">`,
+    )
+    expect(out).toContain(`[truncated: 5 more lines; read ${A}/trace/handoff-x.md]`)
+  })
+
+  test("working notes a missing hand-off file", async () => {
+    fake.artifacts = [art("trace", "handoff-gone.md", { created_at: 1 })]
+    const out = await exploreContext(fakeExec(store, fake), "/w", A, "working", NOW)
+    expect(out).toContain(
+      `<handoff address="${A}/trace/handoff-gone.md" entries-since="0" missing="true">`,
+    )
   })
 
   test("unknown context fails", async () => {

@@ -16,8 +16,8 @@ const parameters = Type.Object({
         description:
           "Cumulative levels. identity: locate the context and see its links. " +
           "brief (default): decide whether it is relevant and catch up. " +
-          "working: only when this session works in the context; prints its " +
-          "spec, plans and hand-off in full.",
+          "working: only when this session works in the context; adds the " +
+          "latest hand-off in full.",
       },
     ),
   ),
