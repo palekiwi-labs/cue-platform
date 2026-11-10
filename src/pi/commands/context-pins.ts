@@ -2,11 +2,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { stripFrontmatter } from "@earendil-works/pi-coding-agent"
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 import { recordActivity, type ActivityCtx } from "../lib/activity"
-import { contextRecency } from "../lib/context-recency"
+import { exploreContext } from "../lib/context-explore"
 import {
   CUE_CONTEXT_TYPE,
   type CueContextDetails,
@@ -18,64 +15,25 @@ import { fuzzySelect, type PickItem } from "../lib/fuzzy-select"
 import { formatGitContext, gitContext } from "../lib/git-context"
 import { composeMessage, cueBestEffort } from "./common"
 
-/** Read the briefing without render's artifact framing or metadata. */
-async function contextBody(
-  pi: ExtensionAPI,
-  cwd: string,
-  address: string,
-): Promise<string> {
-  try {
-    const status = JSON.parse(await cueBestEffort(pi, cwd, [
-      "status", "--context", address, "--json",
-    ]))
-    const body = stripFrontmatter(
-      await readFile(join(status.store, address, "context.md"), "utf8"),
-    ).trim()
-    return body ? `<cue-context address="${address}">\n${body}\n</cue-context>` : ""
-  } catch {
-    return ""
-  }
-}
-
 /**
- * Gather the orientation block for a context: briefing, pwd, git, status,
- * last activity with children, log, recent artifacts and master plan.
- * The context body may carry context-local behavioral instructions; the
- * remaining blocks provide orientation data. Queries pass the
- * full canonical address, so contexts outside the cwd's scope resolve.
+ * Gather the orientation block for a context: the session facts (header,
+ * pwd, git) followed by the context itself as cue-context-explore shows it
+ * at working detail. Queries pass the full canonical address, so contexts
+ * outside the cwd scope resolve.
  */
 export async function contextOrientation(
   pi: ExtensionAPI,
   cwd: string,
   address: string,
 ): Promise<string> {
-  const slug = slugOf(address)
   const git = formatGitContext(await gitContext(pi, cwd))
-  const ctxArgs = ["--context", address]
-  const status = await cueBestEffort(pi, cwd, ["status", ...ctxArgs])
-  const { recency, artifacts } = await contextRecency(pi, cwd, address)
-  const log = await cueBestEffort(pi, cwd, [
-    "log",
-    "list",
-    ...ctxArgs,
-    "--format",
-    "md",
-  ])
-  const rendered = await cueBestEffort(pi, cwd, [
-    "render",
-    ...ctxArgs,
-    "plan/index.md",
-  ])
+  const explored = await exploreContext(pi, cwd, address, "working")
+    .catch(() => "")
   return composeMessage([
-    `Active cue context for this session: ${slug}`,
-    await contextBody(pi, cwd, address),
+    `Active cue context for this session: ${slugOf(address)}`,
     `PWD: ${cwd}`,
     git,
-    `<status>\n${status}\n</status>`,
-    recency,
-    `<log>\n${log}\n</log>`,
-    artifacts,
-    rendered,
+    explored,
   ])
 }
 

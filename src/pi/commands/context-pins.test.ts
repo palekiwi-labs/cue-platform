@@ -24,25 +24,26 @@ describe("contextOrientation briefing", () => {
   let store: string
   let file: string
   let pi: ExtensionAPI
-  let calls: { cmd: string; args: string[]; cwd: string }[]
-  let statusJson: string
+  let known: boolean
 
   beforeEach(async () => {
     store = await mkdtemp(join(tmpdir(), "cue-orientation-"))
     file = join(store, address, "context.md")
     await mkdir(join(store, address), { recursive: true })
-    statusJson = JSON.stringify({ store, address })
-    calls = []
+    known = true
     pi = {
-      exec: async (cmd: string, args: string[], opts: { cwd: string }) => {
-        calls.push({ cmd, args, cwd: opts.cwd })
-        const jsonStatus = args.join(" ") === `status --context ${address} --json`
-        return {
-          stdout: jsonStatus ? statusJson : "",
-          stderr: "",
-          code: jsonStatus ? 0 : 1,
-          killed: false,
+      exec: async (cmd: string, args: string[]) => {
+        const line = args.join(" ")
+        const ok = (stdout: string) => ({ stdout, stderr: "", code: 0, killed: false })
+        if (cmd === "cue" && known && line === `status --context ${address} --json`) {
+          return ok(JSON.stringify({ store, address }))
         }
+        if (cmd === "cue" && line.startsWith("context list --scope store --archived")) {
+          return ok(JSON.stringify(
+            known ? [{ scope: "outside/repo", context: "demo", title: "Demo" }] : [],
+          ))
+        }
+        return { stdout: "", stderr: "", code: 1, killed: false }
       },
     } as unknown as ExtensionAPI
   })
@@ -51,53 +52,20 @@ describe("contextOrientation briefing", () => {
     await rm(store, { recursive: true, force: true })
   })
 
-  test("injects only the body labelled with the cross-scope address", async () => {
-    const body = "# Briefing\n\nFollow these instructions.\n\n---\n\nKeep this rule."
-    await writeFile(file, `---\ntitle: Private metadata\nkind: work\n---\n\n${body}\n`)
+  test("session facts come first, then the context at working detail", async () => {
+    const body = "# Briefing\n\nFollow these instructions."
+    await writeFile(file, `---\ntitle: Private metadata\n---\n\n${body}\n`)
     const out = await contextOrientation(pi, "/work", address)
-    expect(out).toContain(`<cue-context address="${address}">\n${body}\n</cue-context>`)
+    expect(out.startsWith("Active cue context for this session: demo\n\nPWD: /work")).toBe(true)
+    expect(out).toContain(`<cue-context-explore address="${address}" detail="working">`)
+    expect(out).toContain(`<context-body address="${address}">\n${body}\n</context-body>`)
     expect(out).not.toContain("Private metadata")
-    expect(out).not.toContain("kind: work")
-    expect(calls).toContainEqual({
-      cmd: "cue",
-      args: ["status", "--context", address, "--json"],
-      cwd: "/work",
-    })
-    expect(calls.some((c) => c.args.includes("context.md"))).toBe(false)
   })
 
-  test.each([
-    ["no frontmatter", "# Plain body\n", "# Plain body"],
-    ["BOM and CRLF", "\uFEFF---\r\ntitle: Hidden\r\n---\r\nBody\r\n", "Body"],
-  ])("handles %s", async (_name, content, body) => {
-    await writeFile(file, content)
+  test("unknown context leaves orientation usable", async () => {
+    known = false
     const out = await contextOrientation(pi, "/work", address)
-    expect(out).toContain(`<cue-context address="${address}">\n${body}\n</cue-context>`)
-    expect(out).not.toContain("title: Hidden")
-  })
-
-  test.each([
-    ["empty file", ""],
-    ["whitespace", " \n\t\n"],
-    ["metadata only", "---\ntitle: Hidden\n---\n \n\t"],
-    ["invalid YAML", "---\ntitle: [invalid\n---\nBody"],
-  ])("omits %s", async (_name, content) => {
-    await writeFile(file, content)
-    const out = await contextOrientation(pi, "/work", address)
-    expect(out).not.toContain("<cue-context")
-    expect(out).toContain("Active cue context for this session: demo")
-  })
-
-  test("missing context.md leaves orientation usable", async () => {
-    const out = await contextOrientation(pi, "/work", address)
-    expect(out).not.toContain("<cue-context")
-    expect(out).toContain("PWD: /work")
-  })
-
-  test.each(["not json", "{}"])("unavailable store (%s) is graceful", async (json) => {
-    statusJson = json
-    const out = await contextOrientation(pi, "/work", address)
-    expect(out).not.toContain("<cue-context")
+    expect(out).not.toContain("<cue-context-explore")
     expect(out).toContain("PWD: /work")
   })
 })
