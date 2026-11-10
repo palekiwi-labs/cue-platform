@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
+type Exec = Pick<ExtensionAPI, "exec">
+
 /**
  * Recency blocks for context orientation: how long this context has been
  * quiet, what its children (grandchildren rolled up) did meanwhile, and
@@ -115,7 +117,7 @@ export function renderRecentArtifacts(
 }
 
 async function execJson<T>(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   args: string[],
 ): Promise<T | undefined> {
@@ -129,7 +131,7 @@ async function execJson<T>(
 }
 
 async function listChildren(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
 ): Promise<string[]> {
@@ -151,7 +153,7 @@ async function listChildren(
 
 /** Every descendant of `address`, guarding against parent cycles. */
 async function descendants(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
   seen: Set<string>,
@@ -167,7 +169,7 @@ async function descendants(
 }
 
 async function logTimestampsMs(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
 ): Promise<number[]> {
@@ -181,7 +183,7 @@ async function logTimestampsMs(
 }
 
 async function activity(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
   sinceMs?: number,
@@ -192,7 +194,7 @@ async function activity(
 }
 
 async function countSince(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
   sinceMs: number | undefined,
@@ -208,7 +210,7 @@ async function countSince(
 }
 
 async function childRow(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   child: string,
   sinceMs: number | undefined,
@@ -231,7 +233,7 @@ async function childRow(
  * is "" when there is nothing to show; failures degrade to omission.
  */
 export async function contextRecency(
-  pi: ExtensionAPI,
+  pi: Exec,
   cwd: string,
   address: string,
   nowMs = Date.now(),
