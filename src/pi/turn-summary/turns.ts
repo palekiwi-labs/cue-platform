@@ -4,6 +4,9 @@ export const TURN_SUMMARY_TYPE = "turn-summary"
 export interface TurnSummaryData {
   turnId: string
   text: string
+  model?: string
+  runId?: string
+  promptHash?: string
 }
 
 /** A turn: a user message and the assistant text that answered it. */
@@ -52,12 +55,12 @@ export function turnsOf(branch: readonly BranchEntry[]): Turn[] {
 }
 
 /** Stored summaries on the branch, keyed by turn id. */
-export function storedSummaries(branch: readonly BranchEntry[]): Map<string, string> {
-  const out = new Map<string, string>()
+export function storedSummaries(branch: readonly BranchEntry[]): Map<string, TurnSummaryData> {
+  const out = new Map<string, TurnSummaryData>()
   for (const e of branch) {
     if (e.type !== "custom" || e.customType !== TURN_SUMMARY_TYPE) continue
     const d = e.data as Partial<TurnSummaryData> | undefined
-    if (typeof d?.turnId === "string" && typeof d.text === "string") out.set(d.turnId, d.text)
+    if (typeof d?.turnId === "string" && typeof d.text === "string") out.set(d.turnId, d as TurnSummaryData)
   }
   return out
 }
