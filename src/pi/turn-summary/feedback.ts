@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type { TurnSummaryData } from "./turns"
 
 /** The cue context that collects summary feedback. */
 export const FEEDBACK_CONTEXT = "palekiwi/palekiwi/turn-summary-feedback"
+
+const FEEDBACK_REPO = join(homedir(), "code/palekiwi/palekiwi")
 
 /** Everything a feedback note records about one reported summary. */
 export interface FeedbackReport {
@@ -63,7 +67,7 @@ export function feedbackNote(r: FeedbackReport): FeedbackNote {
 
 /** Write a feedback note with the cue CLI and return the path it printed. */
 export function writeFeedbackNote(note: FeedbackNote): Promise<string> {
-  const argv = ["add", "--type", "note", "--context", FEEDBACK_CONTEXT]
+  const argv = ["-C", FEEDBACK_REPO, "add", "--type", "note", "--context", FEEDBACK_CONTEXT]
   for (const [k, v] of Object.entries(note.frontmatter)) argv.push("-f", `${k}=${v.replace(/\s+/g, " ")}`)
   argv.push(note.filename, "-")
   return new Promise((resolve, reject) => {
