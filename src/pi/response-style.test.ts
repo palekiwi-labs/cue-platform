@@ -1,38 +1,70 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { activeStyle, registerResponseStyle, RESPONSE_STYLES, setActiveStyle, withResponseStyle } from "./response-style"
+import {
+  DEFAULT_STYLE,
+  listStyles,
+  registerResponseStyle,
+  setActiveStyle,
+  styleInstruction,
+  withResponseStyle,
+} from "./response-style"
 
 type Handler = (event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>
+
+let dir: string
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "styles-"))
+  writeFileSync(join(dir, "terse.md"), "Be terse.\n")
+  writeFileSync(join(dir, "gangsta.md"), "Talk gangsta.\n")
+  writeFileSync(join(dir, "notes.txt"), "ignored")
+})
+
+afterEach(() => {
+  setActiveStyle(DEFAULT_STYLE)
+  rmSync(dir, { recursive: true, force: true })
+})
 
 function captureHandler(): Handler {
   let handler: Handler | undefined
   const pi = { on: (_name: string, h: Handler) => (handler = h) } as unknown as ExtensionAPI
-  registerResponseStyle(pi)
+  registerResponseStyle(pi, dir)
   return handler!
 }
 
-const gangsta = RESPONSE_STYLES.findIndex((s) => s.name === "gangsta")
-
-afterEach(() => setActiveStyle(0))
-
-describe("withResponseStyle", () => {
-  test("leaves the prompt alone for the default style", () => {
-    expect(withResponseStyle("base", RESPONSE_STYLES[0]!)).toBe("base")
+describe("listStyles", () => {
+  test("lists default first, then markdown files sorted", () => {
+    expect(listStyles(dir)).toEqual(["default", "gangsta", "terse"])
   })
 
-  test("appends a named style block", () => {
-    const out = withResponseStyle("base", RESPONSE_STYLES[gangsta]!)
-    expect(out.startsWith("base\n\n<response_style name=\"gangsta\">\n")).toBe(true)
-    expect(out.endsWith("</response_style>")).toBe(true)
+  test("falls back to default when the directory is missing", () => {
+    expect(listStyles(join(dir, "missing"))).toEqual(["default"])
   })
 })
 
-describe("setActiveStyle", () => {
-  test("ignores out-of-range indexes", () => {
-    setActiveStyle(gangsta)
-    setActiveStyle(99)
-    setActiveStyle(-1)
-    expect(activeStyle()).toBe(gangsta)
+describe("styleInstruction", () => {
+  test("reads the trimmed file body", () => {
+    expect(styleInstruction("terse", dir)).toBe("Be terse.")
+  })
+
+  test("is empty for the default and for missing files", () => {
+    expect(styleInstruction("default", dir)).toBe("")
+    expect(styleInstruction("gone", dir)).toBe("")
+  })
+})
+
+describe("withResponseStyle", () => {
+  test("leaves the prompt alone without an instruction", () => {
+    expect(withResponseStyle("base", "default", "")).toBe("base")
+  })
+
+  test("appends a named style block", () => {
+    expect(withResponseStyle("base", "terse", "Be terse.")).toBe(
+      'base\n\n<response_style name="terse">\nBe terse.\n</response_style>',
+    )
   })
 })
 
@@ -41,10 +73,11 @@ describe("registerResponseStyle", () => {
     expect(await captureHandler()({ systemPrompt: "base" })).toBeUndefined()
   })
 
-  test("follows a mid-session style change on the next turn", async () => {
+  test("follows a style change and file edits on the next turn", async () => {
     const handler = captureHandler()
-    setActiveStyle(gangsta)
-    const result = await handler({ systemPrompt: "base" })
-    expect(result?.systemPrompt).toContain("<response_style name=\"gangsta\">")
+    setActiveStyle("terse")
+    expect((await handler({ systemPrompt: "base" }))?.systemPrompt).toContain("Be terse.")
+    writeFileSync(join(dir, "terse.md"), "Be very terse.")
+    expect((await handler({ systemPrompt: "base" }))?.systemPrompt).toContain("Be very terse.")
   })
 })
