@@ -86,6 +86,7 @@ describe("cuePlugins registration", () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       "cue-add",
       "cue-context",
+      "cue-context-explore",
       "cue-context-usage",
       "cue-log",
       "cue-plan",
