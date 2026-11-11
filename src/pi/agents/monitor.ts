@@ -330,8 +330,8 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "alt+h")) {
-      this.history = this.nextHistory()
+    if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
+      this.history = this.stepHistory(matchesKey(data, "ctrl+up") ? 1 : -1)
       void this.reload(false)
       return this.tui.requestRender()
     }
@@ -467,8 +467,9 @@ export class AgentMonitor implements Component {
     return truncateToWidth(title, width)
   }
 
-  private nextHistory(): HistoryWindow {
-    return HISTORY_WINDOWS[(HISTORY_WINDOWS.indexOf(this.history) + 1) % HISTORY_WINDOWS.length]!
+  private stepHistory(delta: number): HistoryWindow {
+    const n = HISTORY_WINDOWS.length
+    return HISTORY_WINDOWS[(HISTORY_WINDOWS.indexOf(this.history) + delta + n) % n]!
   }
 
   private helpLine(width: number): string {
@@ -479,7 +480,7 @@ export class AgentMonitor implements Component {
       "ctrl+t target",
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
-      `alt+h ${this.nextHistory()} history`,
+      "ctrl+up/down history",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold", "shift+tab fold all",
       "ctrl+s session",
