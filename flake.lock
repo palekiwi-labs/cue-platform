@@ -66,11 +66,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794293331,
-        "narHash": "sha256-hlChRYpuNvsT+l7p0qojEirBrQ+kMpUXtE+kYUTjs7g=",
+        "lastModified": 1794413863,
+        "narHash": "sha256-MqS87NDtGhwTwUnlZS5eigYKs0L2iAExM4Ug4UA3RX0=",
         "owner": "palekiwi-labs",
         "repo": "cue",
-        "rev": "a931fe96b9decf191e04a17347c1358ef840811f",
+        "rev": "fd4fd6287fdf1a147084b92de6c5572d8a3083f4",
         "type": "github"
       },
       "original": {
