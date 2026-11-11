@@ -131,6 +131,7 @@ describe("command registration", () => {
       "cue:context:inject",
       "cue:context:pins",
       "cue:idea",
+      "cue:memory",
       "cue:new-session",
       "cue:prs",
       "cue:reload",
@@ -180,5 +181,8 @@ describe("/review:run", () => {
     })
     expect(msg).not.toContain("<arguments>")
     expect(msg).toContain("# Automated Code Diff Review Workflow")
+  })
+})
+"# Automated Code Diff Review Workflow")
   })
 })
