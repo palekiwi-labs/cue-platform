@@ -50,9 +50,15 @@ describe("styleInstruction", () => {
     expect(styleInstruction("terse", dir)).toBe("Be terse.")
   })
 
-  test("is empty for the default and for missing files", () => {
+  test("is empty for missing files, including an absent default", () => {
     expect(styleInstruction("default", dir)).toBe("")
     expect(styleInstruction("gone", dir)).toBe("")
+  })
+
+  test("reads default.md when it exists", () => {
+    writeFileSync(join(dir, "default.md"), "Questions last.")
+    expect(styleInstruction("default", dir)).toBe("Questions last.")
+    expect(listStyles(dir)).toEqual(["default", "gangsta", "terse"])
   })
 })
 

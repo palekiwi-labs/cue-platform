@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 /** Directory holding one `<name>.md` file per response style. */
 export const STYLES_DIR = join(homedir(), ".config", "cue", "styles")
 
-/** The built-in style that adds no instruction. */
+/** The style that is always listed; it adds nothing unless default.md exists. */
 export const DEFAULT_STYLE = "default"
 
 let active = DEFAULT_STYLE
@@ -32,9 +32,8 @@ export function listStyles(dir = STYLES_DIR): string[] {
   return [DEFAULT_STYLE, ...names.sort()]
 }
 
-/** The style's instruction text; empty for the default or an unreadable file. */
+/** The style's instruction text; empty when its file is missing or unreadable. */
 export function styleInstruction(name: string, dir = STYLES_DIR): string {
-  if (name === DEFAULT_STYLE) return ""
   try {
     return readFileSync(join(dir, `${name}.md`), "utf8").trim()
   } catch {
