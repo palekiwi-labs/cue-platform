@@ -6,7 +6,7 @@ import { SUMMARIZER_ENV, summarizerPrompt, summarizeTurn } from "../turn-summary
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
 
 /** Open the turn summary popup. */
-export const SUMMARY_SHORTCUT = "f4"
+export const SUMMARY_SHORTCUT = "ctrl+u"
 
 const FOOTER = "← → turns • ctrl+y copy • ctrl+r report • esc close"
 const PAD_X = 3
