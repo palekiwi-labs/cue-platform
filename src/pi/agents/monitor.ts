@@ -329,8 +329,8 @@ export class AgentMonitor implements Component {
       this.stacked = !this.stacked
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "ctrl+d")) return this.scrollPreview(Math.floor(page / 2))
-    if (matchesKey(data, "ctrl+u")) return this.scrollPreview(-Math.floor(page / 2))
+    if (matchesKey(data, "shift+down")) return this.scrollPreview(Math.floor(page / 2))
+    if (matchesKey(data, "shift+up")) return this.scrollPreview(-Math.floor(page / 2))
 
     const before = this.input.getValue()
     this.input.handleInput(data)
@@ -460,7 +460,7 @@ export class AgentMonitor implements Component {
       "ctrl+h id",
       "ctrl+y dir",
       "alt+l layout",
-      "ctrl+d/u scroll",
+      "shift+up/down scroll",
       "esc close",
     ]
     return truncateToWidth(this.theme.fg("dim", hints.join(" • ")), width, "…")
