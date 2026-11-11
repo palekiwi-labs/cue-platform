@@ -183,6 +183,3 @@ describe("/review:run", () => {
     expect(msg).toContain("# Automated Code Diff Review Workflow")
   })
 })
-"# Automated Code Diff Review Workflow")
-  })
-})
