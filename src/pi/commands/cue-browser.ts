@@ -51,10 +51,18 @@ export async function editInTerminal(tui: TUI, path: string): Promise<void> {
 
 const shellQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`
 
+/**
+ * tmux argv for a new window running a shell command under the
+ * direnv environment of cwd, as an interactive shell there would get.
+ */
+export function tmuxWindowArgs(name: string, cwd: string, command: string): string[] {
+  return ["new-window", "-n", name, "-c", cwd, `direnv exec ${shellQuote(cwd)} ${command}`]
+}
+
 /** Run a shell command in a new tmux window; error text on failure. */
 function tmuxWindow(name: string, cwd: string, command: string): string | undefined {
   if (!process.env.TMUX) return "not inside tmux"
-  spawn("tmux", ["new-window", "-n", name, "-c", cwd, command], {
+  spawn("tmux", tmuxWindowArgs(name, cwd, command), {
     detached: true,
     stdio: "ignore",
   }).unref()
