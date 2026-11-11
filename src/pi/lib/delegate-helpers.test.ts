@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   backgroundCommand,
   backgroundJobId,
+  batchLabel,
   buildDescription,
   formatReceipt,
   parseAgentList,
@@ -101,5 +102,24 @@ describe("formatReceipt", () => {
     })
     expect(text).toContain("error: deadline")
     expect(text).toContain("stderr:\nboom")
+  })
+})
+
+describe("batchLabel", () => {
+  test("names the agent and the start of the first prompt", () => {
+    expect(batchLabel([{ agent: "explore", prompt: "Find where the session\nbrowser reads descriptions and report" }]))
+      .toBe("explore: Find where the session browser reads…")
+  })
+
+  test("joins distinct agents in order", () => {
+    expect(batchLabel([
+      { agent: "reviewer", prompt: "Review" },
+      { agent: "reviewer", prompt: "Review" },
+      { agent: "readability", prompt: "Check" },
+    ])).toBe("reviewer+readability: Review")
+  })
+
+  test("falls back to the agents for a blank prompt", () => {
+    expect(batchLabel([{ agent: "builder", prompt: "   " }])).toBe("builder")
   })
 })

@@ -12,6 +12,7 @@ import {
   backgroundJobId,
   buildDescription,
   formatBackgroundHandle,
+  batchLabel,
   formatReceipt,
   parseAgentList,
   selectableAliases,
@@ -186,6 +187,7 @@ export function delegateTool(cwd: string = process.cwd()) {
           ? { base: "HEAD", ephemeral: true }
           : { base: w.base, ephemeral: true }
       const spec = {
+        label: batchLabel(args.tasks),
         tasks: args.tasks.map((t) => ({
           agent: t.agent,
           prompt: t.prompt,

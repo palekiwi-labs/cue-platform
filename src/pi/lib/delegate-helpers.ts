@@ -203,3 +203,17 @@ export function formatReceipt(batch: BatchReceipt, roster?: Roster): string {
     })
     .join("\n\n")
 }
+
+const LABEL_WORDS = 6
+
+/**
+ * Batch label for the agent monitor: the distinct agents, then the first
+ * words of the first prompt.
+ */
+export function batchLabel(tasks: { agent: string; prompt: string }[]): string {
+  const agents = [...new Set(tasks.map((t) => t.agent))].join("+")
+  const words = (tasks[0]?.prompt ?? "").trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return agents
+  const head = words.slice(0, LABEL_WORDS).join(" ")
+  return `${agents}: ${head}${words.length > LABEL_WORDS ? "…" : ""}`
+}
