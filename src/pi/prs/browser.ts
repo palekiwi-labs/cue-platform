@@ -432,7 +432,7 @@ export class PrBrowser implements Component {
       r.kind === "pr"
         ? what === "url"
           ? r.pr.url
-          : r.pr.title
+          : `[${r.pr.title}](${r.pr.url})`
         : what === "url"
           ? `https://github.com/${r.repo}`
           : r.repo
@@ -639,7 +639,7 @@ export class PrBrowser implements Component {
       "ctrl+t target",
       "ctrl+r review",
       "ctrl+y url",
-      "ctrl+h title",
+      "ctrl+h md link",
       "alt+r refresh",
       "esc close",
     ]
