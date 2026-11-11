@@ -9,15 +9,16 @@ export const STYLES_DIR = join(homedir(), ".config", "cue", "styles")
 /** The style that is always listed; it adds nothing unless default.md exists. */
 export const DEFAULT_STYLE = "default"
 
-let active = DEFAULT_STYLE
+const STATE = Symbol.for("cue-platform.response-style")
+const state = ((globalThis as Record<symbol, { active: string }>)[STATE] ??= { active: DEFAULT_STYLE })
 
 /** Name of the session's active style. */
 export function activeStyle(): string {
-  return active
+  return state.active
 }
 
 export function setActiveStyle(name: string): void {
-  active = name
+  state.active = name
 }
 
 /** Style names: the default first, then each `.md` file in dir, sorted. */
@@ -53,8 +54,8 @@ export function withResponseStyle(systemPrompt: string, name: string, instructio
  */
 export function registerResponseStyle(pi: ExtensionAPI, dir = STYLES_DIR): void {
   pi.on("before_agent_start", async (event) => {
-    const instruction = styleInstruction(active, dir)
+    const instruction = styleInstruction(state.active, dir)
     if (!instruction) return undefined
-    return { systemPrompt: withResponseStyle(event.systemPrompt, active, instruction) }
+    return { systemPrompt: withResponseStyle(event.systemPrompt, state.active, instruction) }
   })
 }
