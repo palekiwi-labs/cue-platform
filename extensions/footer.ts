@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { scopeOf, scopeOfRemote } from "../src/pi/browser/sessions";
 import { currentContext } from "../src/pi/lib/current-context";
+import { activeStyle, DEFAULT_STYLE } from "../src/pi/response-style";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -156,6 +157,8 @@ export default function (pi: ExtensionAPI) {
             const lvl = pi.getThinkingLevel() || "off";
             modelText = lvl === "off" ? `${modelName} • thinking off` : `${modelName} • ${lvl}`;
           }
+          const style = activeStyle();
+          if (style !== DEFAULT_STYLE) modelText = `${modelText} • ${style}`;
           const withProvider =
             footerData.getAvailableProviderCount() > 1 && model
               ? `(${model.provider}) ${modelText}`

@@ -3,6 +3,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu"
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
+import { activeStyle, listStyles, setActiveStyle } from "../response-style"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 
@@ -45,6 +46,7 @@ export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding
 /** Settings of the session, as F3 lists them. */
 export function sessionSettings(pi: ExtensionAPI): Setting[] {
   const level = pi.getThinkingLevel() as ThinkingLevel
+  const styles = listStyles()
   return [
     {
       label: "thinking",
@@ -52,6 +54,13 @@ export function sessionSettings(pi: ExtensionAPI): Setting[] {
       values: [...THINKING_LEVELS],
       current: Math.max(0, THINKING_LEVELS.indexOf(level)),
       apply: (i) => pi.setThinkingLevel(THINKING_LEVELS[i]!),
+    },
+    {
+      label: "style",
+      group: "display",
+      values: styles,
+      current: Math.max(0, styles.indexOf(activeStyle())),
+      apply: (i) => setActiveStyle(styles[i]!),
     },
   ]
 }
