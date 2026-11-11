@@ -43,9 +43,13 @@ export const POLL_MS = 5000
 /** Stream pane tick while it shows a live run: stat plus appended bytes. */
 export const STREAM_POLL_MS = 1000
 
+/** History windows the monitor steps through, shortest first. */
+export const HISTORY_WINDOWS = ["1d", "7d", "30d"] as const
+export type HistoryWindow = (typeof HISTORY_WINDOWS)[number]
+
 export interface MonitorDeps {
-  /** Every run cue-agent knows, newest batch first; error text on failure. */
-  load(): Promise<{ rows: RunRow[] } | { error: string }>
+  /** Runs of batches started within the window, newest batch first; error text on failure. */
+  load(window: HistoryWindow): Promise<{ rows: RunRow[] } | { error: string }>
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
   /** The run's receipt.json text, if readable. */
@@ -120,6 +124,7 @@ export class AgentMonitor implements Component {
   private error = ""
   private subset: Subset = "running"
   private showUnlabeled = false
+  private history: HistoryWindow = HISTORY_WINDOWS[0]
   private pane: Pane = "prompt"
   private stacked = true
   private preview = true
@@ -181,9 +186,11 @@ export class AgentMonitor implements Component {
   private async reload(first: boolean): Promise<void> {
     if (this.loading) return
     this.loading = true
-    const r = await this.deps.load()
+    const window = this.history
+    const r = await this.deps.load(window)
     this.loading = false
     if (!this.timer && !first) return
+    if (window !== this.history) return void this.reload(first)
     if ("error" in r) {
       this.error = r.error
     } else {
@@ -323,6 +330,11 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "alt+h")) {
+      this.history = this.nextHistory()
+      void this.reload(false)
+      return this.tui.requestRender()
+    }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
     if (matchesKey(data, "shift+tab")) return this.toggleFoldAll()
     if (matchesKey(data, "ctrl+s")) return this.onSession()
@@ -450,9 +462,13 @@ export class AgentMonitor implements Component {
     const live = this.rows.filter(isLive).length
     const target = t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`)
     const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
-      t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`) +
+      t.fg("muted", `(${this.subset}, last ${this.history}) ${live} live, ${this.rows.length} total`) +
       (this.showUnlabeled ? "" : t.fg("dim", `, ${this.rows.filter((r) => !isLabeled(r)).length} unlabeled hidden`))
     return truncateToWidth(title, width)
+  }
+
+  private nextHistory(): HistoryWindow {
+    return HISTORY_WINDOWS[(HISTORY_WINDOWS.indexOf(this.history) + 1) % HISTORY_WINDOWS.length]!
   }
 
   private helpLine(width: number): string {
@@ -463,6 +479,7 @@ export class AgentMonitor implements Component {
       "ctrl+t target",
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
+      `alt+h ${this.nextHistory()} history`,
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold", "shift+tab fold all",
       "ctrl+s session",
