@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test"
 import {
+  backgroundCommand,
   backgroundJobId,
   buildDescription,
   formatReceipt,
   parseAgentList,
   selectableAliases,
 } from "./delegate-helpers"
+
+describe("backgroundCommand", () => {
+  test("runs cue-agent under direnv exec in cwd with receipt and stderr in dir", () => {
+    expect(backgroundCommand("cue-agent", "/tmp/j/spec.json", "/tmp/j", "/home/pl/code/x")).toBe(
+      "direnv exec '/home/pl/code/x' cue-agent run --spec '/tmp/j/spec.json' --json" +
+        " > '/tmp/j/receipt.json' 2> '/tmp/j/stderr.log'",
+    )
+  })
+})
 
 describe("backgroundJobId", () => {
   test("is a lowercase path-safe segment", () => {

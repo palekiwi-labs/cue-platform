@@ -8,6 +8,7 @@ import {
   type BatchReceipt,
   type Roster,
   MAX_TASKS,
+  backgroundCommand,
   backgroundJobId,
   buildDescription,
   formatBackgroundHandle,
@@ -144,17 +145,13 @@ function runBatch(
   })
 }
 
-const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
-
 /** Start `cue-agent run --spec` in a detached tmux window and return its job id. */
 function launchBackground(spec: Record<string, unknown>, cwd: string): { jobId: string; dir: string } {
   const jobId = backgroundJobId()
   const dir = mkdtempSync(join(tmpdir(), `${jobId}-`))
   const specPath = join(dir, "spec.json")
   writeFileSync(specPath, JSON.stringify({ ...spec, job: { id: jobId, label: jobId } }), { mode: 0o600 })
-  const command =
-    `${BINARY} run --spec ${shellQuote(specPath)} --json` +
-    ` > ${shellQuote(join(dir, "receipt.json"))} 2> ${shellQuote(join(dir, "stderr.log"))}`
+  const command = backgroundCommand(BINARY, specPath, dir, cwd)
   execFileSync("tmux", ["new-window", "-d", "-n", jobId, "-c", cwd, command], {
     stdio: ["ignore", "ignore", "pipe"],
   })

@@ -145,6 +145,19 @@ export function backgroundJobId(now: Date = new Date(), rand: string = Math.rand
   return `delegate-${stamp}-${rand}`
 }
 
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
+
+/**
+ * Shell command for a background batch window: runs the spec under the
+ * direnv environment of cwd, writing the receipt and stderr into dir.
+ */
+export function backgroundCommand(binary: string, specPath: string, dir: string, cwd: string): string {
+  return (
+    `direnv exec ${shellQuote(cwd)} ${binary} run --spec ${shellQuote(specPath)} --json` +
+    ` > ${shellQuote(`${dir}/receipt.json`)} 2> ${shellQuote(`${dir}/stderr.log`)}`
+  )
+}
+
 /** What the caller needs to find a background batch again. */
 export function formatBackgroundHandle(jobId: string, dir: string): string {
   return [
