@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { spawn, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
@@ -361,7 +362,8 @@ export async function openBrowser(
         storeRoot: () => storeRoot(ctx.cwd),
         sessionFile,
       }
-      return new CueBrowser(tui, theme, kb, deps, () => done(), start, target)
+      const view = new CueBrowser(tui, theme, kb, deps, () => done(), start, target)
+      return withViewSwitch(view, ctx, tui, theme, kb, () => done())
     },
     {
       overlay: true,
@@ -375,7 +377,7 @@ export async function openBrowser(
   )
 }
 
-async function openArtifacts(
+export async function openArtifacts(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {
@@ -390,7 +392,7 @@ async function openArtifacts(
   })
 }
 
-async function openActivity(
+export async function openActivity(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> {

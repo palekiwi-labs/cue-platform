@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { copyToClipboard, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
@@ -256,7 +257,8 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
     target: defaultTarget(ctx.sessionManager.getEntries()),
   }
   await ctx.ui.custom<void>(
-    (tui, theme, kb, done) => new PrBrowser(tui, theme, kb, deps, () => done()),
+    (tui, theme, kb, done) =>
+      withViewSwitch(new PrBrowser(tui, theme, kb, deps, () => done()), ctx, tui, theme, kb, () => done()),
     {
       overlay: true,
       overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },
@@ -264,15 +266,21 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
   )
 }
 
+let previews = new PreviewCache()
+
+/** Open the PR browser with the session's shared preview cache. */
+export function openPrBrowser(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  return openPrs(pi, ctx, previews)
+}
+
 export function registerPrBrowser(pi: ExtensionAPI): void {
-  let previews = new PreviewCache()
   pi.on("session_start", () => { previews = new PreviewCache() })
   pi.registerCommand("cue:prs", {
     description: "Browse open GitHub PRs of this repo or its orgs (full screen)",
-    handler: async (_args, ctx) => openPrs(pi, ctx, previews),
+    handler: async (_args, ctx) => openPrBrowser(pi, ctx),
   })
   pi.registerShortcut(PRS_SHORTCUT, {
     description: "Browse open GitHub PRs (full screen)",
-    handler: async (ctx) => openPrs(pi, ctx, previews),
+    handler: async (ctx) => openPrBrowser(pi, ctx),
   })
 }

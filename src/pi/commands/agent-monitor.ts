@@ -1,3 +1,4 @@
+import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -76,7 +77,7 @@ function documentPath(r: RunRow, pane: Pane): string | undefined {
 /** How far back the monitor lists batches. */
 const HISTORY = "7d"
 
-async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+export async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   let tail: { runId: string; tailer: EventTail } | undefined
   const deps = (tui: TUI): MonitorDeps => ({
@@ -105,7 +106,10 @@ async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   const target = defaultTarget(ctx.sessionManager.getEntries())
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) =>
-      new AgentMonitor(tui, theme, kb, deps(tui), () => done(), target),
+      withViewSwitch(
+        new AgentMonitor(tui, theme, kb, deps(tui), () => done(), target),
+        ctx, tui, theme, kb, () => done(),
+      ),
     {
       overlay: true,
       overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },
