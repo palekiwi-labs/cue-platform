@@ -28,6 +28,7 @@ import {
   fmtTokens,
   haystack,
   inputTokens,
+  isLabeled,
   isLive,
   streamSettled,
   parseReceipt,
@@ -118,6 +119,7 @@ export class AgentMonitor implements Component {
   private loading = false
   private error = ""
   private subset: Subset = "running"
+  private showUnlabeled = false
   private pane: Pane = "prompt"
   private stacked = true
   private preview = true
@@ -202,7 +204,7 @@ export class AgentMonitor implements Component {
    */
   private groups(): DisplayGroup[] {
     const jobOf = (r: RunRow) => r.jobId ?? r.batchId
-    let base = this.rows
+    let base = this.showUnlabeled ? this.rows : this.rows.filter(isLabeled)
     if (this.subset === "running") {
       const live = new Set(this.rows.filter(isLive).map(jobOf))
       base = base.filter((r) => live.has(jobOf(r)))
@@ -314,6 +316,11 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       this.follow = true
       void this.refreshStream()
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "alt+u")) {
+      this.showUnlabeled = !this.showUnlabeled
+      this.previewScroll = 0
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
@@ -443,13 +450,15 @@ export class AgentMonitor implements Component {
     const live = this.rows.filter(isLive).length
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
-      t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`)
+      t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`) +
+      (this.showUnlabeled ? "" : t.fg("dim", `, ${this.rows.filter((r) => !isLabeled(r)).length} unlabeled hidden`))
     return truncateToWidth(title, width)
   }
 
   private helpLine(width: number): string {
     const hints = [
       "tab running/all",
+      `alt+u ${this.showUnlabeled ? "hide" : "show"} unlabeled`,
       `enter open ${this.pane}`,
       "ctrl+t target",
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,

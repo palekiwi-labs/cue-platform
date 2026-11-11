@@ -9,6 +9,7 @@ import {
   groupJobs,
   haystack,
   inputTokens,
+  isLabeled,
   isLive,
   jobState,
   jobTotals,
@@ -297,5 +298,20 @@ describe("streamSettled", () => {
   test("another run's snapshot never settles this one", () => {
     expect(streamSettled("other", true, ended!)).toBe(false)
     expect(streamSettled(undefined, true, ended!)).toBe(false)
+  })
+})
+
+describe("isLabeled", () => {
+  const rowsOf = (batch: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    parsePs(ps([{ batch_id: "B", state: "finished", started_at: 1, ...batch, runs: [run("a", 1, extra)] }]))
+
+  test("a batch label, task label or job counts", () => {
+    expect(isLabeled(rowsOf({ label: "explore: find" })[0]!)).toBe(true)
+    expect(isLabeled(rowsOf({}, { label: "task" })[0]!)).toBe(true)
+    expect(isLabeled(rowsOf({ job: { id: "J", label: null } })[0]!)).toBe(true)
+  })
+
+  test("a bare batch does not", () => {
+    expect(isLabeled(rowsOf({ label: null })[0]!)).toBe(false)
   })
 })

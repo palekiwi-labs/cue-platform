@@ -116,6 +116,11 @@ export function runState(r: RunRow): string {
 }
 
 /** Still going: the batch supervisor is alive and the run has no receipt. */
+/** The run's task, batch or job carries a name; bare utility batches do not. */
+export function isLabeled(r: RunRow): boolean {
+  return Boolean(r.label || r.batchLabel || r.jobId)
+}
+
 export function isLive(r: RunRow): boolean {
   return (r.batchState === "running" || r.batchState === "finalizing") && r.outcome === null
 }
