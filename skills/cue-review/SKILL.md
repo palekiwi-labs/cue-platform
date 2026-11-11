@@ -9,8 +9,8 @@ description: |
 # Review Sessions
 
 A review session evaluates work it did not produce. It usually lives in a
-dedicated review context and drives the `cue-review` CLI (on PATH in
-every cast container), which orchestrates multi-agent reviews
+dedicated review context and drives the `cue-review` CLI (on PATH wherever the
+cue-platform tools are installed: the agent VM or a cast container), which orchestrates multi-agent reviews
 (reviewers -> merge -> verify) via cue-agent and saves findings as cue
 review artifacts.
 
