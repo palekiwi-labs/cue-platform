@@ -48,8 +48,12 @@ export const HISTORY_WINDOWS = ["1d", "7d", "30d"] as const
 export type HistoryWindow = (typeof HISTORY_WINDOWS)[number]
 
 export interface MonitorDeps {
-  /** Runs of batches started within the window, newest batch first; error text on failure. */
-  load(window: HistoryWindow): Promise<{ rows: RunRow[] } | { error: string }>
+  /**
+   * Runs of batches started within the window, newest batch first; error
+   * text on failure. With labeledOnly the caller may leave out unlabeled
+   * batches.
+   */
+  load(window: HistoryWindow, labeledOnly: boolean): Promise<{ rows: RunRow[] } | { error: string }>
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
   /** The run's receipt.json text, if readable. */
@@ -187,10 +191,11 @@ export class AgentMonitor implements Component {
     if (this.loading) return
     this.loading = true
     const window = this.history
-    const r = await this.deps.load(window)
+    const labeledOnly = !this.showUnlabeled
+    const r = await this.deps.load(window, labeledOnly)
     this.loading = false
     if (!this.timer && !first) return
-    if (window !== this.history) return void this.reload(first)
+    if (window !== this.history || labeledOnly === this.showUnlabeled) return void this.reload(first)
     if ("error" in r) {
       this.error = r.error
     } else {
@@ -328,6 +333,7 @@ export class AgentMonitor implements Component {
     if (matchesKey(data, "alt+u")) {
       this.showUnlabeled = !this.showUnlabeled
       this.previewScroll = 0
+      void this.reload(false)
       return this.tui.requestRender()
     }
     if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
@@ -463,7 +469,7 @@ export class AgentMonitor implements Component {
     const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
     const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
       t.fg("muted", `(${this.subset}, last ${this.history}) ${live} live, ${this.rows.length} total`) +
-      (this.showUnlabeled ? "" : t.fg("dim", `, ${this.rows.filter((r) => !isLabeled(r)).length} unlabeled hidden`))
+      (this.showUnlabeled ? "" : t.fg("dim", ", unlabeled hidden"))
     return truncateToWidth(title, width)
   }
 
