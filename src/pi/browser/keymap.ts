@@ -4,6 +4,7 @@
  */
 
 import { type Component, type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import type { MenuSection } from "./action-menu"
 
 export type KeyGroup = "navigate" | "act" | "view" | "copy"
 
@@ -18,6 +19,8 @@ export interface Binding {
   group: KeyGroup
   /** Listed in the short hint line. */
   hint?: boolean
+  /** Listed in this section of the item-actions menu. */
+  menu?: MenuSection
   run?: () => void
 }
 
