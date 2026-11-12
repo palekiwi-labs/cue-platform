@@ -1,11 +1,11 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { execFileSync, spawn } from "node:child_process"
-import { resolve } from "node:path"
 import { Type } from "typebox"
 import {
   type BatchReceipt,
   type Roster,
   MAX_TASKS,
+  buildBatchSpec,
   buildDescription,
   formatReceipt,
   parseAgentList,
@@ -16,6 +16,17 @@ const BINARY = "cue-agent"
 
 function makeParameters(names: string[], aliases: string[]) {
   return Type.Object({
+    prompt: Type.Optional(
+      Type.String({
+        description:
+          "Shared instructions for every task that sets no prompt of its " +
+          "own; the usual place for the brief when tasks differ only in " +
+          "agent or model. Write it out in full — goal, relevant paths " +
+          "and facts, and what to return; never a placeholder, variable, " +
+          "or reference. The delegated agents cannot see this " +
+          "conversation.",
+      }),
+    ),
     tasks: Type.Array(
       Type.Object({
         agent: Type.Unsafe<string>({
@@ -23,11 +34,15 @@ function makeParameters(names: string[], aliases: string[]) {
           enum: names,
           description: "Name of an agent from the list in the tool description.",
         }),
-        prompt: Type.String({
-          description:
-            "Self-contained instructions. The agent cannot see this " +
-            "conversation; include the goal, paths, facts, and what to return.",
-        }),
+        prompt: Type.Optional(
+          Type.String({
+            description:
+              "Instructions for this task only, replacing the top-level " +
+              "prompt. Use it only when tasks need different briefs. Same " +
+              "rules: complete and self-contained, written out in full; " +
+              "never a placeholder, variable, or reference.",
+          }),
+        ),
         model: Type.Optional(
           Type.Unsafe<string>({
             type: "string",
@@ -155,22 +170,20 @@ export function delegateTool(cwd: string = process.cwd()) {
       // Boolean true means HEAD at spawn time; { base } pins to an explicit
       // revision so all agents in a workflow see the same tree even if the
       // operator keeps committing.
-      const toWorktree = (w: true | { base: string }) =>
-        w === true
-          ? { base: "HEAD", ephemeral: true }
-          : { base: w.base, ephemeral: true }
-      const spec = {
-        tasks: args.tasks.map((t) => ({
-          agent: t.agent,
-          prompt: t.prompt,
-          ...(t.worktree
-            ? { worktree: toWorktree(t.worktree) }
-            : { cwd: t.dir ? resolve(ctx.cwd, t.dir) : ctx.cwd }),
-          ...(t.model ? { model: t.model } : {}),
-          ...(t.worktree ? { worktree: toWorktree(t.worktree) } : {}),
-          ...(args.context ? { context: args.context } : {}),
-        })),
-      }
+      const spec = buildBatchSpec(
+        {
+          prompt: args.prompt ?? null,
+          tasks: args.tasks.map((t) => ({
+            agent: t.agent,
+            prompt: t.prompt ?? null,
+            ...(t.model ? { model: t.model } : {}),
+            ...(t.dir ? { dir: t.dir } : {}),
+            ...(t.worktree ? { worktree: t.worktree } : {}),
+            ...(args.context ? { context: args.context } : {}),
+          })),
+        },
+        ctx.cwd,
+      )
       const { code, stdout, stderr } = await runBatch(spec, ctx.cwd, signal)
 
       let batch: BatchReceipt
