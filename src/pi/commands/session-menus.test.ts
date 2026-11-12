@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { menuColumns } from "../browser/action-menu"
+import { SessionSpeechMode } from "../speech/settings"
 import { sessionActions, sessionSettings } from "./session-menus"
 
 function fakePi(level = "medium") {
@@ -70,9 +71,21 @@ describe("sessionSettings", () => {
 })
 
 describe("speech setting", () => {
-  test("offers the three speech modes", () => {
-    const speech = sessionSettings(fakePi().pi).find((s) => s.label === "speech")!
+  test("offers the three speech modes, starting at the session's mode", () => {
+    const appended: unknown[] = []
+    const session = new SessionSpeechMode({ appendEntry: (_t: string, d: unknown) => appended.push(d) } as never)
+    const speech = sessionSettings(fakePi().pi, session).find((s) => s.label === "speech")!
     expect(speech.group).toBe("display")
     expect(speech.values).toEqual(["off", "message", "live"])
+    expect(speech.values[speech.current]).toBe("off")
+    speech.apply(speech.values.indexOf("message"))
+    expect(session.mode).toBe("message")
+    expect(appended).toEqual([{ mode: "message" }])
+    const again = sessionSettings(fakePi().pi, session).find((s) => s.label === "speech")!
+    expect(again.values[again.current]).toBe("message")
+  })
+
+  test("is not listed where the session cannot speak", () => {
+    expect(sessionSettings(fakePi().pi).map((s) => s.label)).toEqual(["thinking", "auto summary", "style"])
   })
 })
