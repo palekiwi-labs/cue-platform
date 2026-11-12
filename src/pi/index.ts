@@ -21,6 +21,7 @@ import { registerSessionLabel } from "./session-label"
 import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
 import { registerResponseStyle } from "./response-style"
+import { registerSpeech } from "./speech"
 import { cueAddTool } from "./tools/cue-add"
 import { cueContextTool } from "./tools/cue-context"
 import { cueContextExploreTool } from "./tools/cue-context-explore"
@@ -80,4 +81,5 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerResponseStyle(pi)
   registerSessionNaming(pi)
   registerSessionLabel(pi)
+  registerSpeech(pi)
 }
