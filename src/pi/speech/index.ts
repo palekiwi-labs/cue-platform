@@ -1,5 +1,5 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { splitSentences } from "./sentences"
+import { Chunker, splitChunks } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { type SpeechMode, speechMode } from "./settings"
 
@@ -9,6 +9,7 @@ export const SPEECH_STOP_COMMAND = "speech-stop"
 export const SPEECH_STOP_SHORTCUT = "alt+x"
 
 type ModeContext = Pick<ExtensionContext, "mode">
+type MessageContext = ModeContext & Pick<ExtensionContext, "ui">
 
 interface SpokenMessage {
   role: string
@@ -16,12 +17,30 @@ interface SpokenMessage {
   content?: unknown
 }
 
-function messageText(message: SpokenMessage): string {
-  if (!Array.isArray(message.content)) return ""
-  return message.content
-    .filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("\n\n")
+interface StreamEvent {
+  type: string
+  contentIndex?: number
+  delta?: string
+  content?: unknown
+}
+
+interface LiveBlock {
+  chunker: Chunker
+  fed: string
+  done: boolean
+}
+
+interface CurrentMessage {
+  id: number
+  mode: SpeechMode
+  blocks: Map<number, LiveBlock>
+}
+
+function textBlocks(message: SpokenMessage): { index: number; text: string }[] {
+  if (!Array.isArray(message.content)) return []
+  return message.content.flatMap((part: { type?: unknown; text?: unknown } | null, index) =>
+    part?.type === "text" && typeof part.text === "string" ? [{ index, text: part.text }] : [],
+  )
 }
 
 export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSuccess"> {
@@ -29,14 +48,16 @@ export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSucc
 }
 
 /**
- * Speaks finished assistant messages of a TUI session through the host
- * speech bridge, and stops speech on request or when a run is interrupted.
+ * Speaks the assistant messages of a TUI session through the host speech
+ * bridge, either once each message ends or chunk by chunk while it streams,
+ * and stops speech on request or when a run is interrupted.
  */
 export class Speech {
   readonly sender: SpeechSender
   private readonly mode: () => SpeechMode
   private muted = false
   private warned = false
+  private current: CurrentMessage | null = null
   private notifyCtx: Pick<ExtensionContext, "ui"> | undefined
   private detachAbort: (() => void) | null = null
 
@@ -80,21 +101,94 @@ export class Speech {
 
   async shutdown(ctx: ModeContext): Promise<void> {
     this.runEnd()
+    this.current = null
     if (this.speaks(ctx)) await this.stop()
   }
 
-  messageStart(message: SpokenMessage): void {
-    if (message.role === "assistant") this.muted = false
+  /** An assistant message starts: unmute, and fix its speech mode for the whole message. */
+  messageStart(message: SpokenMessage, ctx: MessageContext): void {
+    if (message.role !== "assistant") return
+    this.muted = false
+    this.current = null
+    try {
+      this.current = this.newMessage(ctx)
+    } catch {}
   }
 
-  messageEnd(message: SpokenMessage, ctx: ModeContext & Pick<ExtensionContext, "ui">): void {
+  /** Live mode: feed streamed text and send the chunks it completes. */
+  messageUpdate(message: SpokenMessage, event: StreamEvent, ctx: MessageContext): void {
     try {
-      if (ctx.mode !== "tui" || message.role !== "assistant" || this.muted) return
-      if (message.stopReason === "aborted" || message.stopReason === "error") return
-      if (this.mode() === "off") return
-      this.notifyCtx = ctx
-      this.sender.say(splitSentences(messageText(message)))
+      const current = this.current
+      if (!current || current.mode !== "live" || this.muted) return
+      if (ctx.mode !== "tui" || message.role !== "assistant" || typeof event.contentIndex !== "number") return
+      if (event.type === "text_delta" && typeof event.delta === "string") {
+        this.feed(current, event.contentIndex, event.delta)
+      } else if (event.type === "text_end") {
+        this.endBlock(current, event.contentIndex, event.content)
+      }
     } catch {}
+  }
+
+  /**
+   * An assistant message ends: message mode sends all of its text, live mode
+   * flushes every text block not flushed yet. Aborted and failed messages
+   * send nothing more.
+   */
+  messageEnd(message: SpokenMessage, ctx: MessageContext): void {
+    if (message.role !== "assistant") return
+    const started = this.current
+    this.current = null
+    try {
+      if (ctx.mode !== "tui" || this.muted) return
+      if (message.stopReason === "aborted" || message.stopReason === "error") return
+      const current = started ?? this.newMessage(ctx)
+      if (current.mode === "message") {
+        this.send(current, textBlocks(message).flatMap(({ text }) => splitChunks(text)))
+      } else if (current.mode === "live") {
+        for (const { index, text } of textBlocks(message)) this.endBlock(current, index, text)
+      }
+    } catch {}
+  }
+
+  private newMessage(ctx: MessageContext): CurrentMessage {
+    const mode = ctx.mode === "tui" ? this.mode() : "off"
+    if (mode !== "off") this.notifyCtx = ctx
+    return { id: this.sender.newMessage(), mode, blocks: new Map() }
+  }
+
+  private block(current: CurrentMessage, index: number): LiveBlock {
+    let block = current.blocks.get(index)
+    if (!block) {
+      block = { chunker: new Chunker(), fed: "", done: false }
+      current.blocks.set(index, block)
+    }
+    return block
+  }
+
+  private feed(current: CurrentMessage, index: number, text: string): void {
+    const block = this.block(current, index)
+    if (block.done) return
+    block.fed += text
+    this.send(current, block.chunker.push(text))
+  }
+
+  private endBlock(current: CurrentMessage, index: number, content: unknown): void {
+    const block = this.block(current, index)
+    if (block.done) return
+    if (typeof content === "string" && content.startsWith(block.fed)) {
+      this.feed(current, index, content.slice(block.fed.length))
+    }
+    block.done = true
+    this.send(current, block.chunker.flush())
+  }
+
+  private send(current: CurrentMessage, chunks: string[]): void {
+    if (chunks.length === 0 || this.muted) return
+    if (this.mode() === "off") {
+      this.muted = true
+      return
+    }
+    this.sender.say(chunks, current.id)
   }
 
   private speaks(ctx: ModeContext): boolean {
@@ -124,7 +218,8 @@ export function registerSpeech(pi: ExtensionAPI, options: SpeechOptions = {}): S
   pi.on("agent_start", (_event, ctx) => speech.agentStart(ctx))
   pi.on("agent_end", () => speech.runEnd())
   pi.on("agent_settled", (event, ctx) => speech.settled(event, ctx))
-  pi.on("message_start", (event) => speech.messageStart(event.message))
+  pi.on("message_start", (event, ctx) => speech.messageStart(event.message, ctx))
+  pi.on("message_update", (event, ctx) => speech.messageUpdate(event.message, event.assistantMessageEvent, ctx))
   pi.on("message_end", (event, ctx) => speech.messageEnd(event.message, ctx))
   pi.on("session_shutdown", (_event, ctx) => speech.shutdown(ctx))
   pi.registerCommand(SPEECH_STOP_COMMAND, {
