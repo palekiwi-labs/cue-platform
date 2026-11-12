@@ -31,3 +31,42 @@ describe("speakableText (turn-summary regression)", () => {
     expect(speakableText(prose)).toBe(prose)
   })
 })
+
+describe("speakableText fixtures", () => {
+  test("keeps slashes between words in prose", () => {
+    const prose = "It reads input and/or output from the input/output layer."
+    expect(speakableText(prose)).toBe(prose)
+  })
+
+  test("still drops paths", () => {
+    expect(speakableText("Edit src/pi/lib/a.ts and lib/b.ts in ~/cue or ../x, not /etc/hosts.")).toBe(
+      "Edit and in or, not",
+    )
+  })
+
+  test("keeps short inline identifiers and drops longer inline code", () => {
+    expect(speakableText("Run `cue list --context foo` so `parser` and `foo.ts` call `load()`.")).toBe(
+      "Run so parser and foo.ts call load.",
+    )
+  })
+
+  test("leaves no empty brackets or stray commas where code was dropped", () => {
+    expect(speakableText("It reads (`cue context list --json`) and ranks (`a b`, `c d`, keys).")).toBe(
+      "It reads and ranks (keys).",
+    )
+  })
+
+  test("drops a fenced block that is never closed", () => {
+    expect(speakableText("Here it is:\n\n```ts\nconst x = 1\n\nconst y = 2")).toBe("Here it is:")
+  })
+
+  test("drops tilde fences and longer backtick fences", () => {
+    const raw = "Before.\n~~~\ncode\n~~~\nMiddle.\n````md\n```\ninner\n```\n````\nAfter."
+    expect(speakableText(raw)).toBe("Before.\n\nMiddle.\n\nAfter.")
+  })
+
+  test("drops table rows", () => {
+    const raw = "Results:\n| name | count |\n|------|------:|\n| a | 1 |\nDone."
+    expect(speakableText(raw)).toBe("Results:\n\nDone.")
+  })
+})
