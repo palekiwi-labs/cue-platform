@@ -68,3 +68,11 @@ describe("sessionSettings", () => {
     expect(levels).toEqual(["high"])
   })
 })
+
+describe("speech setting", () => {
+  test("offers the three speech modes", () => {
+    const speech = sessionSettings(fakePi().pi).find((s) => s.label === "speech")!
+    expect(speech.group).toBe("display")
+    expect(speech.values).toEqual(["off", "message", "live"])
+  })
+})

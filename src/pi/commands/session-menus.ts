@@ -4,6 +4,7 @@ import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
 import { activeStyle, listStyles, setActiveStyle } from "../response-style"
+import { SPEECH_MODES, setSpeechMode, speechMode } from "../speech/settings"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 
@@ -61,6 +62,13 @@ export function sessionSettings(pi: ExtensionAPI): Setting[] {
       values: styles,
       current: Math.max(0, styles.indexOf(activeStyle())),
       apply: (i) => setActiveStyle(styles[i]!),
+    },
+    {
+      label: "speech",
+      group: "display",
+      values: [...SPEECH_MODES],
+      current: SPEECH_MODES.indexOf(speechMode()),
+      apply: (i) => setSpeechMode(SPEECH_MODES[i]!),
     },
   ]
 }
