@@ -70,6 +70,7 @@ export class SpeechSender {
   private readonly timeoutMs: number
   private pending: Item[] = []
   private messages = 0
+  private failedMessage = 0
   private inFlight = false
   private stopAfterFlight = false
   private drainRun: Promise<void> | null = null
@@ -82,10 +83,17 @@ export class SpeechSender {
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
   }
 
-  /** Queue the sentences of one message behind everything already queued. */
-  say(sentences: string[]): void {
-    if (sentences.length === 0) return
-    const message = ++this.messages
+  /** A new message number, for sending one message in several parts. */
+  newMessage(): number {
+    return ++this.messages
+  }
+
+  /**
+   * Queue chunks of a message behind everything already queued. Chunks of a
+   * message whose earlier send failed are dropped.
+   */
+  say(sentences: string[], message = this.newMessage()): void {
+    if (sentences.length === 0 || message === this.failedMessage) return
     for (const text of sentences) this.pending.push({ message, text })
     if (!this.drainRun) this.drainRun = this.drain().finally(() => (this.drainRun = null))
   }
@@ -126,6 +134,7 @@ export class SpeechSender {
       if (result.ok) {
         this.options.onSuccess?.()
       } else {
+        this.failedMessage = item.message
         this.pending = this.pending.filter((p) => p.message !== item.message)
         this.options.onFailure?.(result.reason)
       }
