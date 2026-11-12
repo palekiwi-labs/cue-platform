@@ -65,6 +65,21 @@ describe("speaking messages", () => {
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`])
   })
 
+  test("sends every text block as written, code, tables and links included", async () => {
+    const s = setup()
+    const first = "Run `bun test ./src` in ~/code/x, see [docs](https://example.com/a_b)."
+    const second = "| a | b |\n|---|---|\n| 1 | 2 |\n```sh\nrm -rf ./build\n```"
+    const message = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: first }, { type: "toolCall" }, { type: "text", text: second }],
+    }
+    await s.emit("message_start", { message })
+    await s.emit("message_end", { message })
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([`/say ${first}`, `/say ${second.slice(0, -4)}`, "/say ```"])
+  })
+
   test("skips aborted and failed messages but speaks other stop reasons", async () => {
     const s = setup()
     await s.reply(OTHER, "aborted")

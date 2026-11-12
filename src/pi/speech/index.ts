@@ -1,5 +1,5 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { splitSentences } from "./sentences"
+import { splitChunks } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { type SpeechMode, speechMode } from "./settings"
 
@@ -16,12 +16,11 @@ interface SpokenMessage {
   content?: unknown
 }
 
-function messageText(message: SpokenMessage): string {
-  if (!Array.isArray(message.content)) return ""
+function textBlocks(message: SpokenMessage): string[] {
+  if (!Array.isArray(message.content)) return []
   return message.content
     .filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
     .map((part) => part.text)
-    .join("\n\n")
 }
 
 export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSuccess"> {
@@ -93,7 +92,7 @@ export class Speech {
       if (message.stopReason === "aborted" || message.stopReason === "error") return
       if (this.mode() === "off") return
       this.notifyCtx = ctx
-      this.sender.say(splitSentences(messageText(message)))
+      this.sender.say(textBlocks(message).flatMap((text) => splitChunks(text)))
     } catch {}
   }
 
