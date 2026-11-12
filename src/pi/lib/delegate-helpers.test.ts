@@ -3,9 +3,12 @@ import {
   backgroundCommand,
   backgroundJobId,
   batchLabel,
+  buildBatchSpec,
   buildDescription,
   formatReceipt,
   parseAgentList,
+  placeholderPrompt,
+  resolvePrompts,
   selectableAliases,
 } from "./delegate-helpers"
 
@@ -121,5 +124,125 @@ describe("batchLabel", () => {
 
   test("falls back to the agents for a blank prompt", () => {
     expect(batchLabel([{ agent: "builder", prompt: "   " }])).toBe("builder")
+  })
+})
+
+describe("resolvePrompts", () => {
+  test("tasks without a prompt inherit the batch prompt", () => {
+    expect(resolvePrompts("brief", [null, null])).toEqual({
+      defaults: "brief",
+      prompts: ["brief", "brief"],
+    })
+  })
+
+  test("a task prompt replaces the batch prompt", () => {
+    expect(resolvePrompts("brief", ["other brief", null])).toEqual({
+      defaults: "brief",
+      prompts: ["other brief", "brief"],
+    })
+  })
+
+  test("rejects a task left without any prompt", () => {
+    expect(() => resolvePrompts(null, ["a self-contained brief", null])).toThrow(
+      /task 2 has no prompt/,
+    )
+  })
+
+  test("rejects a batch prompt every task overrides", () => {
+    expect(() => resolvePrompts("brief", ["own", "own"])).toThrow(/unused/)
+  })
+
+  test("accepts per-task prompts with no batch prompt", () => {
+    expect(resolvePrompts(null, ["a", "b"]).prompts).toEqual(["a", "b"])
+  })
+})
+
+describe("placeholderPrompt", () => {
+  const real =
+    "Review the discount architecture in app/models/package_price.rb and " +
+    "recommend whether the gross-up stays. Reply with a short recommendation."
+
+  test("flags the observed degenerate tokens", () => {
+    expect(placeholderPrompt("PROMPT_PLACEHOLDER")).toBe("PROMPT_PLACEHOLDER")
+    expect(placeholderPrompt("PROMPT_BODY")).toBe("PROMPT_BODY")
+  })
+
+  test("flags template shapes and references", () => {
+    for (const p of ["<prompt>", "{{prompt}}", "[PROMPT]", "$PROMPT", "TODO", "TBD", "..."]) {
+      expect(placeholderPrompt(p)).toBe(p)
+    }
+    expect(placeholderPrompt("Same as above")).toBe("Same as above")
+    expect(placeholderPrompt("same prompt as task 1")).toMatch(/same prompt/)
+  })
+
+  test("flags prompts too short to be self-contained", () => {
+    expect(placeholderPrompt("review the pricing code")).toBe(
+      "review the pricing code",
+    )
+    expect(placeholderPrompt(real)).toBeNull()
+  })
+
+  test("empty prompt is a placeholder", () => {
+    expect(placeholderPrompt("  ")).toBe("")
+  })
+})
+
+describe("buildBatchSpec", () => {
+  const long =
+    "Investigate the discount rule in app/models and recommend an approach. Reply with a short recommendation."
+
+  test("shared prompt rides the defaults layer", () => {
+    const spec = buildBatchSpec(
+      {
+        prompt: long,
+        tasks: [
+          { agent: "consultant", model: "opus", prompt: null },
+          { agent: "consultant", model: "flash", prompt: null },
+        ],
+      },
+      "/work",
+    )
+    expect(spec.defaults).toEqual({ prompt: long })
+    expect(spec.tasks).toEqual([
+      { agent: "consultant", model: "opus", cwd: "/work" },
+      { agent: "consultant", model: "flash", cwd: "/work" },
+    ])
+  })
+
+  test("per-task prompt replaces the default", () => {
+    const other = "Focus only on the calendar code paths and name risks. Reply with a list."
+    const spec = buildBatchSpec(
+      {
+        prompt: long,
+        tasks: [
+          { agent: "consultant", prompt: other },
+          { agent: "explore", prompt: null },
+        ],
+      },
+      "/work",
+    )
+    expect(spec.tasks[0]?.prompt).toBe(other)
+    expect(spec.tasks[1]?.prompt).toBeUndefined()
+  })
+
+  test("per-task prompts without a batch prompt stay per-task", () => {
+    const spec = buildBatchSpec(
+      { tasks: [{ agent: "consultant", prompt: long }] },
+      "/work",
+    )
+    expect(spec.defaults).toBeUndefined()
+    expect(spec.tasks[0]?.prompt).toBe(long)
+  })
+
+  test("placeholder prompts are rejected before spawning", () => {
+    expect(() =>
+      buildBatchSpec(
+        { prompt: "PROMPT_PLACEHOLDER", tasks: [{ agent: "consultant", prompt: null }] },
+        "/work",
+      ),
+    ).toThrow(/placeholder/)
+    expect(() =>
+      buildBatchSpec({ tasks: [{ agent: "consultant", prompt: "PROMPT_BODY" }] }, "/work"),
+    ).toThrow(/placeholder/)
   })
 })
