@@ -1,37 +1,70 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { dirname, join } from "node:path"
-
-const STATE_FILE = join(
-  process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-  "cue-platform",
-  "speech.json",
-)
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
 
 export const SPEECH_MODES = ["off", "message", "live"] as const
 
 /** off; message: speak each assistant message once it ends; live: speak while it streams. */
 export type SpeechMode = (typeof SPEECH_MODES)[number]
 
-interface SpeechState {
-  mode?: string
+/** Custom session entry type recording each change of the session's speech mode. */
+export const SPEECH_ENTRY = "cue-platform.speech-mode"
+
+/** Footer status key that shows the speech mode while speech is on. */
+export const SPEECH_STATUS_KEY = "speech"
+
+function isSpeechMode(value: unknown): value is SpeechMode {
+  return SPEECH_MODES.includes(value as SpeechMode)
 }
 
-function readState(file: string): SpeechState {
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) as SpeechState
-  } catch {
-    return {}
+/** The speech mode last recorded in a session's entries; off when none is. */
+export function recordedSpeechMode(entries: readonly SessionEntry[]): SpeechMode {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!
+    if (entry.type !== "custom" || entry.customType !== SPEECH_ENTRY) continue
+    const mode = (entry.data as { mode?: unknown } | undefined)?.mode
+    if (isSpeechMode(mode)) return mode
   }
+  return "off"
 }
 
-/** The global speech mode shared by every pi session; off by default. */
-export function speechMode(file = STATE_FILE): SpeechMode {
-  const mode = readState(file).mode
-  return SPEECH_MODES.includes(mode as SpeechMode) ? (mode as SpeechMode) : "off"
+/** Status text for a speech mode; none while speech is off. */
+export function speechStatus(mode: SpeechMode): string | undefined {
+  return mode === "off" ? undefined : `speech: ${mode}`
 }
 
-export function setSpeechMode(mode: SpeechMode, file = STATE_FILE): void {
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify({ ...readState(file), mode }) + "\n")
+type RestoreContext = Pick<ExtensionContext, "mode" | "sessionManager" | "ui">
+
+/**
+ * The speech mode of the session one extension runtime serves. Off until
+ * restored from the session at session start; each change is appended to
+ * the session as a custom entry, so it survives resume and reload and
+ * applies to no other session.
+ */
+export class SessionSpeechMode {
+  private current: SpeechMode = "off"
+  private ui: Pick<ExtensionContext["ui"], "setStatus"> | undefined
+
+  constructor(private readonly pi: Pick<ExtensionAPI, "appendEntry">) {}
+
+  get mode(): SpeechMode {
+    return this.current
+  }
+
+  restore(ctx: RestoreContext): void {
+    this.current = recordedSpeechMode(ctx.sessionManager.getEntries())
+    this.ui = ctx.mode === "tui" ? ctx.ui : undefined
+    this.show()
+  }
+
+  set(mode: SpeechMode): void {
+    if (mode === this.current) return
+    this.current = mode
+    this.pi.appendEntry(SPEECH_ENTRY, { mode })
+    this.show()
+  }
+
+  private show(): void {
+    try {
+      this.ui?.setStatus(SPEECH_STATUS_KEY, speechStatus(this.current))
+    } catch {}
+  }
 }
