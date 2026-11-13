@@ -10,6 +10,7 @@ import { registerContextPinsCommand } from "./commands/context-pins"
 import { registerIdeaCommand } from "./commands/idea"
 import { registerMemoryMonitor } from "./commands/memory-monitor"
 import { registerPrBrowser } from "./commands/prs"
+import { registerReviewMissCommand } from "./commands/review-miss"
 import { registerReviewRunCommand } from "./commands/review-run"
 import { registerViewsLauncher } from "./commands/views-launcher"
 import { registerSessionMenus } from "./commands/session-menus"
@@ -72,6 +73,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerTurnSummary(pi)
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
+  registerReviewMissCommand(pi)
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)

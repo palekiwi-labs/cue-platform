@@ -141,6 +141,7 @@ describe("command registration", () => {
       "label",
       "mcp-cast",
       "resume-open",
+      "review:miss",
       "review:run",
       "speech-stop",
     ])
