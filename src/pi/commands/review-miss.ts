@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { missTrace, saveTranscript, writeMissTrace } from "../review-miss/report"
+import { addressOf, missTrace, saveTranscript, writeMissTrace } from "../review-miss/report"
 
 /**
  * Register `/review:miss [comment]`: file a review miss report with a
@@ -26,8 +26,8 @@ export function registerReviewMissCommand(pi: ExtensionAPI): void {
           sessionId: ctx.sessionManager.getSessionId(),
           transcript,
         })
-        await writeMissTrace(ctx.cwd, trace)
-        ctx.ui.notify(`Review miss recorded: ${trace.filename}`, "info")
+        const path = await writeMissTrace(ctx.cwd, trace)
+        ctx.ui.notify(`Review miss recorded: ${addressOf(path.split("\n").pop()!.trim())}`, "info")
       } catch (err) {
         ctx.ui.notify(`review:miss failed: ${(err as Error).message}`, "error")
       }
