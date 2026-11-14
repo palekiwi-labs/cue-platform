@@ -1,0 +1,126 @@
+import { afterEach, describe, expect, test } from "bun:test"
+import { connect, type NatsConnection } from "@nats-io/transport-node"
+import { jetstreamManager } from "@nats-io/jetstream"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { registerNatsTelemetry } from "./extension"
+import { EVENT_STREAM, type AgentEvent, type RegistryRow } from "./events"
+import { openRegistry } from "./jetstream"
+import { natsServerBin, startJetStreamServer, waitFor, type TestServer } from "./test-server"
+
+type Handler = (event: unknown, ctx: unknown) => unknown
+
+function fakePi() {
+  const handlers = new Map<string, Handler[]>()
+  const pi = {
+    on(name: string, h: Handler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), h])
+    },
+  } as unknown as ExtensionAPI
+  async function fire(name: string, event: Record<string, unknown>, ctx: unknown) {
+    for (const h of handlers.get(name) ?? []) await h({ type: name, ...event }, ctx)
+  }
+  return { pi, fire }
+}
+
+function fakeCtx(sid: string) {
+  return {
+    mode: "json",
+    cwd: "/work",
+    model: { provider: "anthropic", id: "opus" },
+    sessionManager: {
+      getSessionId: () => sid,
+      getSessionFile: () => undefined,
+      getSessionName: () => "named",
+      getBranch: () => [],
+    },
+  }
+}
+
+const cleanups: (() => Promise<void>)[] = []
+
+afterEach(async () => {
+  for (const c of cleanups.splice(0).reverse()) await c()
+})
+
+async function setup(): Promise<{ server: TestServer; nc: NatsConnection }> {
+  const server = await startJetStreamServer()
+  cleanups.push(() => server.stop())
+  const nc = await connect({ servers: server.url })
+  cleanups.push(() => nc.close())
+  return { server, nc }
+}
+
+describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
+  test("creates stream and bucket, publishes events and maintains the registry row", async () => {
+    const { server, nc } = await setup()
+    const { pi, fire } = fakePi()
+    const sid = "20261114-134753-ae2a53-builder-1"
+    const ctx = fakeCtx(sid)
+    registerNatsTelemetry(pi, { url: server.url, env: { CUE_NATS_JS_DOMAIN: "" }, host: "casm" })
+    cleanups.push(() => fire("session_shutdown", { reason: "quit" }, ctx))
+
+    await fire("session_start", { reason: "startup" }, ctx)
+    await fire("before_agent_start", { messageType: "user", prompt: "hello there" }, ctx)
+    await fire("turn_start", { turnIndex: 0 }, ctx)
+    await fire("message_update", { assistantMessageEvent: { type: "thinking_start" } }, ctx)
+    await fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: { command: "ls" } }, ctx)
+    await fire("tool_execution_end", { toolCallId: "c1", toolName: "bash", isError: false, durationMs: 7 }, ctx)
+    await fire(
+      "turn_end",
+      { turnIndex: 0, message: { role: "assistant", usage: { totalTokens: 12, cost: { total: 0.5 } } } },
+      ctx,
+    )
+    await fire("agent_settled", { aborted: false }, ctx)
+
+    const jsm = await jetstreamManager(nc)
+    await waitFor(async () => {
+      try {
+        return (await jsm.streams.info(EVENT_STREAM)).state.messages >= 8
+      } catch {
+        return false
+      }
+    })
+    const kv = await openRegistry(nc, undefined)
+    let row: RegistryRow | undefined
+    await waitFor(async () => {
+      const e = await kv.get(sid)
+      row = e && e.operation === "PUT" ? (e.json() as RegistryRow) : undefined
+      return row?.state === "idle" && row.turns === 1
+    })
+    expect(row).toMatchObject({ run_id: sid, host: "casm", mode: "json", model: "anthropic/opus", tokens: 12 })
+    expect(row!.cost).toBeCloseTo(0.5)
+    expect(row!.last_tool).toBe("bash ls")
+
+    const js = (await import("@nats-io/jetstream")).jetstream(nc)
+    const consumer = await js.consumers.get(EVENT_STREAM, { filter_subjects: [`agent.evt.${sid}.>`] })
+    const kinds: string[] = []
+    const msgs = await consumer.fetch({ max_messages: 8, expires: 2000 })
+    for await (const m of msgs) {
+      kinds.push((m.json() as AgentEvent).kind)
+      if (kinds.length === 8) break
+    }
+    expect(kinds).toEqual(["start", "input", "turn_start", "thinking", "tool_start", "tool_end", "turn_end", "settled"])
+
+    await fire("session_shutdown", { reason: "quit" }, ctx)
+    await waitFor(async () => {
+      const e = await kv.get(sid)
+      return !e || e.operation !== "PUT"
+    })
+  })
+
+  test("keeps running without a server and never throws", async () => {
+    const { pi, fire } = fakePi()
+    const ctx = fakeCtx("offline")
+    registerNatsTelemetry(pi, { url: "nats://127.0.0.1:1", env: { CUE_NATS_JS_DOMAIN: "" } })
+    await fire("session_start", { reason: "startup" }, ctx)
+    await fire("before_agent_start", { messageType: "user", prompt: "x" }, ctx)
+    await fire("agent_settled", { aborted: false }, ctx)
+    await fire("session_shutdown", { reason: "quit" }, ctx)
+  })
+
+  test("is inert when disabled", async () => {
+    const { pi, fire } = fakePi()
+    registerNatsTelemetry(pi, { env: { CUE_NATS_DISABLE: "1" } })
+    await fire("session_start", { reason: "startup" }, fakeCtx("x"))
+  })
+})
