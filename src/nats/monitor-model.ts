@@ -25,31 +25,188 @@ export function applyRegistryEntry(rows: Map<string, RegistryRow>, entry: Regist
   }
 }
 
-const ACTIVE: ReadonlySet<AgentState> = new Set(["busy", "error"])
+const RUN_ID_PARTS = /^(\d{8}-\d{6}-[0-9a-f]{6})-([a-z0-9-]+)-(\d+)$/
 
-/** Active rows first, then most recently updated. */
-export function sortRows(rows: Iterable<RegistryRow>): RegistryRow[] {
-  return [...rows].sort((a, b) => {
-    const rank = Number(!ACTIVE.has(a.state)) - Number(!ACTIVE.has(b.state))
-    if (rank !== 0) return rank
-    if (b.updated_at !== a.updated_at) return b.updated_at - a.updated_at
-    return a.sid.localeCompare(b.sid)
-  })
+/** A cue-agent run id split into its batch, agent and position in the batch. */
+export interface RunId {
+  runId: string
+  batch: string
+  agent: string
+  pos: number
 }
 
-export interface RowFilter {
-  showAll: boolean
-  now: number
-  staleAfterMs?: number
+export function parseRunId(runId: string): RunId | undefined {
+  const m = RUN_ID_PARTS.exec(runId)
+  if (!m) return undefined
+  return { runId, batch: m[1]!, agent: m[2]!, pos: Number(m[3]) }
 }
 
-/** Rows to display: delegated runs unless `showAll`, never stale ones; sorted. */
-export function visibleRows(rows: Iterable<RegistryRow>, filter: RowFilter): RegistryRow[] {
-  const stale = filter.staleAfterMs ?? STALE_AFTER_MS
-  const kept = [...rows].filter(
-    (r) => (filter.showAll || !!r.run_id) && filter.now - (r.updated_at ?? 0) <= stale,
-  )
-  return sortRows(kept)
+/** What the event history says about one run. */
+export interface RunRecord {
+  runId: string
+  startedAt?: number
+  endedAt?: number
+  ended: boolean
+  cwd?: string
+  context?: string
+  model?: string
+  turns?: number
+  cost?: number
+  lastError?: string
+  lastAborted: boolean
+}
+
+/** Runs rebuilt from start, input, error, settled and end events. Other sessions are ignored. */
+export class RunHistory {
+  readonly runs = new Map<string, RunRecord>()
+
+  apply(event: AgentEvent): void {
+    if (!parseRunId(event.sid)) return
+    let run = this.runs.get(event.sid)
+    if (!run) {
+      run = { runId: event.sid, ended: false, lastAborted: false }
+      this.runs.set(event.sid, run)
+    }
+    switch (event.kind) {
+      case "start":
+        run.startedAt = Math.min(run.startedAt ?? event.ts, event.ts)
+        run.ended = false
+        run.endedAt = undefined
+        run.cwd = str(event.cwd) || run.cwd
+        run.context = str(event.context) || run.context
+        run.model = str(event.model) || run.model
+        return
+      case "input":
+        run.lastError = undefined
+        run.lastAborted = false
+        run.context = str(event.context) || run.context
+        run.model = str(event.model) || run.model
+        return
+      case "error":
+        run.lastError = str(event.message) || "error"
+        return
+      case "settled":
+        run.lastAborted = event.aborted === true
+        return
+      case "end":
+        run.ended = true
+        run.endedAt = event.ts
+        run.turns = num(event.turns)
+        run.cost = num(event.cost)
+        return
+    }
+  }
+}
+
+export type RunStatus = AgentState | "done" | "failed" | "aborted" | "lost"
+
+/** One run as the monitor shows it: live from the registry, else derived from history. */
+export interface RunView {
+  id: RunId
+  status: RunStatus
+  live: boolean
+  row?: RegistryRow
+  record?: RunRecord
+}
+
+export function finishedStatus(record: RunRecord | undefined): RunStatus {
+  if (!record?.ended) return "lost"
+  if (record.lastError) return "failed"
+  if (record.lastAborted) return "aborted"
+  return "done"
+}
+
+/** Join live registry rows (stale ones dropped) with the run history. Headless runs only. */
+export function runViews(
+  history: RunHistory,
+  rows: Iterable<RegistryRow>,
+  now: number,
+  staleAfterMs = STALE_AFTER_MS,
+): RunView[] {
+  const live = new Map<string, RegistryRow>()
+  for (const row of rows) {
+    const runId = row.run_id ?? row.sid
+    if (parseRunId(runId) && now - (row.updated_at ?? 0) <= staleAfterMs) live.set(runId, row)
+  }
+  const ids = new Set([...history.runs.keys(), ...live.keys()])
+  const views: RunView[] = []
+  for (const runId of ids) {
+    const row = live.get(runId)
+    const record = history.runs.get(runId)
+    views.push({
+      id: parseRunId(runId)!,
+      status: row ? row.state : finishedStatus(record),
+      live: !!row,
+      row,
+      record,
+    })
+  }
+  return views
+}
+
+/** Runs of one batch. */
+export interface Batch {
+  batch: string
+  runs: RunView[]
+}
+
+/** Group by batch: batches newest first, runs by position. `running` keeps live runs only. */
+export function groupRuns(views: Iterable<RunView>, running: boolean): Batch[] {
+  const byBatch = new Map<string, RunView[]>()
+  for (const v of views) {
+    if (running && !v.live) continue
+    const list = byBatch.get(v.id.batch) ?? []
+    list.push(v)
+    byBatch.set(v.id.batch, list)
+  }
+  return [...byBatch.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .map(([batch, runs]) => ({
+      batch,
+      runs: runs.sort((a, b) => a.id.pos - b.id.pos || a.id.agent.localeCompare(b.id.agent)),
+    }))
+}
+
+export function runStartedAt(view: RunView): number | undefined {
+  return view.record?.startedAt ?? view.row?.started_at
+}
+
+export function runCost(view: RunView): number | undefined {
+  return view.row?.cost ?? view.record?.cost
+}
+
+export function runTurns(view: RunView): number | undefined {
+  return view.row?.turns ?? view.record?.turns
+}
+
+export function runModel(view: RunView): string | undefined {
+  return view.row?.model ?? view.record?.model
+}
+
+/** One-line outcome: the error of a failed run, the live error, or the last tool. */
+export function runNote(view: RunView): string {
+  if (view.row) return view.row.state === "error" ? (view.row.error ?? "") : (view.row.last_tool ?? "")
+  if (view.status === "failed") return view.record?.lastError ?? ""
+  return ""
+}
+
+function col(text: string, width: number): string {
+  return text.length > width ? `${text.slice(0, width - 1)}~` : text.padEnd(width)
+}
+
+/** One list line: status, agent, position, model, turns, cost, age, note. */
+export function formatRun(view: RunView, now: number): string {
+  const started = runStartedAt(view)
+  const turns = runTurns(view)
+  return [
+    col(view.status, 7),
+    col(`${view.id.agent}-${view.id.pos}`, 20),
+    col(runModel(view) ?? "-", 24),
+    (turns === undefined ? "" : `t${turns}`).padStart(4),
+    formatCost(runCost(view)).padStart(8),
+    (started === undefined ? "-" : formatAge(now - started)).padStart(4),
+    runNote(view),
+  ].join("  ")
 }
 
 export function formatAge(ms: number): string {
@@ -66,22 +223,6 @@ export function formatCost(cost: number | undefined): string {
   return `$${(cost ?? 0).toFixed(3)}`
 }
 
-function col(text: string, width: number): string {
-  return text.length > width ? `${text.slice(0, width - 1)}~` : text.padEnd(width)
-}
-
-/** One list line: state, run id (or sid), model, turns, cost, age, last tool. */
-export function formatRow(row: RegistryRow, now: number): string {
-  return [
-    col(row.state, 13),
-    col(row.run_id ?? row.sid, 40),
-    col(row.model ?? "-", 24),
-    `t${row.turns ?? 0}`.padStart(4),
-    formatCost(row.cost).padStart(8),
-    formatAge(now - (row.started_at ?? now)).padStart(4),
-    row.last_tool ?? "",
-  ].join("  ")
-}
 
 export type ActivityItem =
   | {

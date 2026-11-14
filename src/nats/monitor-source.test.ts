@@ -72,6 +72,25 @@ describe.skipIf(!natsServerBin)("openMonitorSource with a server", () => {
     await waitFor(() => source.rows().length === 0)
   })
 
+  test("rebuilds run history from the stream and keeps it live; registry becomes ready", async () => {
+    const { server, nc } = await setup()
+    const js = jetstream(nc)
+    const done = "20261114-134753-ae2a53-builder-0"
+    const live = "20261114-134753-ae2a53-builder-1"
+    await js.publish(eventSubject(done, "start"), JSON.stringify(event(done, "start", { reason: "startup", cwd: "/w" })))
+    await js.publish(eventSubject(done, "tool_start"), JSON.stringify(event(done, "tool_start", { call_id: "c" })))
+    await js.publish(eventSubject(done, "end"), JSON.stringify(event(done, "end", { reason: "quit", turns: 1, cost: 0.2 })))
+
+    const source = await openMonitorSource({ url: server.url, domain: null })
+    cleanups.push(() => source.close())
+    expect(source.registryReady()).toBe(true)
+    await waitFor(() => source.history().runs.get(done)?.ended === true)
+    expect(source.history().runs.get(done)?.cwd).toBe("/w")
+
+    await js.publish(eventSubject(live, "start"), JSON.stringify(event(live, "start", { reason: "startup" })))
+    await waitFor(() => source.history().runs.has(live))
+  })
+
   test("switching selection replaces the activity", async () => {
     const { server, nc } = await setup()
     const js = jetstream(nc)

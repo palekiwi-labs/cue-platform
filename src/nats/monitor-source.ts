@@ -2,9 +2,9 @@ import { DeliverPolicy, jetstream, type ConsumerMessages } from "@nats-io/jetstr
 import type { KvWatchEntry } from "@nats-io/kv"
 import { connect, type NatsConnection, type QueuedIterator } from "@nats-io/transport-node"
 import { resolveNatsUrl } from "./client"
-import { EVENT_STREAM, REGISTRY_BUCKET, resolveJsDomain, sessionEventsFilter, type AgentEvent, type RegistryRow } from "./events"
+import { EVENT_STREAM, EVENT_SUBJECT_ROOT, REGISTRY_BUCKET, resolveJsDomain, sessionEventsFilter, type AgentEvent, type RegistryRow } from "./events"
 import { openRegistry } from "./jetstream"
-import { ActivityLog, applyRegistryEntry } from "./monitor-model"
+import { ActivityLog, applyRegistryEntry, RunHistory } from "./monitor-model"
 
 export interface MonitorSourceOptions {
   /** Server URL. Defaults to {@link resolveNatsUrl}. */
@@ -26,6 +26,10 @@ export interface MonitorSource {
   readonly url: string
   /** Current registry rows keyed by KV key. */
   rows(): RegistryRow[]
+  /** True once the registry watch has delivered every existing row. */
+  registryReady(): boolean
+  /** Runs rebuilt from the event stream, kept live. */
+  history(): RunHistory
   /** Sid whose events are being followed, if any. */
   selected(): string | undefined
   /** Recent activity of the selected session. */
@@ -34,6 +38,9 @@ export interface MonitorSource {
   select(sid: string | undefined): void
   close(): Promise<void>
 }
+
+const HISTORY_KINDS = ["start", "input", "error", "settled", "end"] as const
+const READY_FALLBACK_MS = 3000
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -55,8 +62,10 @@ export async function openMonitorSource(options: MonitorSourceOptions = {}): Pro
   }
 
   let watcher: QueuedIterator<KvWatchEntry>
+  let ready = false
   try {
     const kv = await openRegistry(nc, domain)
+    ready = (await kv.status()).values === 0
     watcher = await kv.watch()
   } catch (err) {
     await nc.close().catch(() => undefined)
@@ -75,10 +84,40 @@ export async function openMonitorSource(options: MonitorSourceOptions = {}): Pro
     try {
       for await (const entry of watcher) {
         applyRegistryEntry(rowMap, { key: entry.key, operation: entry.operation, value: () => entry.string() })
+        if (entry.delta === 0) ready = true
         onChange()
       }
     } catch (err) {
       if (!closed) onError(`registry watch failed: ${message(err)}`)
+    }
+  })()
+
+  const readyTimer = setTimeout(() => {
+    ready = true
+    onChange()
+  }, READY_FALLBACK_MS)
+  readyTimer.unref?.()
+
+  const history = new RunHistory()
+  let historyFeed: ConsumerMessages | undefined
+  void (async () => {
+    try {
+      const consumer = await js.consumers.get(EVENT_STREAM, {
+        filter_subjects: HISTORY_KINDS.map((kind) => `${EVENT_SUBJECT_ROOT}.*.${kind}`),
+        deliver_policy: DeliverPolicy.All,
+      })
+      historyFeed = await consumer.consume()
+      if (closed) return void (await historyFeed.close().catch(() => undefined))
+      for await (const m of historyFeed) {
+        try {
+          history.apply(m.json<AgentEvent>())
+        } catch {
+          continue
+        }
+        onChange()
+      }
+    } catch (err) {
+      if (!closed) onError(`run history feed failed: ${message(err)}`)
     }
   })()
 
@@ -123,6 +162,8 @@ export async function openMonitorSource(options: MonitorSourceOptions = {}): Pro
   return {
     url,
     rows: () => [...rowMap.values()],
+    registryReady: () => ready,
+    history: () => history,
     selected: () => selectedSid,
     activity: () => log,
     select(sid) {
@@ -139,7 +180,9 @@ export async function openMonitorSource(options: MonitorSourceOptions = {}): Pro
       if (closed) return
       closed = true
       generation++
+      clearTimeout(readyTimer)
       watcher.stop()
+      await historyFeed?.close().catch(() => undefined)
       await stopConsumer()
       await nc.close().catch(() => undefined)
     },

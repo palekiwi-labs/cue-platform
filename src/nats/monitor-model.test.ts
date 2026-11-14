@@ -5,9 +5,14 @@ import {
   applyRegistryEntry,
   formatActivity,
   formatAge,
-  formatRow,
-  sortRows,
-  visibleRows,
+  formatRun,
+  groupRuns,
+  parseRunId,
+  RunHistory,
+  runCost,
+  runModel,
+  runNote,
+  runViews,
 } from "./monitor-model"
 
 const NOW = 1_000_000_000
@@ -56,46 +61,94 @@ describe("applyRegistryEntry", () => {
   })
 })
 
-describe("rows", () => {
-  test("active states first, then most recent", () => {
-    const sorted = sortRows([
-      row({ sid: "idle-new", state: "idle", updated_at: NOW }),
-      row({ sid: "busy-old", state: "busy", updated_at: NOW - 5000 }),
-      row({ sid: "err", state: "error", updated_at: NOW - 1000 }),
-      row({ sid: "idle-old", state: "idle", updated_at: NOW - 2000 }),
-    ])
-    expect(sorted.map((r) => r.sid)).toEqual(["err", "busy-old", "idle-new", "idle-old"])
+const B1 = "20261115-100000-aaaaaa"
+const B2 = "20261115-110000-bbbbbb"
+
+function runEv(sid: string, kind: AgentEvent["kind"], fields: Record<string, unknown> = {}): AgentEvent {
+  return { v: 1, ts: NOW - 30_000, sid, host: "h", kind, seq: ++seq, ...fields }
+}
+
+describe("runs", () => {
+  test("parseRunId splits batch, agent and position", () => {
+    expect(parseRunId(`${B1}-code-reviewer-2`)).toEqual({
+      runId: `${B1}-code-reviewer-2`,
+      batch: B1,
+      agent: "code-reviewer",
+      pos: 2,
+    })
+    expect(parseRunId("interactive-session")).toBeUndefined()
   })
 
-  test("by default only delegated runs; show-all includes every session", () => {
-    const rows = [row({ sid: "a", run_id: "run-a" }), row({ sid: "b" })]
-    expect(visibleRows(rows, { showAll: false, now: NOW }).map((r) => r.sid)).toEqual(["a"])
-    expect(visibleRows(rows, { showAll: true, now: NOW }).map((r) => r.sid).sort()).toEqual(["a", "b"])
+  test("derives finished statuses from history", () => {
+    const h = new RunHistory()
+    const done = `${B1}-builder-0`
+    const failed = `${B1}-builder-1`
+    const aborted = `${B1}-builder-2`
+    const lost = `${B1}-builder-3`
+    const recovered = `${B1}-builder-4`
+    for (const sid of [done, failed, aborted, lost, recovered]) {
+      h.apply(runEv(sid, "start", { reason: "startup", cwd: "/w", model: "m1" }))
+      h.apply(runEv(sid, "input", { source: "user", preview: "go", model: "m2", context: "c" }))
+    }
+    h.apply(runEv(failed, "error", { message: "rate limited" }))
+    h.apply(runEv(failed, "settled", { aborted: false }))
+    h.apply(runEv(aborted, "settled", { aborted: true }))
+    h.apply(runEv(recovered, "error", { message: "x" }))
+    h.apply(runEv(recovered, "input", { source: "user", preview: "again" }))
+    for (const sid of [done, failed, aborted, recovered]) h.apply(runEv(sid, "end", { reason: "quit", turns: 2, cost: 0.1 }))
+    h.apply(runEv("plain-session", "start", { reason: "startup" }))
+
+    const views = runViews(h, [], NOW)
+    const status = Object.fromEntries(views.map((v) => [v.id.runId, v.status]))
+    expect(status).toEqual({ [done]: "done", [failed]: "failed", [aborted]: "aborted", [lost]: "lost", [recovered]: "done" })
+    const d = views.find((v) => v.id.runId === done)!
+    expect([d.live, runModel(d), d.record?.context, d.record?.cwd, runCost(d)]).toEqual([false, "m2", "c", "/w", 0.1])
+    expect(runNote(views.find((v) => v.id.runId === failed)!)).toBe("rate limited")
   })
 
-  test("stale rows are hidden", () => {
-    const rows = [
-      row({ sid: "fresh", run_id: "r1", updated_at: NOW - 119_000 }),
-      row({ sid: "stale", run_id: "r2", updated_at: NOW - 121_000 }),
-    ]
-    expect(visibleRows(rows, { showAll: true, now: NOW }).map((r) => r.sid)).toEqual(["fresh"])
-  })
-
-  test("formatRow shows state, id, model, turns, cost, age and last tool", () => {
-    const line = formatRow(
-      row({ state: "busy", run_id: "run-1", model: "opus", turns: 4, cost: 0.12345, last_tool: "bash ls" }),
+  test("a live registry row wins over history; stale rows and interactive sessions are dropped", () => {
+    const h = new RunHistory()
+    const a = `${B1}-builder-0`
+    h.apply(runEv(a, "start", { reason: "startup" }))
+    const views = runViews(
+      h,
+      [
+        row({ sid: a, run_id: a, state: "busy", last_tool: "bash ls" }),
+        row({ sid: `${B2}-explore-0`, run_id: `${B2}-explore-0`, updated_at: NOW - 121_000 }),
+        row({ sid: "interactive" }),
+      ],
       NOW,
     )
-    expect(line).toContain("busy")
-    expect(line).toContain("run-1")
-    expect(line).toContain("opus")
-    expect(line).toContain("t4")
-    expect(line).toContain("$0.123")
-    expect(line).toContain("1m")
-    expect(line.endsWith("bash ls")).toBe(true)
-    expect(formatRow(row({ sid: "only-sid" }), NOW)).toContain("only-sid")
+    expect(views.map((v) => [v.id.runId, v.status, v.live])).toEqual([[a, "busy", true]])
+    expect(formatRun(views[0]!, NOW)).toContain("bash ls")
   })
 
+  test("groups by batch newest first, runs by position; running keeps live runs", () => {
+    const h = new RunHistory()
+    for (const sid of [`${B1}-b-1`, `${B1}-a-0`, `${B2}-x-0`]) {
+      h.apply(runEv(sid, "start", { reason: "startup" }))
+      h.apply(runEv(sid, "end", { reason: "quit" }))
+    }
+    const views = runViews(h, [row({ sid: `${B1}-c-2`, run_id: `${B1}-c-2`, state: "idle" })], NOW)
+    const all = groupRuns(views, false).map((b) => [b.batch, b.runs.map((r) => r.id.pos)])
+    expect(all).toEqual([
+      [B2, [0]],
+      [B1, [0, 1, 2]],
+    ])
+    expect(groupRuns(views, true).map((b) => [b.batch, b.runs.map((r) => r.id.runId)])).toEqual([[B1, [`${B1}-c-2`]]])
+  })
+
+  test("formatRun shows status, agent-pos, model, turns, cost and age", () => {
+    const h = new RunHistory()
+    const id = `${B1}-builder-3`
+    h.apply(runEv(id, "start", { reason: "startup", model: "opus" }))
+    h.apply(runEv(id, "end", { reason: "quit", turns: 4, cost: 0.12345 }))
+    const line = formatRun(runViews(h, [], NOW)[0]!, NOW)
+    for (const part of ["done", "builder-3", "opus", "t4", "$0.123", "30s"]) expect(line).toContain(part)
+  })
+})
+
+describe("format", () => {
   test("formatAge", () => {
     expect(formatAge(5_000)).toBe("5s")
     expect(formatAge(125_000)).toBe("2m")
