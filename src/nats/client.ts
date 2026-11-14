@@ -1,4 +1,4 @@
-import { connect, type NatsConnection } from "@nats-io/transport-node"
+import { connect, headers as natsHeaders, type NatsConnection } from "@nats-io/transport-node"
 
 export const DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 export const NATS_URL_ENV = "CUE_NATS_URL"
@@ -30,6 +30,8 @@ export interface NatsClientOptions {
   retryMaxMs?: number
   /** Timeout for draining on `close()`, after which the connection is closed. */
   drainTimeoutMs?: number
+  /** Called with each new connection once established. Errors are ignored. */
+  onConnect?: (nc: NatsConnection) => void | Promise<void>
 }
 
 /**
@@ -42,9 +44,10 @@ export interface NatsClient {
   /**
    * Publish `data` on `subject`. Strings and byte arrays are sent as-is,
    * anything else is JSON-encoded. Returns synchronously and never throws;
-   * returns false when the message was dropped.
+   * returns false when the message was dropped. `headers` are sent as
+   * NATS message headers.
    */
-  publish(subject: string, data?: unknown): boolean
+  publish(subject: string, data?: unknown, headers?: Record<string, string>): boolean
   /** Current connection state. */
   state(): NatsClientState
   /** True when publishing reaches the server. */
@@ -153,6 +156,12 @@ export function createNatsClient(options: NatsClientOptions = {}): NatsClient {
     current = "connected"
     retryDelay = retryInitialMs
     void watch(conn)
+    const hook = options.onConnect
+    if (hook) {
+      void Promise.resolve()
+        .then(() => hook(conn))
+        .catch(() => undefined)
+    }
     conn.closed().then(
       () => onClosed(conn),
       () => onClosed(conn),
@@ -165,12 +174,18 @@ export function createNatsClient(options: NatsClientOptions = {}): NatsClient {
     attempt = tryConnect()
   }
 
-  function publish(subject: string, data?: unknown): boolean {
+  function publish(subject: string, data?: unknown, headers?: Record<string, string>): boolean {
     if (current === "idle") start()
     const conn = nc
     if (current !== "connected" || !conn) return drop()
     try {
-      conn.publish(subject, encode(data))
+      if (headers) {
+        const h = natsHeaders()
+        for (const [k, v] of Object.entries(headers)) h.set(k, v)
+        conn.publish(subject, encode(data), { headers: h })
+      } else {
+        conn.publish(subject, encode(data))
+      }
       return true
     } catch {
       return drop()
