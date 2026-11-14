@@ -242,7 +242,8 @@ export class SessionTracker {
   input(text: string, source: string): AgentEvent {
     this.row.state = "busy"
     delete this.row.error
-    return this.event("input", { source, preview: truncate(text, INPUT_PREVIEW_CHARS) })
+    const { model, context } = this.row
+    return this.event("input", { source, preview: truncate(text, INPUT_PREVIEW_CHARS), model, context })
   }
 
   turnStart(turn: number): AgentEvent {
