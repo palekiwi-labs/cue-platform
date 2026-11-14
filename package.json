@@ -4,7 +4,7 @@
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./src/pi/index.ts", "./extensions/footer.ts", "./extensions/tmux-state.ts", "./extensions/session-describe.ts"],
+    "extensions": ["./src/pi/index.ts", "./src/nats/index.ts", "./extensions/footer.ts", "./extensions/tmux-state.ts", "./extensions/session-describe.ts"],
     "skills": ["./skills/"],
     "prompts": ["./prompts/pi/"]
   },
@@ -26,6 +26,8 @@
     "typescript": "*"
   },
   "dependencies": {
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/kv": "3.4.0",
     "@nats-io/transport-node": "^3.4.0"
   }
 }
