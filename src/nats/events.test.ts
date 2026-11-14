@@ -118,15 +118,6 @@ describe("SessionTracker", () => {
     expect(tr.row.error).toBeUndefined()
   })
 
-  test("waiting-input toggles back to busy", () => {
-    const { tr } = tracker()
-    tr.input("x", "user")
-    tr.waitingInput(true)
-    expect(tr.row.state).toBe("waiting-input")
-    tr.waitingInput(false)
-    expect(tr.row.state).toBe("busy")
-  })
-
   test("message ids differ across processes resuming one session", () => {
     let t = 1
     const a = new SessionTracker({ sid: "s", host: "h" }, () => t)

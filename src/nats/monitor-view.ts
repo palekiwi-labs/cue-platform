@@ -11,7 +11,6 @@ export type OpenSource = (callbacks: Pick<MonitorSourceOptions, "onChange" | "on
 
 const STATE_COLOR: Record<AgentState, "warning" | "accent" | "error" | "muted"> = {
   busy: "warning",
-  "waiting-input": "accent",
   error: "error",
   idle: "muted",
 }

@@ -62,10 +62,9 @@ describe("rows", () => {
       row({ sid: "idle-new", state: "idle", updated_at: NOW }),
       row({ sid: "busy-old", state: "busy", updated_at: NOW - 5000 }),
       row({ sid: "err", state: "error", updated_at: NOW - 1000 }),
-      row({ sid: "wait", state: "waiting-input", updated_at: NOW - 9000 }),
       row({ sid: "idle-old", state: "idle", updated_at: NOW - 2000 }),
     ])
-    expect(sorted.map((r) => r.sid)).toEqual(["err", "busy-old", "wait", "idle-new", "idle-old"])
+    expect(sorted.map((r) => r.sid)).toEqual(["err", "busy-old", "idle-new", "idle-old"])
   })
 
   test("by default only delegated runs; show-all includes every session", () => {

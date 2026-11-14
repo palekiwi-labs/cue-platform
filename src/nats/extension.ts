@@ -165,18 +165,6 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
     if (tracker) emit(tracker, tracker.toolEnd(event.toolCallId, event.toolName, event.isError, event.durationMs))
   })
 
-  pi.on("ui_prompt_start", () => {
-    if (!tracker) return
-    tracker.waitingInput(true)
-    putRow(tracker)
-  })
-
-  pi.on("ui_prompt_end", () => {
-    if (!tracker) return
-    tracker.waitingInput(false)
-    putRow(tracker)
-  })
-
   pi.on("agent_settled", (event) => {
     if (tracker) emitAndPut(tracker.settled(event.aborted))
   })

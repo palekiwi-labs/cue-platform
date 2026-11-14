@@ -25,7 +25,7 @@ export function applyRegistryEntry(rows: Map<string, RegistryRow>, entry: Regist
   }
 }
 
-const ACTIVE: ReadonlySet<AgentState> = new Set(["busy", "waiting-input", "error"])
+const ACTIVE: ReadonlySet<AgentState> = new Set(["busy", "error"])
 
 /** Active rows first, then most recently updated. */
 export function sortRows(rows: Iterable<RegistryRow>): RegistryRow[] {

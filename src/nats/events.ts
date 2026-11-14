@@ -23,7 +23,7 @@ export type EventKind =
   | "compact"
   | "end"
 
-export type AgentState = "busy" | "idle" | "waiting-input" | "error"
+export type AgentState = "busy" | "idle" | "error"
 
 /** Identity of one live pi session, shared by its events and registry row. */
 export interface AgentIdentity {
@@ -289,12 +289,6 @@ export class SessionTracker {
   settled(aborted: boolean): AgentEvent {
     if (this.row.state !== "error") this.row.state = "idle"
     return this.event("settled", { aborted })
-  }
-
-  waitingInput(waiting: boolean): void {
-    if (waiting) this.row.state = "waiting-input"
-    else if (this.row.state === "waiting-input") this.row.state = "busy"
-    this.touch()
   }
 
   compact(reason: string): AgentEvent {
