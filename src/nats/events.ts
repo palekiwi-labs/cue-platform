@@ -84,8 +84,9 @@ export function sessionEventsFilter(sid: string): string {
   return `${EVENT_SUBJECT_ROOT}.${subjectToken(sid)}.>`
 }
 
-export function registrySubject(sid: string): string {
-  return `$KV.${REGISTRY_BUCKET}.${subjectToken(sid)}`
+export function registrySubject(sid: string, domain: string | undefined): string {
+  const prefix = domain ? `$JS.${domain}.API.` : ""
+  return `${prefix}$KV.${REGISTRY_BUCKET}.${subjectToken(sid)}`
 }
 
 const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{6}-[a-z0-9-]+-\d+$/

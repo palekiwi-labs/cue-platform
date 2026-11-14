@@ -23,8 +23,12 @@ function tracker(sid = "s1") {
 describe("subjects", () => {
   test("event subject and registry key sanitise the sid", () => {
     expect(eventSubject("a.b*c", "turn_end")).toBe("agent.evt.a_b_c.turn_end")
-    expect(registrySubject("019a-ff")).toBe("$KV.agents.019a-ff")
     expect(subjectToken("")).toBe("_")
+  })
+
+  test("registry subject goes through the domain api prefix when a domain is set", () => {
+    expect(registrySubject("019a-ff", "pale")).toBe("$JS.pale.API.$KV.agents.019a-ff")
+    expect(registrySubject("019a-ff", undefined)).toBe("$KV.agents.019a-ff")
   })
 
   test("js domain defaults to pale and can be cleared", () => {

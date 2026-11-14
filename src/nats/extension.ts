@@ -107,7 +107,7 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
   }
 
   function putRow(t: SessionTracker): void {
-    send(registrySubject(t.sid), JSON.stringify(t.row))
+    send(registrySubject(t.sid, domain), JSON.stringify(t.row))
   }
 
   function emitAndPut(event: AgentEvent | undefined): void {
@@ -198,7 +198,7 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
     const c = client
     if (t && c) {
       emit(t, t.end(event.reason))
-      c.publish(registrySubject(t.sid), "", { "KV-Operation": "DEL" })
+      c.publish(registrySubject(t.sid, domain), "", { "KV-Operation": "DEL" })
     }
     if (c && !options.client) {
       client = undefined
