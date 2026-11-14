@@ -60,6 +60,7 @@
           packages = [
             platform.pi
             pkgs.bun
+            pkgs.nats-server
             pkgs.nodejs
             pkgs.python3
             pkgs.tmux
