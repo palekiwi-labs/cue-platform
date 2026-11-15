@@ -59,6 +59,14 @@ describe("formatReceipt", () => {
     expect(text).toBe("## explore - completed (6 turns, 41s, $0.0040)\n\nfound it")
   })
 
+  test("succeeded supervisor run shows response verbatim", () => {
+    const text = formatReceipt({
+      batch_id: "b",
+      runs: [{ ...base, agent: "explore", outcome: "succeeded", response: "found it", error: null }],
+    })
+    expect(text).toBe("## explore - succeeded (6 turns, 41s, $0.0040)\n\nfound it")
+  })
+
   test("header names the resolved model alias", () => {
     const text = formatReceipt(
       {

@@ -26,6 +26,7 @@ function assistant(message: Record<string, unknown>) {
     type: "message_end",
     message: {
       role: "assistant",
+      provider: "google",
       model: "gemini-3.8-flash",
       usage: { input: 100, output: 10, cacheRead: 5, cacheWrite: 0, totalTokens: 115, cost: { total: 0.25 } },
       ...message,
@@ -65,7 +66,7 @@ describe("deriveResult", () => {
     expect(result.partial).toBe(false);
     expect(result.text).toBe("PONG");
     expect(result.stopReason).toBe("stop");
-    expect(result.model).toBe("gemini-3.8-flash");
+    expect(result.model).toBe("google/gemini-3.8-flash");
     expect(result.turns).toBe(2);
     expect(result.usage).toEqual({ input: 200, output: 20, cacheRead: 10, cacheWrite: 0, totalTokens: 230, cost: 0.5 });
   });

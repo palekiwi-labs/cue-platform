@@ -107,9 +107,9 @@ describe("receipts", () => {
     cancel: null,
   }
 
-  test("a succeeded run reads as completed with its response", () => {
+  test("a succeeded run keeps the supervisor outcome and its response", () => {
     const receipt = toReceipt("reviewer", { runId: "r", state: "derived", result }, 5)
-    expect(receipt).toMatchObject({ outcome: "completed", response: "done", turns: 2, cost_usd: 0.01 })
+    expect(receipt).toMatchObject({ outcome: "succeeded", response: "done", turns: 2, cost_usd: 0.01 })
   })
 
   test("a recorded result or an unknown run is terminal", () => {

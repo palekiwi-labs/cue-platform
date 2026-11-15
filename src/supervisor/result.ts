@@ -101,7 +101,9 @@ function summarizeEvents(events: string): AssistantSummary {
     summary.turns++;
     summary.stopReason = typeof message.stopReason === "string" ? message.stopReason : null;
     summary.error = typeof message.errorMessage === "string" ? message.errorMessage : null;
-    if (typeof message.model === "string") summary.model = message.model;
+    if (typeof message.model === "string") {
+      summary.model = typeof message.provider === "string" ? `${message.provider}/${message.model}` : message.model;
+    }
     const text = messageText(message.content);
     if (text !== null) summary.text = text;
     const usage = message.usage ?? {};

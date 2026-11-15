@@ -81,15 +81,6 @@ export function isTerminal(run: SupervisorRunState): boolean {
   return run.result !== null || run.state === "unknown"
 }
 
-const OUTCOME_LABEL: Record<string, string> = {
-  succeeded: "completed",
-  failed: "failed",
-  timed_out: "timed out",
-  cancelled: "cancelled",
-  launch_failed: "launch failed",
-  unknown: "unknown",
-}
-
 /** Map one supervisor run onto the receipt shape delegate already formats. */
 export function toReceipt(agent: string, run: SupervisorRunState, durationMs: number, model?: string): RunReceipt {
   const result = run.result
@@ -97,7 +88,7 @@ export function toReceipt(agent: string, run: SupervisorRunState, durationMs: nu
   return {
     agent,
     model: model ?? result?.model ?? null,
-    outcome: OUTCOME_LABEL[outcome] ?? outcome,
+    outcome,
     exit_code: result?.termination ? Number(result.termination.exitStatus) || null : null,
     duration_ms: durationMs,
     turns: result?.turns ?? 0,

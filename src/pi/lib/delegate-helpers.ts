@@ -166,7 +166,7 @@ export function formatReceipt(batch: BatchReceipt, roster?: Roster): string {
       const model = roster ? aliasFor(roster, run.model) : run.model
       const who = model ? `${run.agent}@${model}` : run.agent
       const lines = [`## ${who} - ${run.outcome} (${stats})`, ""]
-      if (run.outcome === "completed") {
+      if (run.outcome === "completed" || run.outcome === "succeeded") {
         lines.push(run.response.trim() || "(empty response)")
       } else {
         if (run.error) lines.push(`error: ${run.error}`)
