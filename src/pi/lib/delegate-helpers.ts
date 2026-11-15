@@ -12,6 +12,11 @@ export interface AgentInfo {
   description: string | null
   /** Ordered model allowlist (registry aliases); first is the default. */
   models: string[]
+  harness?: string
+  systemPrompt?: string | null
+  tools?: string[] | null
+  extensions?: string[]
+  isolated?: boolean
 }
 
 export interface ModelProfile {
@@ -59,6 +64,11 @@ export function parseAgentList(stdout: string): Roster {
       name: String(a.name),
       description: str(a.description),
       models: Array.isArray(a.models) ? a.models.map(String) : [],
+      harness: str(a.harness) ?? "pi",
+      systemPrompt: str(a.system_prompt),
+      tools: Array.isArray(a.tools) ? a.tools.map(String) : null,
+      extensions: Array.isArray(a.extensions) ? a.extensions.map(String) : [],
+      isolated: a.isolated === true,
     }
   })
   const models: Record<string, ModelProfile> = {}

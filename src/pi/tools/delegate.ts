@@ -11,11 +11,25 @@ import {
   parseAgentList,
   selectableAliases,
 } from "../lib/delegate-helpers"
+import { supervisorRoster } from "../lib/supervisor-client"
+import { delegateStatusTool, executeSupervisorDelegate, supervisorBackendSelected } from "./delegate-supervisor"
 
 const BINARY = "cue-agent"
 
-function makeParameters(names: string[], aliases: string[]) {
+function makeParameters(names: string[], aliases: string[], supervisor = false) {
   return Type.Object({
+    ...(supervisor
+      ? {
+          background: Type.Optional(
+            Type.Boolean({
+              description:
+                "Return at once with the batch id instead of waiting; the " +
+                "runs keep going without you. Collect or cancel them later " +
+                "with delegate-status.",
+            }),
+          ),
+        }
+      : {}),
     tasks: Type.Array(
       Type.Object({
         agent: Type.Unsafe<string>({
@@ -83,10 +97,13 @@ function makeParameters(names: string[], aliases: string[]) {
     ),
     context: Type.Optional(
       Type.String({
-        description:
-          "Optional canonical cue context address '<org>/<repo>/<context>' " +
-          "(must already exist) to capture each run as a trace. Omit to " +
-          "skip capture.",
+        description: supervisor
+          ? "Optional canonical cue context address '<org>/<repo>/<context>' " +
+            "the agents work in (their CUE_CONTEXT). Defaults to this " +
+            "session's active context."
+          : "Optional canonical cue context address '<org>/<repo>/<context>' " +
+            "(must already exist) to capture each run as a trace. Omit to " +
+            "skip capture.",
       }),
     ),
   })
@@ -133,9 +150,12 @@ function runBatch(
 }
 
 export function delegateTool(cwd: string = process.cwd()) {
-  const { roster, error } = loadRoster(cwd)
+  const supervisor = supervisorBackendSelected()
+  const loaded = loadRoster(cwd)
+  const roster = supervisor ? supervisorRoster(loaded.roster) : loaded.roster
+  const error = loaded.error
   const names = roster.agents.map((a) => a.name)
-  const parameters = makeParameters(names, selectableAliases(roster))
+  const parameters = makeParameters(names, selectableAliases(roster), supervisor)
   let description = buildDescription(roster)
   if (error) description += `\n\n(cue-agent unavailable at load: ${error})`
 
@@ -147,7 +167,26 @@ export function delegateTool(cwd: string = process.cwd()) {
       "Delegate self-contained prompts to named agents, run in parallel; " +
       "keeps your own context small.",
     parameters,
-    async execute(_toolCallId, args, signal, _onUpdate, ctx) {
+    async execute(toolCallId, args, signal, _onUpdate, ctx) {
+      if (supervisor) {
+        return executeSupervisorDelegate(
+          toolCallId,
+          {
+            tasks: args.tasks.map((t) => ({
+              agent: t.agent,
+              prompt: t.prompt,
+              cwd: t.dir && !t.worktree ? resolve(ctx.cwd, t.dir) : ctx.cwd,
+              ...(t.model ? { model: t.model } : {}),
+              ...(t.worktree ? { worktree: t.worktree === true ? { base: "HEAD" } : t.worktree } : {}),
+            })),
+            ...(args.context ? { context: args.context } : {}),
+            background: (args as { background?: boolean }).background === true,
+          },
+          roster,
+          signal,
+          ctx,
+        )
+      }
       // Per-task overrides: model (cue-agent checks it against the agent
       // allowlist), dir (child cwd, so the child pi loads the target repo's
       // AGENTS.md), and worktree (pins the child to a fresh ephemeral
@@ -190,4 +229,10 @@ export function delegateTool(cwd: string = process.cwd()) {
     },
   }
   return tool
+}
+
+/** The delegate-status tool, present only when the supervisor backend is selected. */
+export function supervisorStatusTool(cwd: string = process.cwd()) {
+  if (!supervisorBackendSelected()) return null
+  return delegateStatusTool(supervisorRoster(loadRoster(cwd).roster))
 }
