@@ -61,7 +61,7 @@ export function tmuxWindowArgs(name: string, cwd: string, command: string): stri
 }
 
 /** Run a shell command in a new tmux window; error text on failure. */
-function tmuxWindow(name: string, cwd: string, command: string): string | undefined {
+export function tmuxWindow(name: string, cwd: string, command: string): string | undefined {
   if (!process.env.TMUX) return "not inside tmux"
   spawn("tmux", tmuxWindowArgs(name, cwd, command), {
     detached: true,

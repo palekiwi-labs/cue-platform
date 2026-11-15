@@ -33,16 +33,18 @@ function setup(
   let loads = 0
   let closed = false
   const calls: number[] = []
+  const stations: number[] = []
   const terminal = { rows: 30 }
   const tui = { requestRender: () => { renders++ }, terminal } as unknown as TUI
   const deps = {
     view: "repo", orgs: ["o"], localRepo: "o/r", target: "here", previews: new PreviewCache(),
     load: async () => { loads++; return { prs: [pr(2), pr(1)], viewer: "author", failed: [], truncated: false } },
     links: async () => new Map(),
+    openStation: (p: Pr) => { stations.push(p.number); return undefined },
     detail: (p: Pr) => { calls.push(p.number); return loadDetail(p) },
   } as unknown as PrDeps
   const browser = new Browser(tui, theme, kb as AgentKeybindingsManager, deps, () => { closed = true })
-  return { browser, calls, terminal, renders: () => renders, loads: () => loads, closed: () => closed }
+  return { browser, calls, stations, terminal, renders: () => renders, loads: () => loads, closed: () => closed }
 }
 
 describe("comment rendering", () => {
@@ -324,5 +326,16 @@ describe("PR browser preview", () => {
     s.browser.handleInput("no-match")
     expect(s.browser.render(80).join("\n")).toContain("Select a PR")
     expect(s.calls).toEqual([2])
+  })
+})
+
+describe("PR browser station key", () => {
+  test("alt+d opens the station on the selected PR", async () => {
+    const s = setup()
+    await tick()
+    s.browser.render(80)
+    s.browser.handleInput("\x1bd")
+    expect(s.stations).toEqual([2])
+    expect(s.browser.render(80).join("\n")).toContain("opened station on #2")
   })
 })
