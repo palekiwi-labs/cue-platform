@@ -1,6 +1,7 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Chunker } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
+import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
 import { SessionSpeechMode, type SpeechMode } from "./settings"
 
 /** Set in the turn summarizer's own pi, which must never speak. */
@@ -45,6 +46,7 @@ function textBlocks(message: SpokenMessage): { index: number; text: string }[] {
 
 export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSuccess"> {
   mode?: () => SpeechMode
+  publisher?: SpeechPublisher
 }
 
 /**
@@ -53,7 +55,7 @@ export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSucc
  * and stops speech on request or when a run is interrupted.
  */
 export class Speech {
-  readonly sender: SpeechSender
+  readonly sender: SpeechSender | NatsSpeechSender
   readonly setting: SessionSpeechMode | undefined
   private readonly mode: () => SpeechMode
   private muted = false
@@ -65,11 +67,14 @@ export class Speech {
   constructor(options: SpeechOptions = {}, setting?: SessionSpeechMode) {
     this.setting = setting
     this.mode = options.mode ?? (() => setting?.mode ?? "off")
-    this.sender = new SpeechSender({
+    const senderOptions = {
       ...options,
-      onFailure: (reason) => this.failed(reason),
+      onFailure: (reason: string) => this.failed(reason),
       onSuccess: () => (this.warned = false),
-    })
+    }
+    this.sender = speechTransport(options) === "nats"
+      ? new NatsSpeechSender(senderOptions, options.publisher)
+      : new SpeechSender(senderOptions)
   }
 
   /** Silence the bridge and mute the rest of the current assistant message. */
@@ -104,7 +109,11 @@ export class Speech {
   async shutdown(ctx: ModeContext): Promise<void> {
     this.runEnd()
     this.current = null
-    if (this.speaks(ctx)) await this.stop()
+    try {
+      if (this.speaks(ctx)) await this.stop()
+    } finally {
+      await this.sender.close()
+    }
   }
 
   /** An assistant message starts: unmute, and fix its speech mode for the whole message. */
@@ -141,10 +150,14 @@ export class Speech {
     this.current = null
     try {
       if (ctx.mode !== "tui" || this.muted) return
-      if (message.stopReason === "aborted" || message.stopReason === "error") return
+      if (message.stopReason === "aborted" || message.stopReason === "error") {
+        if (this.sender instanceof NatsSpeechSender && this.sender.used) void this.sender.stop()
+        return
+      }
       const current = started ?? this.newMessage(ctx)
       if (current.mode !== "live") return
       for (const { index, text } of textBlocks(message)) this.endBlock(current, index, text)
+      this.sender.complete(current.id)
     } catch {}
   }
 
@@ -184,6 +197,7 @@ export class Speech {
     if (chunks.length === 0 || this.muted) return
     if (this.mode() === "off") {
       this.muted = true
+      this.sender.complete(current.id)
       return
     }
     this.sender.say(chunks, current.id)
@@ -227,11 +241,11 @@ export function registerSpeech(pi: ExtensionAPI, options: SpeechOptions = {}): S
   pi.on("message_end", (event, ctx) => speech.messageEnd(event.message, ctx))
   pi.on("session_shutdown", (_event, ctx) => speech.shutdown(ctx))
   pi.registerCommand(SPEECH_STOP_COMMAND, {
-    description: "Stop spoken replies and drop what is queued",
+    description: "Stop global speech and drop this message's remaining speech",
     handler: async () => speech.stop(),
   })
   pi.registerShortcut(SPEECH_STOP_SHORTCUT, {
-    description: "Stop spoken replies",
+    description: "Stop global speech",
     handler: () => {
       void speech.stop()
     },

@@ -46,6 +46,7 @@ export function post(baseUrl: string, path: string, body: string, timeoutMs = RE
 }
 
 export interface SenderOptions {
+  transport?: "nats" | "http"
   url?: string
   timeoutMs?: number
   /** Called when a /say fails; the rest of that message has been dropped. */
@@ -103,6 +104,12 @@ export class SpeechSender {
     this.pending = []
     if (this.inFlight) this.stopAfterFlight = true
     return this.sendStop()
+  }
+
+  complete(_message: number): void {}
+
+  async close(): Promise<void> {
+    await this.settled()
   }
 
   /** Resolves once nothing is pending or in flight, including stops. */
