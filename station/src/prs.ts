@@ -35,6 +35,7 @@ export class PrsView implements Component {
   private prs: PrSummary[] = [];
   private me = "";
   private loaded = false;
+  private note = "";
   private cursor = 0;
   private offset = 0;
   private lastHeight = 20;
@@ -44,6 +45,10 @@ export class PrsView implements Component {
   }
 
   invalidate(): void {}
+
+  setNote(note: string): void {
+    this.note = note;
+  }
 
   setPrs(prs: PrSummary[], me: string): void {
     this.prs = prs;
@@ -124,7 +129,8 @@ export class PrsView implements Component {
     out.push(C.titleBg + fit(` ${C.text}${BOLD}Pull requests`, width) + RESET);
     const reqCount = this.prs.filter((p) => this.me !== "" && p.requested.includes(this.me)).length;
     const meta = ` ${C.dim}${this.opts.repo}   ${C.text}${this.prs.length} open` +
-      (this.me !== "" ? `  ${C.mod}● ${reqCount} requesting ${this.me}` : "");
+      (this.me !== "" ? `  ${C.mod}● ${reqCount} requesting ${this.me}` : "") +
+      (this.note !== "" ? `  ${C.dim}${this.note}` : "");
     out.push(C.barBg + fit(meta, width) + RESET);
 
     if (this.cursor < this.offset) this.offset = this.cursor;

@@ -3,9 +3,10 @@ import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } fro
 import { ChangesView } from "./changes.js";
 import { run, spawnAsync } from "./git.js";
 import { PrsView } from "./prs.js";
+import { type PruneResult, pruneReviews } from "./prune.js";
 import { backdrop, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
-import { fromDemo, fromPr, fromRange, listPrs, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
+import { fromDemo, fromPr, fromRange, listPrs, PR_LIMIT, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { loadFolds, saveFolds } from "./state.js";
 
 function usage(code: number): never {
@@ -15,6 +16,7 @@ function usage(code: number): never {
   out("       station branch           changes on the current branch vs its base");
   out("       station pr <number>      changes of a GitHub pull request");
   out("       station <base>..<head>   changes in a commit range");
+  out("       station clean            remove review worktrees of closed PRs");
   out("       station demo             built-in demo diff");
   process.exit(code);
 }
@@ -119,6 +121,24 @@ function showReview(review: Review): void {
   router.tui.start();
 }
 
+function pruneNote(r: PruneResult): string {
+  const parts: string[] = [];
+  if (r.removed.length > 0) parts.push(`pruned ${r.removed.length} review worktrees`);
+  if (r.kept.length > 0) parts.push(`kept dirty: ${r.kept.map((n) => `#${n}`).join(" ")}`);
+  return parts.join("  ");
+}
+
+async function clean(): Promise<void> {
+  const repo = prRepo(process.cwd());
+  if (repo === null) throw new Error("not in a GitHub repository");
+  const prs = await listPrs(repo);
+  if (prs.length >= PR_LIMIT) throw new Error(`more than ${PR_LIMIT} open PRs, refusing to prune`);
+  const r = await pruneReviews(repo, new Set(prs.map((p) => p.number)));
+  for (const n of r.removed) console.log(`removed #${n}`);
+  for (const n of r.kept) console.log(`kept #${n} (uncommitted changes)`);
+  if (r.removed.length + r.kept.length === 0) console.log("nothing to clean");
+}
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -142,6 +162,14 @@ function showPrs(repo: string): void {
       me = login;
       list.setPrs(prs, me);
       router.hidePopup();
+      if (prs.length < PR_LIMIT) {
+        void pruneReviews(repo, new Set(prs.map((p) => p.number)))
+          .then((r) => {
+            list.setNote(pruneNote(r));
+            router.tui.requestRender();
+          })
+          .catch(() => {});
+      }
     } catch (e) {
       router.showPopup({ title: "pull requests", text: errText(e), error: true, footer: "any key" }, true);
     }
@@ -185,6 +213,10 @@ async function resolve(args: string[]): Promise<Review | { prs: string }> {
     const repo = prRepo(process.cwd());
     if (repo === null) throw new Error("not in a GitHub repository");
     return { prs: repo };
+  }
+  if (cmd === "clean" && arg === undefined) {
+    await clean();
+    process.exit(0);
   }
   if (cmd === "demo" && arg === undefined) return fromDemo();
   if (cmd === "pr" && arg !== undefined && /^\d+$/.test(arg)) return fromPr(process.cwd(), arg);

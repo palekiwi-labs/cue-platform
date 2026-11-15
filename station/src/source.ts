@@ -76,6 +76,8 @@ export function prRepo(cwd: string): string | null {
   }
 }
 
+export const PR_LIMIT = 200;
+
 export async function listPrs(repo: string): Promise<PrSummary[]> {
   const out = await spawnAsync(
     "gh",
@@ -83,7 +85,7 @@ export async function listPrs(repo: string): Promise<PrSummary[]> {
       "pr",
       "list",
       "--limit",
-      "100",
+      String(PR_LIMIT),
       "--json",
       "number,title,author,headRefName,isDraft,updatedAt,reviewDecision,reviewRequests",
     ],
