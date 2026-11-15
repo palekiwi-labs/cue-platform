@@ -7,9 +7,10 @@ import { serveNats } from "./nats";
 import { launchBatch, waitForResults } from "./run";
 import { parseBatchSpec, SpecError } from "./spec";
 import { stateRoot } from "./store";
+import { submitCommand } from "./submit";
 
 const USAGE =
-  "usage: cue-supervisor run [--detach] <spec.json> | cancel run|batch <id> | daemon | reconcile | finalize <run-dir>";
+  "usage: cue-supervisor run [--detach] <spec.json> | submit --wait --spec <cue-agent-spec.json> | cancel run|batch <id> | daemon | reconcile | finalize <run-dir>";
 
 function which(name: string): string {
   const path = Bun.which(name);
@@ -81,6 +82,9 @@ async function main(argv: string[]): Promise<number> {
       process.off("SIGINT", stop);
     }
     return 0;
+  }
+  if (command === "submit" && arg === "--wait" && extra === "--spec" && argv[3] && argv.length === 4) {
+    return submitCommand(argv[3]);
   }
   if (command === "reconcile") {
     console.log(JSON.stringify(reconcile(stateRoot()), null, 2));

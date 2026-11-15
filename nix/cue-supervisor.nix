@@ -1,9 +1,26 @@
 { pkgs }:
 let
   source = builtins.path {
-    path = ../src/supervisor;
+    path = ../src;
     name = "cue-supervisor-source";
-    filter = path: _: !(pkgs.lib.hasSuffix ".test.ts" path);
+    filter =
+      path: type:
+      let
+        rel = pkgs.lib.removePrefix (toString ../src + "/") (toString path);
+        clientFiles = [
+          "pi/lib/cue-agent-compat.ts"
+          "pi/lib/delegate-helpers.ts"
+          "pi/lib/supervisor-client.ts"
+          "pi/lib/supervisor-nats.ts"
+        ];
+      in
+      !(pkgs.lib.hasSuffix ".test.ts" rel)
+      && (
+        rel == "supervisor"
+        || pkgs.lib.hasPrefix "supervisor/" rel
+        || (type == "directory" && (rel == "pi" || rel == "pi/lib"))
+        || builtins.elem rel clientFiles
+      );
   };
   npm =
     name: version: hash:
@@ -34,7 +51,7 @@ let
       pkgs.lib.mapAttrsToList (name: path: "cp -R ${path} node_modules/${name}") dependencies
     )}
     cp -R ${source} src
-    bun build --target=bun src/cli.ts --outfile=$out/cli.js
+    bun build --target=bun src/supervisor/cli.ts --outfile=$out/cli.js
   '';
 in
 pkgs.writeShellApplication {

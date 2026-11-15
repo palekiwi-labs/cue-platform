@@ -56,6 +56,13 @@ describe("resolveRun", () => {
     expect(resolveRun({ ...task, model: "bare" }, roster, "c").agent?.thinking).toBeUndefined()
   })
 
+  test("task overrides replace system prompt and thinking", () => {
+    const run = resolveRun({ ...task, systemPrompt: "Other.", thinking: "high" }, roster, "c")
+    expect(run.agent?.systemPrompt).toBe("Other.")
+    expect(run.agent?.thinking).toBe("high")
+    expect(() => resolveRun({ ...task, thinking: "huge" }, roster, "c")).toThrow("thinking huge")
+  })
+
   test("isolation, extensions and an empty tool list carry through", () => {
     expect(resolveRun({ ...task, agent: "summarizer" }, roster, "c").agent).toEqual({
       name: "summarizer",

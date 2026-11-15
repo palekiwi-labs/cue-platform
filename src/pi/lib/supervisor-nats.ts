@@ -1,6 +1,10 @@
 import { jetstream } from "@nats-io/jetstream"
 import { Kvm } from "@nats-io/kv"
 import { connect, type NatsConnection } from "@nats-io/transport-node"
+import { join } from "node:path"
+import type { RunResult } from "../../supervisor/result"
+import { batchesDir, readJsonIfExists, runsDir, stateRoot } from "../../supervisor/store"
+import type { SupervisorRunState } from "./supervisor-client"
 import { API_PREFIX, HEARTBEAT_BUCKET, HEARTBEAT_KEY, HEARTBEAT_TTL_MS } from "../../supervisor/api"
 
 export class SupervisorError extends Error {
@@ -83,4 +87,38 @@ export async function submitWithRetry(
     }
   }
   throw last
+}
+
+function localRun(runId: string): SupervisorRunState {
+  const result = readJsonIfExists<RunResult>(join(runsDir(stateRoot()), runId, "result.json"))
+  return { runId, state: result ? "derived" : "unknown", result }
+}
+
+/** Fetch run states, reading run files locally when a reply is too large. */
+export async function fetchRuns(
+  client: SupervisorClient,
+  operation: "status" | "result",
+  batchId: string,
+  runIds: string[],
+): Promise<SupervisorRunState[]> {
+  try {
+    const data = await client.request<{ runs: SupervisorRunState[] }>(operation, { kind: "batch", batchId })
+    return data.runs
+  } catch (error) {
+    if (!(error instanceof SupervisorError) || error.code !== "response_too_large") throw error
+  }
+  const ids = runIds.length
+    ? runIds
+    : (readJsonIfExists<{ runIds: string[] }>(join(batchesDir(stateRoot()), `${batchId}.json`))?.runIds ?? [])
+  const runs: SupervisorRunState[] = []
+  for (const runId of ids) {
+    try {
+      const data = await client.request<{ runs: SupervisorRunState[] }>(operation, { kind: "run", runId })
+      runs.push(data.runs[0])
+    } catch (error) {
+      if (!(error instanceof SupervisorError) || error.code !== "response_too_large") throw error
+      runs.push(localRun(runId))
+    }
+  }
+  return runs
 }

@@ -1,10 +1,7 @@
 import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { execFileSync } from "node:child_process"
-import { join } from "node:path"
 import { Type } from "typebox"
-import type { RunResult } from "../../supervisor/result"
 import type { RunSpec } from "../../supervisor/spec"
-import { batchesDir, readJsonIfExists, runsDir, stateRoot } from "../../supervisor/store"
 import { parseStatusAddress } from "../commands/context-current"
 import { currentContext } from "../lib/current-context"
 import { type Roster, formatReceipt } from "../lib/delegate-helpers"
@@ -17,7 +14,7 @@ import {
   resolveRun,
   toBatchReceipt,
 } from "../lib/supervisor-client"
-import { SupervisorError, type SupervisorClient, connectSupervisor, submitWithRetry } from "../lib/supervisor-nats"
+import { connectSupervisor, fetchRuns, submitWithRetry } from "../lib/supervisor-nats"
 
 export const BACKEND_ENV = "CUE_DELEGATE_BACKEND"
 
@@ -54,40 +51,6 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
     }
     signal?.addEventListener("abort", done, { once: true })
   })
-}
-
-function localRun(runId: string): SupervisorRunState {
-  const result = readJsonIfExists<RunResult>(join(runsDir(stateRoot()), runId, "result.json"))
-  return { runId, state: result ? "derived" : "unknown", result }
-}
-
-/** Fetch run states, reading run files locally when a reply is too large. */
-export async function fetchRuns(
-  client: SupervisorClient,
-  operation: "status" | "result",
-  batchId: string,
-  runIds: string[],
-): Promise<SupervisorRunState[]> {
-  try {
-    const data = await client.request<{ runs: SupervisorRunState[] }>(operation, { kind: "batch", batchId })
-    return data.runs
-  } catch (error) {
-    if (!(error instanceof SupervisorError) || error.code !== "response_too_large") throw error
-  }
-  const ids = runIds.length
-    ? runIds
-    : (readJsonIfExists<{ runIds: string[] }>(join(batchesDir(stateRoot()), `${batchId}.json`))?.runIds ?? [])
-  const runs: SupervisorRunState[] = []
-  for (const runId of ids) {
-    try {
-      const data = await client.request<{ runs: SupervisorRunState[] }>(operation, { kind: "run", runId })
-      runs.push(data.runs[0])
-    } catch (error) {
-      if (!(error instanceof SupervisorError) || error.code !== "response_too_large") throw error
-      runs.push(localRun(runId))
-    }
-  }
-  return runs
 }
 
 export interface SupervisorDelegateArgs {

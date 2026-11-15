@@ -13,6 +13,8 @@ export interface DelegateTask {
   model?: string
   cwd: string
   worktree?: { base: string }
+  systemPrompt?: string
+  thinking?: string
 }
 
 export interface SupervisorRunState {
@@ -46,10 +48,14 @@ export function resolveRun(task: DelegateTask, roster: Roster, context: string):
   }
   const profile = roster.models[alias]
   if (!profile) throw new Error(`model alias ${alias} is not in the registry`)
-  const thinking = thinkingLevel(profile.thinking)
+  if (task.thinking !== undefined && thinkingLevel(task.thinking) === undefined) {
+    throw new Error(`thinking ${task.thinking} is not one of ${THINKING_LEVELS.join(", ")}`)
+  }
+  const thinking = thinkingLevel(task.thinking ?? profile.thinking)
+  const systemPrompt = task.systemPrompt ?? agent.systemPrompt
   const spec: AgentSpec = {
     name: agent.name,
-    ...(agent.systemPrompt ? { systemPrompt: agent.systemPrompt } : {}),
+    ...(systemPrompt ? { systemPrompt } : {}),
     ...(agent.tools != null ? { tools: agent.tools } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(agent.extensions && agent.extensions.length ? { extensions: agent.extensions } : {}),
