@@ -9,7 +9,14 @@ export type Graphql = (
 
 export const ghGraphql: Graphql = (query, variables, signal) =>
   new Promise((resolve, reject) => {
-    const args = ["api", "graphql", "-f", `query=${query}`];
+    const args = [
+      "api",
+      "graphql",
+      "--hostname",
+      "github.com",
+      "-f",
+      `query=${query}`,
+    ];
     for (const [key, value] of Object.entries(variables)) {
       if (key !== "credentialOwner") args.push("-f", `${key}=${value}`);
     }

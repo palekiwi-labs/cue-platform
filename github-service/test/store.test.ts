@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { SnapshotStore } from "../src/store.js";
 import { pr, repo } from "./fixtures.js";
 
@@ -71,5 +72,27 @@ test("canonical ordering does not create spurious revisions", () => {
     assert.throws(() => store.read("unconfigured/repo"));
   } finally {
     store.close();
+  }
+});
+
+test("SQLite write failure rolls back the snapshot and permits later recovery", () => {
+  const dir = mkdtempSync(join(tmpdir(), "github-rollback-"));
+  const path = join(dir, "snapshots.sqlite");
+  const store = new SnapshotStore(path, [repo]);
+  const fault = new DatabaseSync(path);
+  try {
+    store.replace(repo, "viewer", [pr], 10);
+    fault.exec(`CREATE TRIGGER fail_snapshot BEFORE UPDATE ON snapshots
+      WHEN NEW.payload != OLD.payload BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;`);
+    assert.throws(() => store.replace(repo, "viewer", [], 20));
+    assert.deepEqual(store.read(repo).prs, [pr]);
+    assert.equal(store.read(repo).snapshot.revision, 1);
+    assert.equal(store.read(repo).snapshot.fetchedAt, 10);
+    fault.exec("DROP TRIGGER fail_snapshot");
+    assert.equal(store.replace(repo, "viewer", [], 30).revision, 2);
+  } finally {
+    fault.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
