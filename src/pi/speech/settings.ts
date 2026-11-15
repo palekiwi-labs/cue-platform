@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
 
-export const SPEECH_MODES = ["off", "message", "live"] as const
+export const SPEECH_MODES = ["off", "live"] as const
 
-/** off; message: speak each assistant message once it ends; live: speak while it streams. */
+/** off; live: speak while the assistant message streams. */
 export type SpeechMode = (typeof SPEECH_MODES)[number]
 
 /** Custom session entry type recording each change of the session's speech mode. */

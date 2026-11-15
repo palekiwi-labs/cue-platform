@@ -16,11 +16,11 @@ describe("recordedSpeechMode", () => {
     expect(
       recordedSpeechMode([
         custom(SPEECH_ENTRY, { mode: "live" }),
-        custom("other", { mode: "message" }),
+        custom("other", { mode: "live" }),
         custom(SPEECH_ENTRY, { mode: "message" }),
         custom(SPEECH_ENTRY, { mode: "shout" }),
       ]),
-    ).toBe("message")
+    ).toBe("live")
     expect(recordedSpeechMode([custom(SPEECH_ENTRY, { mode: "live" }), custom(SPEECH_ENTRY, { mode: "off" })])).toBe(
       "off",
     )
@@ -61,7 +61,6 @@ describe("SessionSpeechMode", () => {
 describe("speechStatus", () => {
   test("names the mode only while speech is on", () => {
     expect(speechStatus("off")).toBeUndefined()
-    expect(speechStatus("message")).toBe("speech: message")
     expect(speechStatus("live")).toBe("speech: live")
   })
 })

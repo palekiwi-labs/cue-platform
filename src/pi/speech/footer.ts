@@ -6,7 +6,6 @@ interface MarkerTheme {
 }
 
 const COLORS: Record<Exclude<SpeechMode, "off">, "accent" | "warning"> = {
-  message: "accent",
   live: "warning",
 }
 

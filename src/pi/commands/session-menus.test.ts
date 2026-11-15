@@ -71,18 +71,18 @@ describe("sessionSettings", () => {
 })
 
 describe("speech setting", () => {
-  test("offers the three speech modes, starting at the session's mode", () => {
+  test("offers the two speech modes, starting at the session's mode", () => {
     const appended: unknown[] = []
     const session = new SessionSpeechMode({ appendEntry: (_t: string, d: unknown) => appended.push(d) } as never)
     const speech = sessionSettings(fakePi().pi, session).find((s) => s.label === "speech")!
     expect(speech.group).toBe("display")
-    expect(speech.values).toEqual(["off", "message", "live"])
+    expect(speech.values).toEqual(["off", "live"])
     expect(speech.values[speech.current]).toBe("off")
-    speech.apply(speech.values.indexOf("message"))
-    expect(session.mode).toBe("message")
-    expect(appended).toEqual([{ mode: "message" }])
+    speech.apply(speech.values.indexOf("live"))
+    expect(session.mode).toBe("live")
+    expect(appended).toEqual([{ mode: "live" }])
     const again = sessionSettings(fakePi().pi, session).find((s) => s.label === "speech")!
-    expect(again.values[again.current]).toBe("message")
+    expect(again.values[again.current]).toBe("live")
   })
 
   test("is not listed where the session cannot speak", () => {
