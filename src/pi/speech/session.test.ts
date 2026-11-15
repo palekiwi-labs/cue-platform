@@ -83,17 +83,17 @@ describe("per-session speech mode", () => {
     await s.reply(SENTENCE)
     await s.speech.sender.settled()
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`])
-    s.pick("message")
-    expect(s.statuses.get(SPEECH_STATUS_KEY)).toBe("speech: message")
     s.pick("off")
     expect(s.statuses.get(SPEECH_STATUS_KEY)).toBeUndefined()
+    s.pick("live")
+    expect(s.statuses.get(SPEECH_STATUS_KEY)).toBe("speech: live")
     expect(s.entries.length).toBe(3)
   })
 
   test("enabling one session leaves another session off", async () => {
     const a = await started([])
     const b = await started([])
-    a.pick("message")
+    a.pick("live")
     expect(b.speech.setting!.mode).toBe("off")
     expect(b.statuses.get(SPEECH_STATUS_KEY)).toBeUndefined()
     await b.reply(OTHER)
@@ -108,7 +108,8 @@ describe("per-session speech mode", () => {
   test("resume and reload restore the mode the session last recorded", async () => {
     const entries: Entry[] = []
     const first = await started(entries)
-    first.pick("message")
+    first.pick("live")
+    first.pick("off")
     first.pick("live")
     for (const reason of ["resume", "reload", "startup"]) {
       const again = await started(entries, reason)

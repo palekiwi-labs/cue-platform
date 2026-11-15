@@ -1,5 +1,5 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { Chunker, splitChunks } from "./chunks"
+import { Chunker } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { SessionSpeechMode, type SpeechMode } from "./settings"
 
@@ -49,7 +49,7 @@ export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSucc
 
 /**
  * Speaks the assistant messages of a TUI session through the host speech
- * bridge, either once each message ends or chunk by chunk while it streams,
+ * bridge, chunk by chunk while they stream,
  * and stops speech on request or when a run is interrupted.
  */
 export class Speech {
@@ -132,9 +132,8 @@ export class Speech {
   }
 
   /**
-   * An assistant message ends: message mode sends all of its text, live mode
-   * flushes every text block not flushed yet. Aborted and failed messages
-   * send nothing more.
+   * An assistant message ends: live mode flushes every text block not
+   * flushed yet. Aborted and failed messages send nothing more.
    */
   messageEnd(message: SpokenMessage, ctx: MessageContext): void {
     if (message.role !== "assistant") return
@@ -144,11 +143,8 @@ export class Speech {
       if (ctx.mode !== "tui" || this.muted) return
       if (message.stopReason === "aborted" || message.stopReason === "error") return
       const current = started ?? this.newMessage(ctx)
-      if (current.mode === "message") {
-        this.send(current, textBlocks(message).flatMap(({ text }) => splitChunks(text)))
-      } else if (current.mode === "live") {
-        for (const { index, text } of textBlocks(message)) this.endBlock(current, index, text)
-      }
+      if (current.mode !== "live") return
+      for (const { index, text } of textBlocks(message)) this.endBlock(current, index, text)
     } catch {}
   }
 

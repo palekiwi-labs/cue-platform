@@ -50,7 +50,7 @@ function setup(ctxMode = "tui") {
 beforeEach(async () => {
   bridge = new FakeBridge()
   url = await bridge.start()
-  mode = "message"
+  mode = "live"
 })
 
 afterEach(() => bridge.stopped())
@@ -277,15 +277,13 @@ describe("live mode", () => {
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, "/say And then the rest"])
   })
 
-  test("a message split at any boundary sends the same chunks as message mode", async () => {
+  test("a message split at any boundary sends the same chunks as a whole one", async () => {
     const reply = `${SENTENCE} See \`src/a.ts\` and https://example.com/x.y?z=1.\n| a | b |\n\`\`\`\ncode. more\n\`\`\`\n${OTHER}`
-    mode = "message"
     const whole = setup()
     await whole.reply(reply)
     await whole.speech.sender.settled()
     const expected = bridge.paths()
     expect(expected.join("\n")).toContain("https://example.com/x.y?z=1.")
-    mode = "live"
     for (let i = 0; i <= reply.length; i++) {
       bridge.requests.splice(0)
       const s = setup()
@@ -441,20 +439,19 @@ describe("live mode", () => {
   test("a mode change takes effect with the next message, without repeats", async () => {
     const s = setup()
     const m = streaming(s)
-    mode = "message"
+    mode = "off"
     await m.start()
     mode = "live"
     await m.delta(0, `${SENTENCE} `)
     await settle()
-    expect(bridge.paths()).toEqual([])
     await m.end([text(`${SENTENCE} `)])
     await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([])
     await m.start()
-    mode = "message"
     await m.delta(0, `${OTHER} `)
     await m.end([text(`${OTHER} `)])
     await s.speech.sender.settled()
-    expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, `/say ${OTHER}`])
+    expect(bridge.paths()).toEqual([`/say ${OTHER}`])
   })
 
   test("a failed send drops the rest of that message and the next one retries", async () => {
