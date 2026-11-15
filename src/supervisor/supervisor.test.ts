@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cancel } from "./cancel";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveRunDir, finalize, terminationFromEnv } from "./finalize";
@@ -86,5 +87,56 @@ describe("finalize", () => {
     writeFileSync(join(dir, "cancel"), JSON.stringify({ requestedAt: 50 }));
     expect(deriveRunDir(dir).outcome).toBe("cancelled");
     expect(JSON.parse(readFileSync(join(dir, "outcome.json"), "utf8")).finalizedAt).toBe(100);
+  });
+});
+
+describe("cancel", () => {
+  function seed(runs: { runId: string; finished?: boolean; cancelledAt?: number }[]): string {
+    const root = mkdtempSync(join(tmpdir(), "sup-root-"));
+    mkdirSync(join(root, "batches"));
+    writeFileSync(join(root, "batches", "b1.json"), JSON.stringify({ runIds: runs.map((r) => r.runId) }));
+    for (const run of runs) {
+      const dir = join(root, "runs", run.runId);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "run.json"), JSON.stringify({ unit: `cue-run-${run.runId}.service`, slice: "cue-runs-b1.slice" }));
+      if (run.finished) writeFileSync(join(dir, "outcome.json"), "{}");
+      if (run.cancelledAt) writeFileSync(join(dir, "cancel"), JSON.stringify({ requestedAt: run.cancelledAt }));
+    }
+    return root;
+  }
+
+  test("a run cancel persists intent before stopping only that unit", () => {
+    const root = seed([{ runId: "r1" }, { runId: "r2" }]);
+    const stops: string[][] = [];
+    const report = cancel(root, { kind: "run", runId: "r1" }, (units) => {
+      expect(existsSync(join(root, "runs", "r1", "cancel"))).toBe(true);
+      stops.push(units);
+    }, 7);
+    expect(stops).toEqual([["cue-run-r1.service"]]);
+    expect(report.requested).toEqual(["r1"]);
+    expect(JSON.parse(readFileSync(join(root, "runs", "r1", "cancel"), "utf8"))).toEqual({ requestedAt: 7 });
+    expect(existsSync(join(root, "runs", "r2", "cancel"))).toBe(false);
+  });
+
+  test("a batch cancel stops the slice and skips finished runs", () => {
+    const root = seed([{ runId: "r1", finished: true }, { runId: "r2" }]);
+    const stops: string[][] = [];
+    const report = cancel(root, { kind: "batch", batchId: "b1" }, (units) => stops.push(units), 7);
+    expect(stops).toEqual([["cue-runs-b1.slice"]]);
+    expect(report.alreadyFinished).toEqual(["r1"]);
+    expect(existsSync(join(root, "runs", "r1", "cancel"))).toBe(false);
+  });
+
+  test("a repeated cancel keeps the first intent", () => {
+    const root = seed([{ runId: "r1", cancelledAt: 3 }]);
+    cancel(root, { kind: "run", runId: "r1" }, () => {}, 9);
+    expect(JSON.parse(readFileSync(join(root, "runs", "r1", "cancel"), "utf8"))).toEqual({ requestedAt: 3 });
+  });
+
+  test("a batch with every run finished stops nothing", () => {
+    const root = seed([{ runId: "r1", finished: true }]);
+    const stops: string[][] = [];
+    cancel(root, { kind: "batch", batchId: "b1" }, (units) => stops.push(units));
+    expect(stops).toEqual([[]]);
   });
 });
