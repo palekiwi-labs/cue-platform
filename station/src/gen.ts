@@ -105,15 +105,16 @@ const GENERATED = [
   /(^|\/)result(-[^/]+)?$/,
 ];
 
-export function buildPacket(repoPath: string, range: string, now = Date.now()): Packet {
-  const [baseRef, headRef] = range.split("..");
-  if (headRef === undefined) throw new Error(`range must be base..head, got: ${range}`);
-  const baseSha = run(repoPath, ["rev-parse", `${baseRef}^{commit}`]).trim();
-  const headSha = run(repoPath, ["rev-parse", `${headRef}^{commit}`]).trim();
-  const branch = run(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
-  const subject = run(repoPath, ["log", "-1", "--format=%s", headSha]).trim();
+export interface PacketMeta {
+  repoPath: string;
+  branch: string;
+  baseSha: string;
+  headSha: string;
+  subject: string;
+  now: number;
+}
 
-  const diff = run(repoPath, ["diff", "--no-color", "--full-index", "-M50", `${baseSha}..${headSha}`]);
+export function buildPacketFromDiff(diff: string, meta: PacketMeta): Packet {
   const files = parseDiff(diff);
 
   const packetFiles: PacketFile[] = [];
@@ -155,8 +156,8 @@ export function buildPacket(repoPath: string, range: string, now = Date.now()): 
     });
   });
 
-  const head7 = headSha.slice(0, 7);
-  const ts = new Date(now);
+  const head7 = meta.headSha.slice(0, 7);
+  const ts = new Date(meta.now);
   const stamp = ts.toISOString().replace(/[-:]/g, "").slice(0, 15);
   const id = `rp-${stamp}-${head7}`;
 
@@ -164,13 +165,13 @@ export function buildPacket(repoPath: string, range: string, now = Date.now()): 
     kind: "review-station.packet",
     schema_version: 1,
     id,
-    created_at: Math.floor(now / 1000),
-    repo_path: repoPath,
-    branch,
-    base_sha: baseSha,
-    head_sha: headSha,
+    created_at: Math.floor(meta.now / 1000),
+    repo_path: meta.repoPath,
+    branch: meta.branch,
+    base_sha: meta.baseSha,
+    head_sha: meta.headSha,
     briefing: {
-      title: subject,
+      title: meta.subject,
       summary: null,
       flags: [],
     },
@@ -178,4 +179,15 @@ export function buildPacket(repoPath: string, range: string, now = Date.now()): 
     chunks: packetChunks,
     groups,
   };
+}
+
+export function buildPacket(repoPath: string, range: string, now = Date.now()): Packet {
+  const [baseRef, headRef] = range.split("..");
+  if (headRef === undefined) throw new Error(`range must be base..head, got: ${range}`);
+  const baseSha = run(repoPath, ["rev-parse", `${baseRef}^{commit}`]).trim();
+  const headSha = run(repoPath, ["rev-parse", `${headRef}^{commit}`]).trim();
+  const branch = run(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  const subject = run(repoPath, ["log", "-1", "--format=%s", headSha]).trim();
+  const diff = run(repoPath, ["diff", "--no-color", "--full-index", "-M50", `${baseSha}..${headSha}`]);
+  return buildPacketFromDiff(diff, { repoPath, branch, baseSha, headSha, subject, now });
 }

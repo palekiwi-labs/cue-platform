@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { buildDemo } from "./demo.js";
 import { buildPacket } from "./gen.js";
 import { run } from "./git.js";
 import { emptyState, loadPacket, loadState, type Packet, type PacketChunk, type PacketState } from "./packet.js";
@@ -10,6 +11,7 @@ import { ChunkNavView } from "./view.js";
 function usage(): never {
   console.error("usage: station gen <repo> <base>..<head> [out.json]");
   console.error("       station <packet.json>");
+  console.error("       station            (demo packet)");
   process.exit(2);
 }
 
@@ -83,14 +85,23 @@ function review(packetPath: string): void {
 
 export function main(): void {
   const [cmd, a, b, c] = process.argv.slice(2);
+  if (cmd === "--help" || cmd === "-h") usage();
   if (cmd === "gen") {
     if (a === undefined || b === undefined) usage();
     gen(a, b, c);
     return;
   }
-  if (cmd === undefined) usage();
+  if (cmd === undefined) {
+    review(buildDemo());
+    return;
+  }
   if (a !== undefined) usage();
-  review(cmd);
+  try {
+    review(cmd);
+  } catch (e) {
+    console.error(`cannot open packet ${cmd}: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
 }
 
 export { emptyState };

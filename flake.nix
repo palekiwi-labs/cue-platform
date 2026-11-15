@@ -42,6 +42,7 @@
       in
       {
         packages = platform // host // {
+          station = import ./nix/station.nix { inherit pkgs; };
           host = pkgs.symlinkJoin {
             name = "cue-platform-host";
             paths = builtins.attrValues host;
