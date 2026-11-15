@@ -41,25 +41,28 @@ export async function contextOrientation(
  * Inject a context into the session without starting a turn. Sent while
  * idle with no delivery options, pi persists it as a displayed
  * custom_message entry immediately (`deliverAs: "nextTurn"` would hold it
- * in memory, unseen and unpersisted, until the next prompt). An optional
- * note is appended after the orientation.
+ * in memory, unseen and unpersisted, until the next prompt). A selected
+ * hand-off (its address and rendered briefing) follows the orientation,
+ * and an optional note comes last.
  */
 export async function injectContext(
   pi: ExtensionAPI,
   ctx: ActivityCtx,
   address: string,
   note?: string,
+  handoff?: { address: string; briefing: string },
 ): Promise<void> {
   const details: CueContextDetails = { address }
   const orientation = await contextOrientation(pi, ctx.cwd, address)
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
-    content: note ? `${orientation}\n\n${note}` : orientation,
+    content: [orientation, handoff?.briefing, note].filter(Boolean).join("\n\n"),
     display: true,
     details,
   })
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "inject",
+    ...(handoff ? { handoff: handoff.address } : {}),
   })
   await applyContextName(pi, address)
 }
