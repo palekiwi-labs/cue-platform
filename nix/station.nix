@@ -1,8 +1,8 @@
 # station: the review station TUI (changes view over a git range or GitHub PR).
 { pkgs }:
 let
-  src = ../station;
-  packageJson = pkgs.lib.importJSON (src + "/package.json");
+  src = ../.;
+  packageJson = pkgs.lib.importJSON ../station/package.json;
 in
 pkgs.stdenv.mkDerivation {
   pname = "station";
@@ -18,10 +18,14 @@ pkgs.stdenv.mkDerivation {
         "node_modules"
         "dist"
         "build-test"
+        "worktrees"
       ])
       && (pkgs.lib.cleanSourceFilter path type);
   };
-  npmDeps = pkgs.importNpmLock { npmRoot = src; };
+  postUnpack = ''
+    sourceRoot="$sourceRoot/station"
+  '';
+  npmDeps = pkgs.importNpmLock { npmRoot = ../station; };
   npmRebuildFlags = [ "--ignore-scripts" ];
 
   nativeBuildInputs = [
@@ -40,6 +44,7 @@ pkgs.stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
+    ln -s "$PWD/node_modules" ../node_modules
     npm run build
     runHook postBuild
   '';

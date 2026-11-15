@@ -58,17 +58,6 @@ export interface PrSummary {
   requested: string[];
 }
 
-interface GhPrListItem {
-  number: number;
-  title: string;
-  author: { login: string } | null;
-  headRefName: string;
-  isDraft: boolean;
-  updatedAt: string;
-  reviewDecision: string | null;
-  reviewRequests: { login?: string; name?: string; slug?: string }[];
-}
-
 export function prRepo(cwd: string): string | null {
   try {
     const repo = mainRepo(cwd);
@@ -76,33 +65,6 @@ export function prRepo(cwd: string): string | null {
   } catch {
     return null;
   }
-}
-
-export const PR_LIMIT = 200;
-
-export async function listPrs(repo: string): Promise<PrSummary[]> {
-  const out = await spawnAsync(
-    "gh",
-    [
-      "pr",
-      "list",
-      "--limit",
-      String(PR_LIMIT),
-      "--json",
-      "number,title,author,headRefName,isDraft,updatedAt,reviewDecision,reviewRequests",
-    ],
-    repo,
-  );
-  return (JSON.parse(out) as GhPrListItem[]).map((p) => ({
-    number: p.number,
-    title: p.title,
-    author: p.author?.login ?? "",
-    headRefName: p.headRefName,
-    isDraft: p.isDraft,
-    updatedAt: p.updatedAt,
-    reviewDecision: p.reviewDecision ?? "",
-    requested: p.reviewRequests.map((r) => r.login ?? r.slug ?? r.name ?? "").filter((s) => s !== ""),
-  }));
 }
 
 async function ensureWorktree(repo: string, path: string, sha: string): Promise<void> {
@@ -218,7 +180,7 @@ export function fromRange(cwd: string, range: string | undefined): Review {
 
 export function fromDemo(): Review {
   const here = dirname(new URL(import.meta.url).pathname);
-  const diff = readFileSync(join(here, "..", "demo", "demo.diff"), "utf8");
+  const diff = readFileSync(join(here, "..", "..", "..", "demo", "demo.diff"), "utf8");
   const packet = buildPacketFromDiff(diff, {
     repoPath: "/home/pl/nix-config",
     branch: "feat/agent-microvm",

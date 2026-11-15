@@ -28,6 +28,7 @@ class Browser extends PrBrowser {
 function setup(
   loadDetail: (pr: Pr) => Promise<PrDetail> = async () => detail("Comment body"),
   kb = new KeybindingsManager(TUI_KEYBINDINGS),
+  overrides: Partial<PrDeps> = {},
 ) {
   let renders = 0
   let loads = 0
@@ -43,9 +44,57 @@ function setup(
     openStation: (p: Pr) => { stations.push(p.number); return undefined },
     detail: (p: Pr) => { calls.push(p.number); return loadDetail(p) },
   } as unknown as PrDeps
+  Object.assign(deps, overrides)
   const browser = new Browser(tui, theme, kb as AgentKeybindingsManager, deps, () => { closed = true })
   return { browser, calls, stations, terminal, renders: () => renders, loads: () => loads, closed: () => closed }
 }
+
+describe("service-backed PR browser", () => {
+  test("reads snapshots on launch, keeps rows stable on hints, refreshes through the service and disposes", async () => {
+    let hint = () => {}
+    let stopped = false
+    let revision = "one"
+    const refreshes: boolean[] = []
+    const s = setup(undefined, undefined, {
+      watch: (listener) => { hint = listener; return () => { stopped = true } },
+      load: async (_view, refresh) => {
+        refreshes.push(!!refresh)
+        return { prs: [{ ...pr(1), title: revision }], viewer: "author", failed: [], truncated: false, revision }
+      },
+    })
+    await tick()
+    expect(refreshes).toEqual([false])
+    revision = "two"
+    hint()
+    await tick()
+    const before = plain(s.browser.render(120).join("\n"))
+    expect(before).toContain("one")
+    expect(before).toContain("New PR data available")
+    s.browser.handleInput("\x1br")
+    await tick()
+    expect(refreshes).toEqual([false, false, true])
+    const after = plain(s.browser.render(120).join("\n"))
+    expect(after).toContain("two")
+    expect(after).not.toContain("New PR data available")
+    s.browser.dispose()
+    expect(stopped).toBe(true)
+  })
+
+  test("service errors preserve displayed rows", async () => {
+    let failed = false
+    const s = setup(undefined, undefined, {
+      load: async () => failed ? { error: "service offline" } : { prs: [pr(1)], viewer: "author", failed: [], truncated: false },
+    })
+    await tick()
+    failed = true
+    s.browser.handleInput("\x1br")
+    await tick()
+    const text = plain(s.browser.render(120).join("\n"))
+    expect(text).toContain("PR 1")
+    expect(text).toContain("service offline")
+    s.browser.dispose()
+  })
+})
 
 describe("comment rendering", () => {
   test("shows compact thread context once, relative authors, spacing and thin separators", () => {

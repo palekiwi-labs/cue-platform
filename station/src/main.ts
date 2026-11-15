@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView } from "./changes.js";
-import { run, spawnAsync } from "./git.js";
+import { run } from "./git.js";
 import { PrsView } from "./prs.js";
-import { type PruneResult, pruneReviews } from "./prune.js";
+import { pruneReviews } from "./prune.js";
+import { PrsSource } from "./prs-source.js";
 import { backdrop, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
-import { fromDemo, fromPr, fromRange, listPrs, PR_LIMIT, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
+import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { loadFolds, saveFolds } from "./state.js";
 
 function usage(code: number): never {
@@ -122,18 +123,18 @@ function showReview(review: Review): void {
   router.tui.start();
 }
 
-function pruneNote(r: PruneResult): string {
-  const parts: string[] = [];
-  if (r.removed.length > 0) parts.push(`pruned ${r.removed.length} review worktrees`);
-  if (r.kept.length > 0) parts.push(`kept dirty: ${r.kept.map((n) => `#${n}`).join(" ")}`);
-  return parts.join("  ");
-}
-
 async function clean(): Promise<void> {
   const repo = prRepo(process.cwd());
   if (repo === null) throw new Error("not in a GitHub repository");
-  const prs = await listPrs(repo);
-  if (prs.length >= PR_LIMIT) throw new Error(`more than ${PR_LIMIT} open PRs, refusing to prune`);
+  const source = new PrsSource(repoSlug(repo).toLowerCase());
+  let prs: PrSummary[];
+  try {
+    const data = await source.load(true);
+    if (!data.healthy) throw new Error(`refusing to prune: ${data.note}`);
+    prs = data.prs;
+  } finally {
+    await source.client.close();
+  }
   const r = await pruneReviews(repo, new Set(prs.map((p) => p.number)));
   for (const n of r.removed) console.log(`removed #${n}`);
   for (const n of r.kept) console.log(`kept #${n} (uncommitted changes)`);
@@ -144,38 +145,40 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-async function ghLogin(repo: string): Promise<string> {
-  try {
-    return (await spawnAsync("gh", ["api", "user", "--jq", ".login"], repo)).trim();
-  } catch {
-    return "";
-  }
-}
-
 function showPrs(repo: string): void {
   const router = new Router();
   let busy = false;
-  let me = "";
-  const refresh = async (): Promise<void> => {
-    router.showPopup({ title: "pull requests", text: "loading…", footer: "ctrl+c quit" });
-    try {
-      const [prs, login] = await Promise.all([listPrs(repo), me === "" ? ghLogin(repo) : Promise.resolve(me)]);
-      me = login;
-      list.setPrs(prs, me);
-      router.hidePopup();
-      if (prs.length < PR_LIMIT) {
-        void pruneReviews(repo, new Set(prs.map((p) => p.number)))
-          .then((r) => {
-            list.setNote(pruneNote(r));
-            router.tui.requestRender();
-          })
-          .catch(() => {});
-      }
-    } catch (e) {
-      router.showPopup({ title: "pull requests", text: errText(e), error: true, footer: "any key" }, true);
-    }
+  const source = new PrsSource(repoSlug(repo).toLowerCase());
+  let revision = "";
+  let loading = false;
+  let checking = false;
+  const refresh = async (live = true): Promise<void> => {
+    if (loading) return;
+    loading = true;
+    list.setNote(live ? "refreshing through GitHub service…" : "loading snapshot…");
     router.tui.requestRender();
+    try {
+      const data = await source.load(live);
+      revision = data.revision;
+      list.setPrs(data.prs, data.viewer);
+      list.setNote(data.note);
+    } catch (e) {
+      list.setNote(`GitHub service: ${errText(e)}`);
+    } finally {
+      loading = false;
+      router.tui.requestRender();
+    }
   };
+  const unwatch = source.client.watch(() => {
+    if (loading || checking || !revision) return;
+    checking = true;
+    void source.load().then((data) => {
+      if (data.revision !== revision) list.setNote("new PR data available · r refresh");
+    }).catch((e) => list.setNote(`GitHub service: ${errText(e)}`)).finally(() => {
+      checking = false;
+      router.tui.requestRender();
+    });
+  });
   const toList = (): void => router.show(list);
   const open = async (pr: PrSummary): Promise<void> => {
     if (busy) return;
@@ -193,13 +196,16 @@ function showPrs(repo: string): void {
   };
   const list = new PrsView({
     repo: repoSlug(repo),
-    onQuit: () => router.quit(),
+    onQuit: () => {
+      unwatch();
+      void source.client.close().finally(() => router.quit());
+    },
     onOpen: (pr) => void open(pr),
     onRefresh: () => void refresh(),
   });
   router.show(list);
   router.tui.start();
-  void refresh();
+  void refresh(false);
 }
 
 async function resolve(args: string[]): Promise<Review | { prs: string }> {

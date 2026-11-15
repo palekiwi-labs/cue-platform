@@ -135,8 +135,9 @@ pin its types to the packaged version.
 SQLite PR snapshots over core NATS. Build `.#cue-github` or run
 `nix run .#cue-github -- --help`. It is not part of the default bundle.
 See [the service README](github-service/README.md) for the read-only TOML
-configuration, protocol, validation and next integration steps. No pi or
-station integration or VM service configuration is installed by this package.
+configuration, protocol and validation. Pi and station PR lists use its
+NATS API; details and diffs keep their existing on-demand fetching paths.
+The VM unit and declarative configuration live in nix-config, not here.
 
 ## Validation
 

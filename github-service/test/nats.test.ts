@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { serveNats } from "../src/nats.js";
+import { GithubClient } from "../src/client.js";
 import { GithubService } from "../src/service.js";
 import { SnapshotStore } from "../src/store.js";
 import {
@@ -52,6 +53,82 @@ async function client(url: string): Promise<NatsConnection> {
 }
 
 test(
+  "UI client restarts guarded pagination on conflict and collects every page",
+  { timeout: 10_000 },
+  async () => {
+    const port = await unusedPort();
+    const url = `nats://127.0.0.1:${port}`;
+    const server = spawn(
+      "nats-server",
+      ["-a", "127.0.0.1", "-p", String(port)],
+      { stdio: "ignore" },
+    );
+    const ui = new GithubClient(url);
+    let nc: NatsConnection | undefined;
+    let reading: Promise<void> | undefined;
+    try {
+      nc = await client(url);
+      const subscription = nc.subscribe(SUBJECTS.list);
+      let conflicted = false;
+      const offsets: number[] = [];
+      reading = (async () => {
+        for await (const msg of subscription) {
+          const request = msg.json<{
+            offset?: number;
+            revisions?: Record<string, number>;
+            storeId?: string;
+          }>();
+          const offset = request.offset ?? 0;
+          offsets.push(offset);
+          if (offset > 0 && !conflicted) {
+            conflicted = true;
+            msg.respond(
+              JSON.stringify({
+                ok: false,
+                error: { code: "conflict", message: "changed" },
+              }),
+            );
+            continue;
+          }
+          if (offset > 0) {
+            assert.equal(request.storeId, "fixture-store");
+            assert.equal(request.revisions?.[repo], 2);
+          }
+          msg.respond(
+            JSON.stringify({
+              ok: true,
+              data: {
+                storeId: "fixture-store",
+                total: 101,
+                repositories: [{ repo, revision: conflicted ? 2 : 1 }],
+                prs: Array.from(
+                  { length: Math.min(50, 101 - offset) },
+                  (_, i) => ({ ...pr, number: offset + i + 1 }),
+                ),
+                nextOffset: offset + 50 < 101 ? offset + 50 : null,
+              },
+            }),
+          );
+        }
+      })();
+      await nc.flush();
+      const result = await ui.list(repo);
+      assert.equal(result.prs.length, 101);
+      assert.equal(new Set(result.prs.map((p) => p.number)).size, 101);
+      assert.deepEqual(offsets, [0, 50, 0, 50, 100]);
+      assert.equal(result.repositories[0].revision, 2);
+      subscription.unsubscribe();
+      await reading;
+    } finally {
+      await ui.close();
+      await nc?.close();
+      await reading;
+      await stop(server);
+    }
+  },
+);
+
+test(
   "NATS initial outage, API lifecycle, advisory events, reconnect and offline polling",
   { timeout: 25_000 },
   async () => {
@@ -72,6 +149,7 @@ test(
     const serving = serveNats(service, url, abort.signal);
     let server: ChildProcess | undefined;
     let nc: NatsConnection | undefined;
+    const ui = new GithubClient(url);
     try {
       service.tick();
       await eventually(
@@ -94,6 +172,9 @@ test(
         (r) => r.ok,
       );
       assert.equal(initial.ok && initial.data.prs[0].title, "version 1");
+      assert.equal((await ui.list(repo)).prs[0].title, "version 1");
+      let hints = 0;
+      const unwatch = ui.watch(() => hints++);
       const completed = nc.subscribe(SUBJECTS.completed);
       const changed = nc.subscribe(SUBJECTS.changed);
       const completionEvents: unknown[] = [];
@@ -129,6 +210,13 @@ test(
         (n) => n === 1,
       );
       assert.equal((changeEvents[0] as { revision: number }).revision, 2);
+      await eventually(
+        async () => hints,
+        (n) => n > 0,
+      );
+      now += 10;
+      assert.equal((await ui.refresh(repo)).repositories[repo].changed, false);
+      unwatch();
       const malformed = (
         await nc.request(SUBJECTS.list, "{", { timeout: 300 })
       ).json<Reply<unknown>>();
@@ -154,11 +242,17 @@ test(
         (r) => r.ok && r.data.repositories[0].revision === 3,
       );
       assert.equal(after.ok && after.data.prs[0].title, "version 3");
+      const recovered = await eventually(
+        () => ui.list(repo),
+        (data) => data.repositories[0].revision === 3,
+      );
+      assert.equal(recovered.prs[0].title, "version 3");
       assert.equal(
         after.ok && initial.ok && after.data.storeId,
         initial.ok && initial.data.storeId,
       );
     } finally {
+      await ui.close();
       abort.abort();
       await serving;
       await nc?.close();

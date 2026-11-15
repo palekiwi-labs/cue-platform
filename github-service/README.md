@@ -1,7 +1,8 @@
 # cue-github
 
 Standalone Node service for explicit GitHub repositories. No pi or station
-runtime dependency. No JetStream, durable domain events, or UI integration.
+runtime dependency. No JetStream or durable domain events. Pi and station
+consume snapshots through the shared `src/client.ts` NATS client.
 The dependency-free wire contract is `src/protocol.ts`, also exported as
 `@palekiwi-labs/cue-github/protocol` after building. Clients can import its
 types without loading the service, SQLite, TOML, or NATS dependencies.
@@ -165,22 +166,31 @@ The service retries initial connections and resubscribes after connection
 loss with capped backoff. Clients must list again after reconnect and
 periodically reconcile revisions even without a notification.
 
-## Next integration slice
+## Consumers and deployment
 
-1. Provision the TOML and a VM user service invoking `cue-github`; preserve
-   the existing gh proxy environment. Do not change input pins until the
-   operator chooses the deployment path. Keep the DB in the service user's
-   private state directory.
-2. Add explicit GitHub namespace NATS routing and permissions.
-3. Have pi/station import the protocol types and replace only list fetching
-   with `list`. Keep direct PR details and diffs unchanged.
-4. On launch, render persisted snapshots immediately, including unfetched
-   and stale/error states. Filter using each repository's returned viewer.
-5. On refresh, retain the stable displayed view and track the returned ID
-   through `operation`; treat completion separately from changed data.
-6. Subscribe for hints, but reread revisions on reconnect and periodically.
-   Apply new list data deliberately; use pagination guards and recover from
-   operation eviction/restart by listing, never by trusting event history.
-7. Operator QA still needs real proxy-backed spabreaks collection, VM
-   service startup/restart, routing and both UI flows. Automated validation
-   is fixture-based for GitHub and real-local-server-based for NATS.
+Pi's PR browser and station read persisted snapshots on launch. Refresh
+requests go through the service; neither consumer falls back to a GitHub
+list fetch. Both retain displayed rows while refreshing and show an
+indicator when background data has changed. Comments, reviews and diffs
+still use their existing on-demand fetching paths.
+
+The shared client collects all snapshot pages with revision guards and
+bounded conflict retries. It tracks refresh operations by polling, so
+completion does not depend on receiving a notification. Change/completion
+hints, reconnects, and a 30-second reconciliation interval prompt revision
+checks, not automatic replacement of the displayed rows. Closing a view
+releases its client, subscriptions and timers. Expired operations report
+an error; another refresh rereads service state.
+
+Org views use the service's explicit repository configuration, filtered by
+the view's orgs, rather than discovering repository directories in cue.
+Viewer-dependent presets and review markers use each repository's identity.
+
+Station no longer prunes worktrees on list load: cached data is not safe
+proof that a PR is closed. `station clean` requires a successful service
+refresh before pruning.
+
+Nix-config owns the VM unit, generated TOML and explicit NATS routing.
+Input updates and deployment require operator approval. Operator QA still
+needs deployed VM startup/restart, proxy-backed polling and both UI flows.
+No JetStream replay or automated workflow triggers are installed.

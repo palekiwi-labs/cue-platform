@@ -43,6 +43,9 @@ import type { Target } from "../lib/default-target"
 export interface Loaded {
   prs: Pr[]
   viewer: string
+  viewers?: Record<string, string>
+  revision?: string
+  fetchedAt?: number
   /** More PRs matched than one page holds. */
   truncated: boolean
   /** `<repo>: <error>` for each repo whose search failed. */
@@ -51,7 +54,8 @@ export interface Loaded {
 
 export interface PrDeps {
   /** Open PRs for a view; error text (gh's own) on failure. */
-  load(view: View): Promise<Loaded | { error: string }>
+  load(view: View, refresh?: boolean): Promise<Loaded | { error: string }>
+  watch?(listener: () => void): () => void
   detail(pr: Pr): Promise<PrDetail>
   previews: PreviewCache
   /** `owner/name` of the cwd's repo; actions only apply to its PRs. */
@@ -185,6 +189,9 @@ export class PrBrowser implements Component {
   protected previewScroll = 0
   private previewCache: { detail: PrDetail; width: number; minute: number; lines: string[] } | undefined
   private closed = false
+  private unwatch?: () => void
+  private checking = false
+  private outdated = new Set<View>()
   private previewChanged = () => {
     if (!this.closed) this.tui.requestRender()
   }
@@ -199,6 +206,7 @@ export class PrBrowser implements Component {
     this.view = deps.view
     this.target = deps.target
     this.input.focused = true
+    this.unwatch = deps.watch?.(() => void this.checkUpdates())
     void this.reload()
     void this.loadLinks()
   }
@@ -208,9 +216,33 @@ export class PrBrowser implements Component {
     this.tui.requestRender()
   }
 
-  close(): void {
+  dispose(): void {
     this.closed = true
+    this.unwatch?.()
+    this.unwatch = undefined
+  }
+
+  close(): void {
+    this.dispose()
     this.done()
+  }
+
+  private async checkUpdates(): Promise<void> {
+    if (this.closed || this.checking || this.loading) return
+    this.checking = true
+    try {
+      for (const view of ["repo", "org"] as const) {
+        const shown = this.data[view]
+        if (!shown?.revision) continue
+        const latest = await this.deps.load(view)
+        if (this.closed) return
+        if (view === this.view) this.error = "error" in latest ? latest.error : latest.failed.join("; ")
+        if (!("error" in latest) && latest.revision !== this.data[view]?.revision) this.outdated.add(view)
+      }
+    } finally {
+      this.checking = false
+      if (!this.closed) this.tui.requestRender()
+    }
   }
 
   protected notice(text: string, tone: Tone = "muted"): void {
@@ -218,18 +250,25 @@ export class PrBrowser implements Component {
     this.tui.requestRender()
   }
 
-  protected async reload(): Promise<void> {
+  protected async reload(refresh = false): Promise<void> {
     if (this.loading) return
     this.loading = true
     this.tui.requestRender()
     const view = this.view
-    const r = await this.deps.load(view)
+    let r: Loaded | { error: string }
+    try {
+      r = await this.deps.load(view, refresh)
+    } catch (error) {
+      r = { error: error instanceof Error ? error.message : "GitHub service unavailable" }
+    }
     this.loading = false
+    if (this.closed) return
     if ("error" in r) this.error = r.error
     else {
       this.error = r.failed.length > 0 ? `${r.failed.length} repo(s) failed: ${r.failed.join("; ")}` : ""
       // Refreshes keep the operator's folds; the org view starts unfolded.
       this.data[view] = r
+      this.outdated.delete(view)
     }
     this.tui.requestRender()
   }
@@ -237,7 +276,7 @@ export class PrBrowser implements Component {
   protected rows(): Row[] {
     const d = this.data[this.view]
     if (!d) return []
-    let prs = applyPreset(d.prs, this.preset, d.viewer)
+    let prs = d.prs.filter((p) => applyPreset([p], this.preset, d.viewers?.[p.repo] ?? d.viewer).length > 0)
     const q = this.input.getValue().trim()
     if (q) {
       const hit = new Set(fuzzyFilter(prs, q, haystack))
@@ -347,7 +386,7 @@ export class PrBrowser implements Component {
     if (matchesKey(data, "tab")) {
       // Skip presets with no matching PRs in the loaded view.
       const d = this.data[this.view]
-      const empty = (p: Preset) => !d || "error" in d || applyPreset(d.prs, p, d.viewer).length === 0
+      const empty = (p: Preset) => !d || "error" in d || !d.prs.some((pr) => applyPreset([pr], p, d.viewers?.[pr.repo] ?? d.viewer).length > 0)
       let i = PRESETS.indexOf(this.preset)
       for (let step = 1; step < PRESETS.length; step++) {
         const next = PRESETS[(i + step) % PRESETS.length]!
@@ -375,7 +414,7 @@ export class PrBrowser implements Component {
       this.deps.previews.clear()
       this.previewCache = undefined
       this.previewScroll = 0
-      void this.reload()
+      void this.reload(true)
       return this.tui.requestRender()
     }
     if (this.handleAction(data)) return
@@ -708,8 +747,12 @@ export class PrBrowser implements Component {
 
   protected footerLine(): string {
     const t = this.theme
-    if (this.error) return t.fg("error", `gh: ${this.error}`)
-    return t.fg(this.status.tone, this.status.text)
+    if (this.loading) return t.fg("muted", this.data[this.view] ? "Refreshing through GitHub service…" : "Loading GitHub snapshot…")
+    if (this.outdated.has(this.view)) return t.fg("warning", "New PR data available · alt+r refresh")
+    if (this.error) return t.fg("error", `GitHub service: ${this.error}`)
+    if (this.status.text) return t.fg(this.status.tone, this.status.text)
+    const fetchedAt = this.data[this.view]?.fetchedAt
+    return t.fg("dim", fetchedAt ? `Snapshot fetched ${fmtAge(new Date(fetchedAt).toISOString(), Date.now())} ago` : "")
   }
 
   protected bodyLines(width: number, height: number): string[] {
@@ -765,7 +808,7 @@ export class PrBrowser implements Component {
     const d = this.data[this.view]
     const scope = this.view === "repo" ? (this.deps.localRepo ?? "?") : this.deps.orgs.join(", ")
     const counts = d
-      ? `${applyPreset(d.prs, this.preset, d.viewer).length}/${d.prs.length} open` +
+      ? `${d.prs.filter((p) => applyPreset([p], this.preset, d.viewers?.[p.repo] ?? d.viewer).length > 0).length}/${d.prs.length} open` +
         (d.truncated ? " (truncated)" : "")
       : ""
     const parts = [
@@ -797,7 +840,7 @@ export class PrBrowser implements Component {
     const lines: string[] = []
     let selLine = 0
     for (const r of rows) {
-      const line = r.kind === "repo" ? this.repoLine(r, width) : this.prLine(r.pr, r.depth, indentBase, d.viewer, { numW, authorW, ageW }, width)
+      const line = r.kind === "repo" ? this.repoLine(r, width) : this.prLine(r.pr, r.depth, indentBase, d.viewers?.[r.pr.repo] ?? d.viewer, { numW, authorW, ageW }, width)
       if (rowId(r) === this.selectedId) {
         selLine = lines.length
         lines.push(t.bg("selectedBg", pad(line, width)))

@@ -13,11 +13,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test 'build-test/test/**/*.test.js'",
+    "test": "tsc -p tsconfig.test.json && node --test 'build-test/station/test/**/*.test.js'",
     "start": "node bin/station.js"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "1.4.0",
+    "@nats-io/transport-node": "^3.4.0",
     "highlight.js": "11.11.1"
   },
   "devDependencies": {

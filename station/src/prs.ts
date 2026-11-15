@@ -51,10 +51,12 @@ export class PrsView implements Component {
   }
 
   setPrs(prs: PrSummary[], me: string): void {
+    const selected = this.selected()?.number;
     this.prs = prs;
     this.me = me;
     this.loaded = true;
-    this.cursor = Math.min(this.cursor, Math.max(0, prs.length - 1));
+    const index = prs.findIndex((pr) => pr.number === selected);
+    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, prs.length - 1));
   }
 
   selected(): PrSummary | undefined {
