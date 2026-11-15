@@ -38,6 +38,7 @@ import {
 import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY, type MenuSection } from "./action-menu"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "./settings-menu"
+import { handoffChoices, HandoffMenu, handoffMenuWidth } from "./handoff-menu"
 import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
@@ -112,9 +113,10 @@ export interface BrowserDeps {
   ): Promise<{ path: string } | { error: string }>
   /**
    * Start a fresh pi session with the context injected, here or in a
-   * new tmux window; returns an error message on failure.
+   * new tmux window, with the selected hand-off (if any) injected in
+   * full; returns an error message on failure.
    */
-  newSession(address: string, target: Target): string | undefined
+  newSession(address: string, target: Target, handoff?: string): string | undefined
   /** Sessions in the browser's scopes (only the repository's when `repoScope`). */
   loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
@@ -1154,10 +1156,44 @@ export class CueBrowser implements Component {
     }
   }
 
-  private onNewSession(): void {
+  /**
+   * ctrl+s: choose which of the context's hand-offs the new session
+   * starts from (newest preselected, or none), then start it. Without
+   * hand-offs the session starts at once.
+   */
+  private async onNewSession(): Promise<void> {
     const c = this.actionContext()
     if (!c) return
-    const err = this.deps.newSession(c.address, this.target)
+    this.busy = true
+    let rows: ArtifactRow[]
+    try {
+      rows = await this.deps.loadArtifacts(c.address)
+    } finally {
+      this.busy = false
+    }
+    const choices = handoffChoices(c.address, rows, Math.floor(Date.now() / 1000))
+    if (choices.length === 0) return this.startSession(c)
+    const title = `new session: ${c.slug}`
+    let handle: OverlayHandle | undefined
+    const menu = new HandoffMenu(this.theme, this.kb, title, choices, (pick) => {
+      handle?.hide()
+      this.tui.requestRender()
+      if (pick) this.startSession(c, pick.handoff)
+    })
+    const wrapped: Component = {
+      render: (w) => menu.render(w),
+      invalidate: () => menu.invalidate(),
+      handleInput: (data) => {
+        menu.handleInput(data)
+        this.tui.requestRender()
+      },
+    }
+    handle = this.tui.showOverlay(wrapped, { anchor: "center", width: handoffMenuWidth(choices, title) })
+    this.tui.requestRender()
+  }
+
+  private startSession(c: ContextRef, handoff?: string): void {
+    const err = this.deps.newSession(c.address, this.target, handoff)
     if (err) return this.notify(err)
     if (this.target === "here") return this.done()
     this.notify(`started a session for ${c.slug} in tmux`)
