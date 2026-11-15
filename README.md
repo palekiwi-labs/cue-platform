@@ -161,6 +161,16 @@ in the extension options also selects HTTP unless `transport` is `nats`.
 The HTTP sender retains its existing delayed-stop race workaround; the
 NATS sender never uses it. Do not use HTTP to circumvent coordination.
 
+## GitHub snapshot service
+
+`github-service/` is a separately packaged Node service providing private
+SQLite PR snapshots over core NATS. Build `.#cue-github` or run
+`nix run .#cue-github -- --help`. It is not part of the default bundle.
+See [the service README](github-service/README.md) for the read-only TOML
+configuration, protocol and validation. Pi and station PR lists use its
+NATS API; details and diffs keep their existing on-demand fetching paths.
+The VM unit and declarative configuration live in nix-config, not here.
+
 ## Validation
 
 ```sh

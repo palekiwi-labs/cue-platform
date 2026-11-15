@@ -1,11 +1,9 @@
 import { withViewSwitch } from "../lib/view-switch"
 import { copyToClipboard, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Markdown } from "@earendil-works/pi-tui"
-import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import {
   type CheckoutTarget,
-  type Loaded,
   type Outcome,
   PrBrowser,
   type PrDeps,
@@ -16,21 +14,18 @@ import {
   linkAddress,
   linkValue,
   latestSession,
-  mergeSearches,
   type Pr,
   repoOfRemote,
   resolveScope,
-  SEARCH_QUERY,
-  searchString,
-  type View,
   worktreeFor,
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
-import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays } from "./cue-browser"
+import { loadSessions, newSession, resumeSession, saveRecencyDays, storedRecencyDays, tmuxWindow } from "./cue-browser"
 import { scopeOfRemote, type SessionRow } from "../browser/sessions"
 import { currentContext } from "../lib/current-context"
 import { defaultTarget } from "../lib/default-target"
 import { fetchDetail, PreviewCache } from "../prs/preview"
+import { PrSource } from "../prs/source"
 
 /** Open the GitHub PR browser. */
 export const PRS_SHORTCUT = "alt+p"
@@ -40,46 +35,6 @@ type Exec = ExtensionAPI["exec"]
 async function lines(exec: Exec, cwd: string, cmd: string, args: string[]): Promise<string[]> {
   const r = await exec(cmd, args, { cwd })
   return r.code === 0 ? r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : []
-}
-
-/** One GraphQL search per scope, in parallel; the first gh error wins. */
-/** One search per repo, in parallel; see mergeSearches for failures. */
-async function search(exec: Exec, cwd: string, repos: string[]): Promise<Loaded | { error: string }> {
-  const results = await Promise.all(
-    repos.map(async (repo) => ({
-      repo,
-      ...(await exec("gh", ["api", "graphql", "-F", `q=${searchString(repo)}`, "-f", `query=${SEARCH_QUERY}`], {
-        cwd,
-      })),
-    })),
-  )
-  return mergeSearches(results)
-}
-
-/**
- * Org view repos: those of each org with a scope directory in the cue
- * store (`<store>/<org>/<repo>`), i.e. the repos the operator works on.
- */
-async function storeRepos(cwd: string, orgs: string[]): Promise<string[]> {
-  const root = storeRoot(cwd)
-  const per = await Promise.all(
-    orgs.map(async (org) => {
-      const entries = await readdir(join(root, org), { withFileTypes: true }).catch(() => [])
-      return entries.filter((e) => e.isDirectory()).map((e) => `${org}/${e.name}`)
-    }),
-  )
-  return per.flat().sort()
-}
-
-async function loadView(exec: Exec, cwd: string, view: View, localRepo: string | undefined, orgs: string[]) {
-  if (view === "repo") {
-    if (!localRepo) return { error: "no GitHub repo (origin is not a GitHub remote)" }
-    return search(exec, cwd, [localRepo])
-  }
-  if (orgs.length === 0) return { error: "no GitHub org (origin is not a GitHub remote and cue.gh-org is unset)" }
-  const repos = await storeRepos(cwd, orgs)
-  if (repos.length === 0) return { error: `no repos of ${orgs.join(", ")} in the cue store` }
-  return search(exec, cwd, repos)
 }
 
 const failed = (what: string, r: { stdout: string; stderr: string; code: number }): Outcome => ({
@@ -233,8 +188,10 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
   const localRepo = origin[0] ? repoOfRemote(origin[0]) : undefined
   const { orgs, view } = resolveScope(ghOrgs, localRepo)
   const scope = origin[0] ? scopeOfRemote(origin[0]) : undefined
+  const source = new PrSource(localRepo, orgs)
   const deps: PrDeps = {
-    load: (v) => loadView(exec, cwd, v, localRepo, orgs),
+    load: (v, refresh) => source.load(v, refresh),
+    watch: (listener) => source.client.watch(listener),
     detail: (pr) => fetchDetail(exec, cwd, pr),
     previews,
     localRepo,
@@ -242,6 +199,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
     view,
     checkout: (pr, where) => checkout(exec, cwd, pr, where),
     copy: copyToClipboard,
+    openStation: (pr) => tmuxWindow(`#${pr.number}`, cwd, `${process.env.CUE_STATION ?? "station"} pr ${pr.number}`),
     markdown: (body, width) => new Markdown(body, 0, 0, getMarkdownTheme()).render(width),
     sessions: {
       manifests: () => manifests(exec, cwd),
@@ -260,14 +218,22 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
       target: defaultTarget(ctx.sessionManager.getEntries()),
     },
   }
-  await ctx.ui.custom<void>(
-    (tui, theme, kb, done) =>
-      withViewSwitch(new PrBrowser(tui, theme, kb, deps, () => done()), ctx, tui, theme, kb, () => done()),
-    {
-      overlay: true,
-      overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },
-    },
-  )
+  let browser: PrBrowser | undefined
+  try {
+    await ctx.ui.custom<void>(
+      (tui, theme, kb, done) => {
+        browser = new PrBrowser(tui, theme, kb, deps, () => done())
+        return withViewSwitch(browser, ctx, tui, theme, kb, () => done())
+      },
+      {
+        overlay: true,
+        overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 },
+      },
+    )
+  } finally {
+    browser?.dispose()
+    await source.client.close()
+  }
 }
 
 let previews = new PreviewCache()
