@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { type Component, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView } from "./changes.js";
-import { run } from "./git.js";
+import { run, spawnAsync } from "./git.js";
+import { PrsView } from "./prs.js";
 import type { PacketFile } from "./packet.js";
-import { fromDemo, fromPr, fromRange, type Review } from "./source.js";
+import { fromDemo, fromPr, fromRange, listPrs, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { loadFolds, saveFolds } from "./state.js";
 
 function usage(code: number): never {
   const out = code === 0 ? console.log : console.error;
-  out("usage: station                  changes on the current branch vs its base");
+  out("usage: station                  open pull requests (in a GitHub repo), else branch changes");
+  out("       station prs              open pull requests of this repository");
+  out("       station branch           changes on the current branch vs its base");
   out("       station pr <number>      changes of a GitHub pull request");
   out("       station <base>..<head>   changes in a commit range");
   out("       station demo             built-in demo diff");
@@ -32,50 +35,143 @@ function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line:
   tui.requestRender(true);
 }
 
-function show(review: Review): void {
-  const tui = new TuiAltScreen(new ProcessTerminal());
-  const view = new ChangesView({
+function changesView(
+  tui: TuiAltScreen,
+  review: Review,
+  onQuit: () => void,
+): ChangesView {
+  return new ChangesView({
     title: review.title,
     subtitle: review.subtitle,
     packet: review.packet,
     folds: loadFolds(review.key),
     headMatches: currentHead(review.repoPath) === review.packet.head_sha,
-    onQuit: () => {
-      tui.stop({ preserveScreen: true });
-      process.exit(0);
-    },
+    onQuit,
     onFolds: (folds) => saveFolds(review.key, folds),
     onOpen: (file, line) => openEditor(tui, review.repoPath, file, line),
   });
-  tui.addChild(view);
-  tui.addInputListener((data) => {
-    view.handleInput(data);
-    tui.requestRender();
-    return { consume: true };
-  });
-  process.stdout.on("resize", () => tui.requestRender(true));
-  tui.start();
 }
 
-function resolve(args: string[]): Review {
+interface Screen extends Component {
+  handleInput(data: string): void;
+}
+
+class Router {
+  readonly tui = new TuiAltScreen(new ProcessTerminal());
+  private screen: Screen | null = null;
+  private back: (() => void) | null = null;
+
+  constructor() {
+    this.tui.addInputListener((data) => {
+      if (data === "\x1b" && this.back !== null) this.back();
+      else this.screen?.handleInput(data);
+      this.tui.requestRender();
+      return { consume: true };
+    });
+    process.stdout.on("resize", () => this.tui.requestRender(true));
+  }
+
+  show(screen: Screen, back: (() => void) | null = null): void {
+    if (this.screen !== null) this.tui.removeChild(this.screen);
+    this.screen = screen;
+    this.back = back;
+    this.tui.addChild(screen);
+    this.tui.requestRender(true);
+  }
+
+  quit(): never {
+    this.tui.stop({ preserveScreen: true });
+    process.exit(0);
+  }
+}
+
+function showReview(review: Review): void {
+  const router = new Router();
+  router.show(changesView(router.tui, review, () => router.quit()));
+  router.tui.start();
+}
+
+async function ghLogin(repo: string): Promise<string> {
+  try {
+    return (await spawnAsync("gh", ["api", "user", "--jq", ".login"], repo)).trim();
+  } catch {
+    return "";
+  }
+}
+
+function showPrs(repo: string): void {
+  const router = new Router();
+  let busy = false;
+  let me = "";
+  const refresh = async (): Promise<void> => {
+    list.setStatus("loading pull requests…");
+    router.tui.requestRender();
+    try {
+      const [prs, login] = await Promise.all([listPrs(repo), me === "" ? ghLogin(repo) : Promise.resolve(me)]);
+      me = login;
+      list.setPrs(prs, me);
+    } catch (e) {
+      list.setStatus(e instanceof Error ? e.message : String(e), true);
+    }
+    router.tui.requestRender();
+  };
+  const toList = (): void => router.show(list);
+  const open = async (pr: PrSummary): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    list.setStatus(`fetching #${pr.number}…`);
+    router.tui.requestRender();
+    try {
+      const review = await fromPr(repo, String(pr.number));
+      list.setStatus(null);
+      router.show(changesView(router.tui, review, toList), toList);
+    } catch (e) {
+      list.setStatus(e instanceof Error ? e.message : String(e), true);
+      router.tui.requestRender();
+    } finally {
+      busy = false;
+    }
+  };
+  const list = new PrsView({
+    repo: repoSlug(repo),
+    onQuit: () => router.quit(),
+    onOpen: (pr) => void open(pr),
+    onRefresh: () => void refresh(),
+  });
+  router.show(list);
+  router.tui.start();
+  void refresh();
+}
+
+async function resolve(args: string[]): Promise<Review | { prs: string }> {
   const [cmd, arg, extra] = args;
   if (extra !== undefined) usage(2);
-  if (cmd === undefined) return fromRange(process.cwd(), undefined);
+  if (cmd === undefined) {
+    const repo = prRepo(process.cwd());
+    return repo !== null ? { prs: repo } : fromRange(process.cwd(), undefined);
+  }
+  if (cmd === "branch" && arg === undefined) return fromRange(process.cwd(), undefined);
+  if (cmd === "prs" && arg === undefined) {
+    const repo = prRepo(process.cwd());
+    if (repo === null) throw new Error("not in a GitHub repository");
+    return { prs: repo };
+  }
   if (cmd === "demo" && arg === undefined) return fromDemo();
   if (cmd === "pr" && arg !== undefined && /^\d+$/.test(arg)) return fromPr(process.cwd(), arg);
   if (cmd.includes("..") && arg === undefined) return fromRange(process.cwd(), cmd);
   usage(2);
 }
 
-export function main(): void {
+export async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args[0] === "--help" || args[0] === "-h") usage(0);
-  let review: Review;
+  let target: Review | { prs: string };
   try {
-    review = resolve(args);
+    target = await resolve(args);
   } catch (e) {
     console.error(`station: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
   }
-  show(review);
+  if ("prs" in target) showPrs(target.prs);
+  else showReview(target);
 }

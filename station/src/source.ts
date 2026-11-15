@@ -1,8 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildPacketFromDiff, diffRange } from "./gen.js";
-import { run } from "./git.js";
+import { run, runAsync, spawnAsync } from "./git.js";
 import type { Packet } from "./packet.js";
 
 export interface Review {
@@ -22,7 +21,7 @@ function mainRepo(cwd: string): string {
   return dirname(common);
 }
 
-function repoSlug(repo: string): string {
+export function repoSlug(repo: string): string {
   const url = run(repo, ["remote", "get-url", "origin"]).trim();
   const m = url.match(/github\.com[:/](.+?)(\.git)?$/);
   return m?.[1] ?? repo;
@@ -37,23 +36,78 @@ interface GhPr {
   headRefOid: string;
 }
 
-function ghPr(repo: string, number: string): GhPr {
-  const res = spawnSync(
+async function ghPr(repo: string, number: string): Promise<GhPr> {
+  const out = await spawnAsync(
     "gh",
     ["pr", "view", number, "--json", "number,title,url,baseRefName,headRefName,headRefOid"],
-    { cwd: repo, encoding: "utf8" },
+    repo,
   );
-  if (res.status !== 0) throw new Error(`gh pr view ${number} failed: ${(res.stderr ?? "").trim()}`);
-  return JSON.parse(res.stdout) as GhPr;
+  return JSON.parse(out) as GhPr;
 }
 
-function ensureWorktree(repo: string, path: string, sha: string): void {
+export interface PrSummary {
+  number: number;
+  title: string;
+  author: string;
+  headRefName: string;
+  isDraft: boolean;
+  updatedAt: string;
+  reviewDecision: string;
+  requested: string[];
+}
+
+interface GhPrListItem {
+  number: number;
+  title: string;
+  author: { login: string } | null;
+  headRefName: string;
+  isDraft: boolean;
+  updatedAt: string;
+  reviewDecision: string | null;
+  reviewRequests: { login?: string; name?: string; slug?: string }[];
+}
+
+export function prRepo(cwd: string): string | null {
+  try {
+    const repo = mainRepo(cwd);
+    return /github\.com[:/]/.test(run(repo, ["remote", "get-url", "origin"])) ? repo : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listPrs(repo: string): Promise<PrSummary[]> {
+  const out = await spawnAsync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--limit",
+      "100",
+      "--json",
+      "number,title,author,headRefName,isDraft,updatedAt,reviewDecision,reviewRequests",
+    ],
+    repo,
+  );
+  return (JSON.parse(out) as GhPrListItem[]).map((p) => ({
+    number: p.number,
+    title: p.title,
+    author: p.author?.login ?? "",
+    headRefName: p.headRefName,
+    isDraft: p.isDraft,
+    updatedAt: p.updatedAt,
+    reviewDecision: p.reviewDecision ?? "",
+    requested: p.reviewRequests.map((r) => r.login ?? r.slug ?? r.name ?? "").filter((s) => s !== ""),
+  }));
+}
+
+async function ensureWorktree(repo: string, path: string, sha: string): Promise<void> {
   if (existsSync(path)) {
-    run(path, ["checkout", "-q", "--detach", sha]);
+    await runAsync(path, ["checkout", "-q", "--detach", sha]);
     return;
   }
   mkdirSync(dirname(path), { recursive: true });
-  run(repo, ["worktree", "add", "-q", "--detach", path, sha]);
+  await runAsync(repo, ["worktree", "add", "-q", "--detach", path, sha]);
 }
 
 function build(repoPath: string, baseSha: string, headSha: string, subject: string): Packet {
@@ -62,22 +116,22 @@ function build(repoPath: string, baseSha: string, headSha: string, subject: stri
   return buildPacketFromDiff(diff, { repoPath, branch, baseSha, headSha, subject, now: Date.now() });
 }
 
-export function fromPr(cwd: string, number: string): Review {
+export async function fromPr(cwd: string, number: string): Promise<Review> {
   const repo = mainRepo(cwd);
-  const pr = ghPr(repo, number);
+  const pr = await ghPr(repo, number);
   const headRef = `refs/station/pr/${pr.number}/head`;
   const baseRef = `refs/station/pr/${pr.number}/base`;
-  run(repo, [
+  await runAsync(repo, [
     "fetch",
     "-q",
     "origin",
     `+refs/pull/${pr.number}/head:${headRef}`,
     `+refs/heads/${pr.baseRefName}:${baseRef}`,
   ]);
-  const headSha = run(repo, ["rev-parse", headRef]).trim();
-  const baseSha = run(repo, ["merge-base", baseRef, headSha]).trim();
+  const headSha = (await runAsync(repo, ["rev-parse", headRef])).trim();
+  const baseSha = (await runAsync(repo, ["merge-base", baseRef, headSha])).trim();
   const wt = join(repo, "worktrees", "review", `pr-${pr.number}`);
-  ensureWorktree(repo, wt, headSha);
+  await ensureWorktree(repo, wt, headSha);
   const slug = repoSlug(repo);
   return {
     key: `${slug.replace(/\//g, "-")}-pr-${pr.number}`,

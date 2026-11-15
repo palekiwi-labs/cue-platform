@@ -2,12 +2,12 @@ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/p
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import { chunkFingerprint, type FoldState } from "./state.js";
 
-const RESET = "\x1b[0m";
-const BOLD = "\x1b[1m";
+export const RESET = "\x1b[0m";
+export const BOLD = "\x1b[1m";
 const fg = (r: number, g: number, b: number): string => `\x1b[38;2;${r};${g};${b}m`;
 const bg = (r: number, g: number, b: number): string => `\x1b[48;2;${r};${g};${b}m`;
 
-const C = {
+export const C = {
   text: fg(220, 223, 228),
   dim: fg(125, 133, 144),
   faint: fg(85, 92, 102),
@@ -64,7 +64,7 @@ function statusLetter(f: PacketFile): string {
   }
 }
 
-function fit(text: string, width: number): string {
+export function fit(text: string, width: number): string {
   if (width <= 0) return "";
   return truncateToWidth(text, width, "", true);
 }
