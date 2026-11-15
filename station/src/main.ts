@@ -69,20 +69,19 @@ function review(packetPath: string): void {
     state,
     headMatches,
     onQuit: () => {
-      clearInterval(keepalive);
+      tui.stop();
       process.exit(0);
     },
     onPersist: (s) => persistState(sp, s),
     onOpen: (chunk) => openEditor(tui, packet, chunk),
   });
   tui.addChild(view);
-  const keepalive = setInterval(() => tui.requestRender(), 30_000);
   tui.addInputListener((data) => {
     view.handleInput(data);
     tui.requestRender();
     return { consume: true };
   });
-  tui.requestRender();
+  tui.start();
 }
 
 export function main(): void {
