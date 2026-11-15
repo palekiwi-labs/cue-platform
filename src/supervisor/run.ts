@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { systemctlIsLive } from "./reconcile";
+import { cleanupWorktree, createWorktree, planWorktree, type WorktreeRecord } from "./worktree";
 import { join } from "node:path";
 import { deriveResult, type RunResult } from "./result";
 import { systemdRunArgv, sliceName, unitName } from "./launch";
@@ -13,6 +15,7 @@ export interface RunRecord {
   sessionId: string;
   spec: RunSpec;
   acceptedAt: number;
+  worktree?: WorktreeRecord;
 }
 
 export interface LaunchEnvironment {
@@ -51,6 +54,11 @@ export function launchBatch(spec: BatchSpec, launchEnv: LaunchEnvironment): Batc
     acceptedAt: Date.now(),
   }));
   for (const record of records) {
+    if (record.spec.worktree) {
+      record.worktree = planWorktree(record.spec.cwd, record.spec.worktree.base, record.runId);
+    }
+  }
+  for (const record of records) {
     record.unit = unitName(record.runId);
     const runDir = join(runsDir(launchEnv.root), record.runId);
     ensureDir(join(runDir, "session"));
@@ -64,11 +72,17 @@ export function launchBatch(spec: BatchSpec, launchEnv: LaunchEnvironment): Batc
 
   const runs = records.map((record) => {
     const runDir = join(runsDir(launchEnv.root), record.runId);
+    try {
+      if (record.worktree) createWorktree(record);
+    } catch (error) {
+      recordLaunchFailure(runDir, error instanceof Error ? error.message : String(error));
+      return { runId: record.runId, runDir };
+    }
     const argv = systemdRunArgv({
       runId: record.runId,
       batchId,
       runDir,
-      spec: record.spec,
+      spec: { ...record.spec, cwd: record.worktree?.path ?? record.spec.cwd },
       sessionId: record.sessionId,
       piPath: launchEnv.piPath,
       shPath: launchEnv.shPath,
@@ -91,7 +105,13 @@ export async function waitForResults(
 ): Promise<{ runId: string; result: RunResult }[]> {
   const pending = new Set(batch.runs.map((run) => run.runDir));
   while (pending.size > 0) {
-    for (const runDir of pending) if (existsSync(join(runDir, "result.json"))) pending.delete(runDir);
+    for (const runDir of pending) {
+      if (!existsSync(join(runDir, "result.json"))) continue;
+      const record = readJsonIfExists<RunRecord>(join(runDir, "run.json"))!;
+      if (record.worktree && systemctlIsLive(record.unit)) continue;
+      cleanupWorktree(runDir, record);
+      pending.delete(runDir);
+    }
     if (pending.size > 0) await Bun.sleep(pollMs);
   }
   return batch.runs.map((run) => ({

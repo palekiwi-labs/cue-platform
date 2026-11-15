@@ -6,6 +6,7 @@ export interface RunSpec {
   prompt: string;
   model?: string;
   timeoutSec?: number;
+  worktree?: { base: string };
 }
 
 export interface BatchSpec {
@@ -21,7 +22,7 @@ function fail(path: string, message: string): never {
 function parseRun(value: unknown, path: string): RunSpec {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(path, "must be an object");
   const run = value as Record<string, unknown>;
-  const known = new Set(["cwd", "context", "prompt", "model", "timeoutSec"]);
+  const known = new Set(["cwd", "context", "prompt", "model", "timeoutSec", "worktree"]);
   for (const key of Object.keys(run)) if (!known.has(key)) fail(path, `unknown field ${key}`);
   if (typeof run.cwd !== "string" || !isAbsolute(run.cwd)) fail(`${path}.cwd`, "must be an absolute path");
   if (typeof run.context !== "string" || run.context === "") fail(`${path}.context`, "must be a non-empty string");
@@ -35,10 +36,23 @@ function parseRun(value: unknown, path: string): RunSpec {
   ) {
     fail(`${path}.timeoutSec`, "must be a positive integer");
   }
+  let worktree: RunSpec["worktree"];
+  if (run.worktree !== undefined && run.worktree !== false) {
+    if (run.worktree === true) worktree = { base: "HEAD" };
+    else {
+      const value = run.worktree as Record<string, unknown>;
+      if (typeof value !== "object" || value === null || Array.isArray(value) ||
+          typeof value.base !== "string" || value.base === "" || Object.keys(value).some((key) => key !== "base")) {
+        fail(`${path}.worktree`, "must be a boolean or { base: non-empty string }");
+      }
+      worktree = { base: value.base as string };
+    }
+  }
   return {
     cwd: run.cwd,
     context: run.context,
     prompt: run.prompt,
+    ...(worktree !== undefined ? { worktree } : {}),
     ...(run.model !== undefined ? { model: run.model as string } : {}),
     ...(run.timeoutSec !== undefined ? { timeoutSec: run.timeoutSec as number } : {}),
   };

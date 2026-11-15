@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchBatch } from "./run";
@@ -204,6 +204,90 @@ describe.skipIf(!process.env.SUP_PI)("cancelling a real pi run", () => {
     const sessions = Array.from(new Bun.Glob("**/*.jsonl").scanSync(join(runDir, "session")));
     expect(sessions.length).toBe(1);
   }, 120_000);
+});
+
+describe.skipIf(!process.env.SUP_SYSTEMD)("systemd worktree lifecycle", () => {
+  function setup() {
+    const dir = mkdtempSync(join(tmpdir(), "sup-wt-systemd-"));
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    for (const args of [["init"], ["config", "user.name", "Test"],
+      ["config", "user.email", "test@example.invalid"], ["commit", "--allow-empty", "-m", "initial"]]) {
+      const proc = Bun.spawnSync(["git", "-C", repo, ...args]);
+      if (proc.exitCode !== 0) throw new Error(proc.stderr.toString());
+    }
+    const fakePi = join(dir, "pi");
+    writeFileSync(fakePi, FAKE_PI_CANCEL);
+    chmodSync(fakePi, 0o755);
+    const root = join(dir, "state");
+    const spec = join(dir, "spec.json");
+    const runDir = (id: string) => join(root, "runs", id);
+    const record = (id: string) => JSON.parse(readFileSync(join(runDir(id), "run.json"), "utf8"));
+    const cleanup = (id: string) => JSON.parse(readFileSync(join(runDir(id), "cleanup.json"), "utf8"));
+    return { repo, fakePi, root, spec, runDir, record, cleanup };
+  }
+
+  test("foreground completion and launch failure clean owned checkouts", () => {
+    const { repo, fakePi, root, spec, runDir, record, cleanup } = setup();
+    writeFileSync(spec, JSON.stringify({ runs: [{ cwd: repo, context: "c", prompt: "ok", worktree: true }] }));
+    const output = cli(root, ["run", spec], { CUE_SUPERVISOR_PI: fakePi });
+    const id = output.runs[0].runId;
+    expect(output.runs[0].result.outcome).toBe("succeeded");
+    expect(cleanup(id).status).toBe("complete");
+    expect(existsSync(record(id).worktree.path)).toBe(false);
+    expect(existsSync(join(runDir(id), "session"))).toBe(true);
+
+    const failed = Bun.spawnSync([process.execPath, CLI, "run", spec], {
+      env: { ...process.env, CUE_SUPERVISOR_STATE: root, CUE_SUPERVISOR_PI: join(repo, "absent") },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(failed.exitCode).toBe(1);
+    const failure = JSON.parse(failed.stdout.toString()).runs[0];
+    expect(failure.result.outcome).toBe("launch_failed");
+    expect(cleanup(failure.runId).status).toBe("complete");
+    expect(existsSync(record(failure.runId).worktree.path)).toBe(false);
+  }, 60_000);
+
+  test("detached completion waits for recovery; cancellation cleans siblings separately", async () => {
+    const { repo, fakePi, root, spec, runDir, record, cleanup } = setup();
+    writeFileSync(spec, JSON.stringify({ runs: ["ok", "hang", "hang"].map((prompt) => ({
+      cwd: repo, context: "c", prompt, worktree: { base: "HEAD" },
+    })) }));
+    const batch = cli(root, ["run", "--detach", spec], { CUE_SUPERVISOR_PI: fakePi });
+    const [done, first, second] = batch.runIds;
+    try {
+      await waitFor(join(runDir(done), "result.json"));
+      for (const id of [first, second]) await waitFor(join(runDir(id), "started.json"));
+      expect(existsSync(record(done).worktree.path)).toBe(true);
+      expect(existsSync(join(runDir(done), "cleanup.json"))).toBe(false);
+      cli(root, ["reconcile"]);
+      expect(cleanup(done).status).toBe("complete");
+      expect(existsSync(record(first).worktree.path)).toBe(true);
+      cli(root, ["cancel", "run", first]);
+      expect(cleanup(first).status).toBe("complete");
+      expect(existsSync(record(first).worktree.path)).toBe(false);
+      expect(existsSync(record(second).worktree.path)).toBe(true);
+      cli(root, ["cancel", "batch", batch.batchId]);
+      expect(cleanup(second).status).toBe("complete");
+      expect(existsSync(record(second).worktree.path)).toBe(false);
+    } finally {
+      cli(root, ["cancel", "batch", batch.batchId]);
+    }
+  }, 60_000);
+
+  test("an invalid worktree revision prevents the whole batch launching", () => {
+    const { repo, fakePi, root, spec } = setup();
+    writeFileSync(spec, JSON.stringify({ runs: ["HEAD", "missing-revision"].map((base) => ({
+      cwd: repo, context: "c", prompt: "ok", worktree: { base },
+    })) }));
+    const proc = Bun.spawnSync([process.execPath, CLI, "run", spec], {
+      env: { ...process.env, CUE_SUPERVISOR_STATE: root, CUE_SUPERVISOR_PI: fakePi },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(proc.exitCode).not.toBe(0);
+    expect(existsSync(join(root, "runs"))).toBe(false);
+    expect(existsSync(join(repo, "worktrees"))).toBe(false);
+  }, 60_000);
 });
 
 describe.skipIf(!process.env.SUP_SYSTEMD)("systemd reconciliation", () => {

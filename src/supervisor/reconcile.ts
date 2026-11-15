@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cleanupWorktree } from "./worktree";
 import { deriveRunDir } from "./finalize";
 import { deriveResult } from "./result";
 import type { RunRecord } from "./run";
@@ -9,11 +10,16 @@ export type ReconcileState = "finished" | "derived" | "running" | "pending" | "u
 
 export type UnitIsLive = (unit: string) => boolean;
 
-const LIVE_STATES = new Set(["active", "activating", "deactivating", "reloading"]);
+const LIVE_STATES = new Set(["active", "activating", "deactivating", "reloading", "refreshing", "maintenance"]);
+const DEAD_STATES = new Set(["inactive", "failed", "unknown"]);
 
 export function systemctlIsLive(unit: string): boolean {
-  const proc = Bun.spawnSync(["systemctl", "--user", "is-active", unit], { stdout: "pipe", stderr: "ignore" });
-  return LIVE_STATES.has(proc.stdout.toString().trim());
+  const proc = Bun.spawnSync(["systemctl", "--user", "is-active", unit], { stdout: "pipe", stderr: "pipe" });
+  const state = proc.stdout.toString().trim();
+  if (proc.stderr.length > 0 || (!LIVE_STATES.has(state) && !DEAD_STATES.has(state))) {
+    throw new Error(`cannot determine unit state: ${proc.stderr.toString().trim() || state}`);
+  }
+  return LIVE_STATES.has(state);
 }
 
 /**
@@ -49,6 +55,9 @@ export function reconcile(
       const cancel = readJsonIfExists<{ requestedAt: number }>(join(runDir, "cancel"));
       writeJsonAtomic(join(runDir, "result.json"), deriveResult({ termination: null, cancel, events }));
       states[runId] = "unknown";
+    }
+    if (record.worktree && existsSync(join(runDir, "result.json")) && !isLive(record.unit)) {
+      cleanupWorktree(runDir, record);
     }
   }
   return states;

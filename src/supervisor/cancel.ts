@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { systemctlIsLive } from "./reconcile";
+import { cleanupWorktree } from "./worktree";
 import type { CancelIntent } from "./result";
 import type { RunRecord } from "./run";
 import { batchesDir, readJsonIfExists, runsDir, writeJsonAtomic } from "./store";
@@ -57,5 +59,10 @@ export function cancel(
   const toStop = target.kind === "batch" && slice !== null && units.length > 0 ? [slice] : units;
   stop(toStop);
   report.stopped = toStop;
+  for (const runId of runIds) {
+    const runDir = join(runsDir(root), runId);
+    const record = readJsonIfExists<RunRecord>(join(runDir, "run.json"))!;
+    if (record.worktree && !systemctlIsLive(record.unit)) cleanupWorktree(runDir, record);
+  }
   return report;
 }
