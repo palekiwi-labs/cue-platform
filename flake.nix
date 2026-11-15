@@ -35,6 +35,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
         platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf cue cast; };
         # Host side: cast and its TUI. Kept out of the container bundle.
+        station = import ./nix/station.nix { inherit pkgs; };
         host = {
           inherit (cast.packages.${system}) cast;
           cast-tui = import ./nix/cast-tui.nix { inherit pkgs; };
@@ -42,7 +43,7 @@
       in
       {
         packages = platform // host // {
-          station = import ./nix/station.nix { inherit pkgs; };
+          inherit station;
           host = pkgs.symlinkJoin {
             name = "cue-platform-host";
             paths = builtins.attrValues host;
@@ -53,7 +54,7 @@
           default = pkgs.buildEnv {
             name = "cue-platform";
             # The picker stays off PATH: tmux binds it by store path.
-            paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]);
+            paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]) ++ [ station ];
           };
         };
 

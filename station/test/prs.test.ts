@@ -28,7 +28,7 @@ test("list renders, navigates and opens", () => {
   v.setPrs([pr(1), pr(2, ["me"])], "me");
   const lines = v.render(100).map(stripTerminalSequences);
   assert.ok(lines.every((l) => visibleWidth(l) <= 100));
-  assert.ok(lines.some((l) => l.includes("#2") && l.includes("draft") && l.includes("●")));
+  assert.ok(lines.some((l) => l.includes("#2") && l.includes("●")));
   assert.ok(lines[1]?.includes("1 requesting me"));
   v.handleInput("j");
   v.handleInput("\r");

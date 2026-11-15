@@ -114,13 +114,32 @@ export class PrsView implements Component {
     const marker = selected ? `${C.accent}▌` : " ";
     const base = selected ? C.selBg : "";
     const num = `${C.dim}#${String(pr.number).padEnd(6)}`;
-    const draft = pr.isDraft ? `${C.faint}draft ` : "";
     const req = mine ? `${C.mod}● ` : "  ";
     const right = `${decision(pr.reviewDecision)}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
     const rightW = visibleWidth(right);
-    const left = `${marker}${base}${req}${num}${draft}${pr.isDraft ? C.dim : C.text}${pr.title}`;
+    const left = `${marker}${base}${req}${num}${pr.isDraft ? C.dim : C.text}${pr.title}`;
     const leftCell = fit(left, Math.max(0, width - rightW - 1));
     return `${base}${leftCell}${base} ${right}${RESET}`;
+  }
+
+  private overlay(body: string[], width: number): void {
+    const text = this.status ?? "";
+    const boxW = Math.min(width - 4, Math.max(30, visibleWidth(text) + 6));
+    const left = Math.max(0, Math.floor((width - boxW) / 2));
+    const top = Math.max(0, Math.floor(body.length / 2) - 2);
+    const color = this.error ? C.del : C.text;
+    const pad = " ".repeat(left);
+    const inner = boxW - 2;
+    const lines = [
+      `${C.accent}╭${"─".repeat(inner)}╮`,
+      `${C.accent}│${C.fileBg}${" ".repeat(inner)}${RESET}${C.accent}│`,
+      `${C.accent}│${C.fileBg}${fit(`  ${color}${text}`, inner)}${RESET}${C.accent}│`,
+      `${C.accent}│${C.fileBg}${" ".repeat(inner)}${RESET}${C.accent}│`,
+      `${C.accent}╰${"─".repeat(inner)}╯`,
+    ];
+    lines.forEach((l, i) => {
+      if (top + i < body.length) body[top + i] = `${pad}${l}${RESET}`;
+    });
   }
 
   render(width: number): string[] {
@@ -138,16 +157,12 @@ export class PrsView implements Component {
     if (this.cursor < this.offset) this.offset = this.cursor;
     if (this.cursor >= this.offset + bodyH) this.offset = this.cursor - bodyH + 1;
     const body: string[] = [];
-    if (this.status !== null) {
-      body.push("");
-      body.push(fit(`  ${this.error ? C.del : C.dim}${this.status}${RESET}`, width));
-    }
-    const listH = bodyH - body.length;
-    for (let i = this.offset; i < this.prs.length && body.length < bodyH && i < this.offset + listH; i++) {
+    for (let i = this.offset; i < this.prs.length && body.length < bodyH; i++) {
       body.push(this.renderPr(this.prs[i] as PrSummary, i === this.cursor, width, now));
     }
     if (this.status === null && this.prs.length === 0) body.push(fit(`  ${C.dim}no open pull requests${RESET}`, width));
     while (body.length < bodyH) body.push("");
+    if (this.status !== null) this.overlay(body, width);
     out.push(...body);
 
     const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
