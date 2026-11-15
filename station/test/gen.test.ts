@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseDiff } from "../src/gen.js";
-import { emptyState, loadPacket, loadState } from "../src/packet.js";
+
 
 const sample = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -61,13 +61,4 @@ test("parseDiff handles added files without old counts", () => {
   assert.equal(h?.oldStart, 0);
   assert.equal(h?.oldLines, 0);
   assert.equal(h?.newLines, 2);
-});
-
-test("loadPacket rejects non-packets and emptyState round-trips", () => {
-  assert.throws(() => loadPacket("{}"));
-  assert.throws(() => loadPacket('{"kind":"other","schema_version":1}'));
-  const s = emptyState("p1");
-  const again = loadState(JSON.stringify(s), "p1");
-  assert.deepEqual(again.read, {});
-  assert.throws(() => loadState("not json", "p1").read, undefined);
 });

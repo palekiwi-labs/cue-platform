@@ -1,4 +1,4 @@
-# station: the review station TUI. Bare `station` opens the demo packet.
+# station: the review station TUI (changes view over a git range or GitHub PR).
 { pkgs }:
 let
   src = ../station;

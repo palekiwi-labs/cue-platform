@@ -181,6 +181,10 @@ export function buildPacketFromDiff(diff: string, meta: PacketMeta): Packet {
   };
 }
 
+export function diffRange(repoPath: string, baseSha: string, headSha: string): string {
+  return run(repoPath, ["diff", "--no-color", "--full-index", "-M50", `${baseSha}..${headSha}`]);
+}
+
 export function buildPacket(repoPath: string, range: string, now = Date.now()): Packet {
   const [baseRef, headRef] = range.split("..");
   if (headRef === undefined) throw new Error(`range must be base..head, got: ${range}`);
