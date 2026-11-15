@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { RunSpec } from "./spec";
+import type { AgentSpec, RunSpec } from "./spec";
 
 export const DEFAULT_MODEL = "google/gemini-3.8-flash";
 
@@ -57,6 +57,29 @@ export function sliceName(batchId: string): string {
   return `cue-runs-${batchId}.slice`;
 }
 
+export const PI_ISOLATION_FLAGS = [
+  "--no-extensions",
+  "--no-skills",
+  "--no-context-files",
+  "--no-prompt-templates",
+  "--no-mcp",
+  "--no-approve",
+];
+
+function agentArgs(agent: AgentSpec | undefined): string[] {
+  if (agent === undefined) return [];
+  const args: string[] = [];
+  if (agent.isolated) args.push(...PI_ISOLATION_FLAGS);
+  for (const extension of agent.extensions ?? []) args.push("-e", extension);
+  if (agent.thinking !== undefined) args.push("--thinking", agent.thinking);
+  if (agent.tools !== undefined) {
+    if (agent.tools.length === 0) args.push("--no-tools");
+    else args.push("--tools", agent.tools.join(","));
+  }
+  if (agent.systemPrompt !== undefined) args.push("--append-system-prompt", agent.systemPrompt);
+  return args;
+}
+
 export function piArgv(params: Pick<UnitParams, "piPath" | "runDir" | "sessionId" | "spec">): string[] {
   return [
     params.piPath,
@@ -69,6 +92,7 @@ export function piArgv(params: Pick<UnitParams, "piPath" | "runDir" | "sessionId
     join(params.runDir, "session"),
     "--session-id",
     params.sessionId,
+    ...agentArgs(params.spec.agent),
     params.spec.prompt,
   ];
 }

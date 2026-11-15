@@ -49,7 +49,7 @@ export function launchBatch(
   const batchId = newId();
   ensureDir(batchesDir(launchEnv.root));
   const records: RunRecord[] = spec.runs.map((runSpec, index) => {
-    const runId = `${batchId}-supervisor-${index + 1}`;
+    const runId = `${batchId}-${runSpec.agent?.name ?? "supervisor"}-${index + 1}`;
     return {
       runId,
       batchId,

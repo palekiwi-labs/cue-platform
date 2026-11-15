@@ -5,7 +5,7 @@ import { reconcile } from "./reconcile";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveRunDir, finalize, terminationFromEnv } from "./finalize";
-import { ENV_ALLOWLIST, systemdRunArgv } from "./launch";
+import { ENV_ALLOWLIST, PI_ISOLATION_FLAGS, piArgv, systemdRunArgv } from "./launch";
 import { parseBatchSpec, SpecError } from "./spec";
 
 const run = { cwd: "/tmp", context: "ctx", prompt: "hi" };
@@ -22,6 +22,46 @@ describe("parseBatchSpec", () => {
     expect(() => parseBatchSpec({ runs: [{ ...run, timeoutSec: 0 }] })).toThrow("timeoutSec");
     expect(() => parseBatchSpec({ runs: [{ ...run, extra: 1 }] })).toThrow("unknown field extra");
     expect(() => parseBatchSpec({ runs: [] })).toThrow(SpecError);
+  });
+
+  test("accepts a resolved agent block in a fixed key order", () => {
+    const agent = { isolated: true, tools: ["read"], name: "reviewer", thinking: "high", systemPrompt: "Be terse." };
+    const spec = parseBatchSpec({ runs: [{ ...run, agent }] });
+    expect(JSON.stringify(spec.runs[0].agent)).toBe(
+      '{"name":"reviewer","systemPrompt":"Be terse.","tools":["read"],"thinking":"high","isolated":true}',
+    );
+  });
+
+  test("rejects malformed agent blocks", () => {
+    expect(() => parseBatchSpec({ runs: [{ ...run, agent: {} }] })).toThrow("agent.name");
+    expect(() => parseBatchSpec({ runs: [{ ...run, agent: { name: "a b" } }] })).toThrow("agent.name");
+    expect(() => parseBatchSpec({ runs: [{ ...run, agent: { name: "a", thinking: "huge" } }] })).toThrow("thinking");
+    expect(() => parseBatchSpec({ runs: [{ ...run, agent: { name: "a", tools: [""] } }] })).toThrow("tools");
+    expect(() => parseBatchSpec({ runs: [{ ...run, agent: { name: "a", harness: "x" } }] })).toThrow("unknown field harness");
+  });
+});
+
+describe("piArgv agent block", () => {
+  const base = { piPath: "/bin/pi", runDir: "/r", sessionId: "sid" };
+
+  test("maps agent fields onto pi flags before the prompt", () => {
+    const argv = piArgv({
+      ...base,
+      spec: {
+        ...run,
+        agent: { name: "c", isolated: true, extensions: ["/ext.ts"], thinking: "off", tools: ["read", "bash"], systemPrompt: "SP" },
+      },
+    });
+    expect(argv.slice(argv.indexOf("sid") + 1)).toEqual([
+      ...PI_ISOLATION_FLAGS, "-e", "/ext.ts", "--thinking", "off", "--tools", "read,bash",
+      "--append-system-prompt", "SP", "hi",
+    ]);
+  });
+
+  test("an empty tool list disables every tool", () => {
+    const argv = piArgv({ ...base, spec: { ...run, agent: { name: "s", tools: [] } } });
+    expect(argv).toContain("--no-tools");
+    expect(argv).not.toContain("--tools");
   });
 });
 
