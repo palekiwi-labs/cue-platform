@@ -131,6 +131,36 @@ cast through `cast-mcp-client`; outside cast it remains inactive.
 Pi imports are supplied by the running harness; development dependencies
 pin its types to the packaged version.
 
+## Speech transport
+
+Pi speech defaults to live core NATS publications through the local leaf at
+`nats://127.0.0.1:4222`; `CUE_NATS_URL` overrides that address. The host
+must route `speech.intent.>` from AGENT to HOST and run the utterance-aware
+speech bridge. There is no HTTP fallback and no offline speech queue.
+
+After updating the local checkout, use `/reload` or start a new pi process.
+Enable live speech in session settings (F3). Alt+x and `/speech-stop` stop
+all host speech, including clipboard playback, even when session speech is
+off. A disconnected stop is dropped; use the host emergency stop if needed.
+
+Live chunks share an utterance ID and contiguous sequence numbers starting
+at zero. Message completion sends an empty final chunk; cancellation closes
+the local utterance and sends global stop without a delayed second stop.
+Whole-message sends use a fresh utterance and finalize it. Text is split to
+1000 Unicode characters and checked against the bridge's 8192-byte JSON
+limit. One persistent client serves the extension and closes on shutdown.
+
+Publications never await bridge acknowledgements. Connected publication is
+not proof of playback: holds, queue limits and stale IDs can reject speech;
+inspect host `speech.evt.rejected` events for these failures. A failed local
+publication drops the rest of that utterance; only a new message can retry.
+
+For temporary legacy use only, start pi with `CUE_SPEECH_TRANSPORT=http`.
+`CUE_SPEECH_URL` then overrides the HTTP bridge address. An explicit `url`
+in the extension options also selects HTTP unless `transport` is `nats`.
+The HTTP sender retains its existing delayed-stop race workaround; the
+NATS sender never uses it. Do not use HTTP to circumvent coordination.
+
 ## Validation
 
 ```sh
