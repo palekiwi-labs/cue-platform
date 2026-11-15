@@ -129,6 +129,15 @@ cast through `cast-mcp-client`; outside cast it remains inactive.
 Pi imports are supplied by the running harness; development dependencies
 pin its types to the packaged version.
 
+## GitHub snapshot service
+
+`github-service/` is a separately packaged Node service providing private
+SQLite PR snapshots over core NATS. Build `.#cue-github` or run
+`nix run .#cue-github -- --help`. It is not part of the default bundle.
+See [the service README](github-service/README.md) for the read-only TOML
+configuration, protocol, validation and next integration steps. No pi or
+station integration or VM service configuration is installed by this package.
+
 ## Validation
 
 ```sh

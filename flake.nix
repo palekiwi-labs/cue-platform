@@ -33,7 +33,15 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        platform = import ./nix/packages.nix { inherit pkgs llm-agents nvf cue cast; };
+        platform = import ./nix/packages.nix {
+          inherit
+            pkgs
+            llm-agents
+            nvf
+            cue
+            cast
+            ;
+        };
         # Host side: cast and its TUI. Kept out of the container bundle.
         host = {
           inherit (cast.packages.${system}) cast;
@@ -41,20 +49,24 @@
         };
       in
       {
-        packages = platform // host // {
-          host = pkgs.symlinkJoin {
-            name = "cue-platform-host";
-            paths = builtins.attrValues host;
-            meta.mainProgram = "cast";
+        packages =
+          platform
+          // host
+          // {
+            cue-github = import ./nix/cue-github.nix { inherit pkgs; };
+            host = pkgs.symlinkJoin {
+              name = "cue-platform-host";
+              paths = builtins.attrValues host;
+              meta.mainProgram = "cast";
+            };
+            # Everything above in one package, so consumers add a single
+            # entry and pick up new tools without editing their flake.
+            default = pkgs.buildEnv {
+              name = "cue-platform";
+              # The picker stays off PATH: tmux binds it by store path.
+              paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]);
+            };
           };
-          # Everything above in one package, so consumers add a single
-          # entry and pick up new tools without editing their flake.
-          default = pkgs.buildEnv {
-            name = "cue-platform";
-            # The picker stays off PATH: tmux binds it by store path.
-            paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]);
-          };
-        };
 
         devShells.default = pkgs.mkShell {
           packages = [
