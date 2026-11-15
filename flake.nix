@@ -61,6 +61,7 @@
             platform.pi
             pkgs.bun
             pkgs.nodejs
+            pkgs.nats-server
             pkgs.python3
             pkgs.tmux
           ];
