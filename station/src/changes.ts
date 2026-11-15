@@ -47,6 +47,7 @@ export interface ChangesOptions {
   folds: FoldState;
   headMatches: boolean;
   onQuit: () => void;
+  quitLabel?: string;
   onFolds: (folds: FoldState) => void;
   onOpen: (file: PacketFile, line: number) => void;
 }
@@ -91,6 +92,8 @@ export class ChangesView implements Component {
   private offset = 0;
   private sidebarOffset = 0;
   private sidebar = true;
+  private filesFocus = false;
+  private fileCursor = 0;
   private lastHeight = 20;
 
   constructor(opts: ChangesOptions) {
@@ -207,8 +210,10 @@ export class ChangesView implements Component {
   }
 
   private moveFile(delta: number): void {
-    const cur = this.current().file;
-    const target = cur + delta;
+    this.jumpFile(this.current().file + delta);
+  }
+
+  private jumpFile(target: number): void {
     const i = this.stops.findIndex((s) => s.file === target);
     if (i === -1) return;
     this.cursor = i;
@@ -258,7 +263,55 @@ export class ChangesView implements Component {
     this.opts.onOpen(f, Math.max(1, line));
   }
 
+  handleEscape(): boolean {
+    if (!this.filesFocus) return false;
+    this.filesFocus = false;
+    return true;
+  }
+
+  private handleFilesInput(data: string): void {
+    const n = this.packet.files.length;
+    switch (data) {
+      case "j":
+      case "\x1b[B":
+        this.fileCursor = Math.min(n - 1, this.fileCursor + 1);
+        return;
+      case "k":
+      case "\x1b[A":
+        this.fileCursor = Math.max(0, this.fileCursor - 1);
+        return;
+      case "g":
+        this.fileCursor = 0;
+        return;
+      case "G":
+        this.fileCursor = n - 1;
+        return;
+      case "\r":
+      case "l":
+        this.jumpFile(this.fileCursor);
+        this.filesFocus = false;
+        return;
+      case "\t":
+        this.filesFocus = false;
+        return;
+      case "t":
+        this.filesFocus = false;
+        this.sidebar = false;
+        return;
+      case "q":
+      case "\x03":
+        this.opts.onQuit();
+        return;
+      default:
+        return;
+    }
+  }
+
   handleInput(data: string): void {
+    if (this.filesFocus) {
+      this.handleFilesInput(data);
+      return;
+    }
     const h = this.lastHeight;
     switch (data) {
       case "q":
@@ -308,6 +361,11 @@ export class ChangesView implements Component {
         return;
       case "t":
         this.sidebar = !this.sidebar;
+        return;
+      case "\t":
+        this.sidebar = true;
+        this.filesFocus = true;
+        this.fileCursor = this.current().file;
         return;
       case "o":
       case "\r":
@@ -368,9 +426,10 @@ export class ChangesView implements Component {
   private renderSidebar(height: number, w: number): string[] {
     const files = this.packet.files;
     const out: string[] = [];
-    out.push(C.barBg + fit(` ${C.text}${BOLD}Files${RESET}${C.barBg} ${C.dim}${files.length}`, w) + RESET);
+    const label = this.filesFocus ? C.accent : C.text;
+    out.push(C.barBg + fit(` ${label}${BOLD}Files${RESET}${C.barBg} ${C.dim}${files.length}`, w) + RESET);
     const listH = height - 1;
-    const cur = this.current().file;
+    const cur = this.filesFocus ? this.fileCursor : this.current().file;
     if (cur < this.sidebarOffset) this.sidebarOffset = cur;
     if (cur >= this.sidebarOffset + listH) this.sidebarOffset = cur - listH + 1;
     for (let i = this.sidebarOffset; i < files.length && out.length < height; i++) {
@@ -417,7 +476,9 @@ export class ChangesView implements Component {
 
     const cur = this.current();
     const pos = `file ${cur.file + 1}/${p.files.length}  stop ${this.cursor + 1}/${this.stops.length} `;
-    const keys = ` ${C.text}j/k${C.dim} chunk  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}t${C.dim} files  ${C.text}o${C.dim} open  ${C.text}q${C.dim} quit`;
+    const keys = this.filesFocus
+      ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}tab/esc${C.dim} back to diff`
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}o${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;

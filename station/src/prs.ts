@@ -34,8 +34,7 @@ export class PrsView implements Component {
   private readonly opts: PrsOptions;
   private prs: PrSummary[] = [];
   private me = "";
-  private status: string | null = "loading pull requests…";
-  private error = false;
+  private loaded = false;
   private cursor = 0;
   private offset = 0;
   private lastHeight = 20;
@@ -49,14 +48,8 @@ export class PrsView implements Component {
   setPrs(prs: PrSummary[], me: string): void {
     this.prs = prs;
     this.me = me;
-    this.status = null;
-    this.error = false;
+    this.loaded = true;
     this.cursor = Math.min(this.cursor, Math.max(0, prs.length - 1));
-  }
-
-  setStatus(text: string | null, error = false): void {
-    this.status = text;
-    this.error = error;
   }
 
   selected(): PrSummary | undefined {
@@ -122,26 +115,6 @@ export class PrsView implements Component {
     return `${base}${leftCell}${base} ${right}${RESET}`;
   }
 
-  private overlay(body: string[], width: number): void {
-    const text = this.status ?? "";
-    const boxW = Math.min(width - 4, Math.max(30, visibleWidth(text) + 6));
-    const left = Math.max(0, Math.floor((width - boxW) / 2));
-    const top = Math.max(0, Math.floor(body.length / 2) - 2);
-    const color = this.error ? C.del : C.text;
-    const pad = " ".repeat(left);
-    const inner = boxW - 2;
-    const lines = [
-      `${C.accent}╭${"─".repeat(inner)}╮`,
-      `${C.accent}│${C.fileBg}${" ".repeat(inner)}${RESET}${C.accent}│`,
-      `${C.accent}│${C.fileBg}${fit(`  ${color}${text}`, inner)}${RESET}${C.accent}│`,
-      `${C.accent}│${C.fileBg}${" ".repeat(inner)}${RESET}${C.accent}│`,
-      `${C.accent}╰${"─".repeat(inner)}╯`,
-    ];
-    lines.forEach((l, i) => {
-      if (top + i < body.length) body[top + i] = `${pad}${l}${RESET}`;
-    });
-  }
-
   render(width: number): string[] {
     const total = Math.max(8, process.stdout.rows ?? 40);
     const bodyH = total - 3;
@@ -160,9 +133,8 @@ export class PrsView implements Component {
     for (let i = this.offset; i < this.prs.length && body.length < bodyH; i++) {
       body.push(this.renderPr(this.prs[i] as PrSummary, i === this.cursor, width, now));
     }
-    if (this.status === null && this.prs.length === 0) body.push(fit(`  ${C.dim}no open pull requests${RESET}`, width));
+    if (this.loaded && this.prs.length === 0) body.push(fit(`  ${C.dim}no open pull requests${RESET}`, width));
     while (body.length < bodyH) body.push("");
-    if (this.status !== null) this.overlay(body, width);
     out.push(...body);
 
     const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;

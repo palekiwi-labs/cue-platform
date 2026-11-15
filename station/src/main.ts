@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { type Component, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView } from "./changes.js";
 import { run, spawnAsync } from "./git.js";
 import { PrsView } from "./prs.js";
+import { backdrop, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
 import { fromDemo, fromPr, fromRange, listPrs, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { loadFolds, saveFolds } from "./state.js";
@@ -39,6 +40,7 @@ function changesView(
   tui: TuiAltScreen,
   review: Review,
   onQuit: () => void,
+  quitLabel?: string,
 ): ChangesView {
   return new ChangesView({
     title: review.title,
@@ -47,6 +49,7 @@ function changesView(
     folds: loadFolds(review.key),
     headMatches: currentHead(review.repoPath) === review.packet.head_sha,
     onQuit,
+    quitLabel,
     onFolds: (folds) => saveFolds(review.key, folds),
     onOpen: (file, line) => openEditor(tui, review.repoPath, file, line),
   });
@@ -54,17 +57,23 @@ function changesView(
 
 interface Screen extends Component {
   handleInput(data: string): void;
+  handleEscape?(): boolean;
 }
 
 class Router {
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
   private back: (() => void) | null = null;
+  private popup: { handles: OverlayHandle[]; dismissable: boolean } | null = null;
 
   constructor() {
     this.tui.addInputListener((data) => {
-      if (data === "\x1b" && this.back !== null) this.back();
-      else this.screen?.handleInput(data);
+      if (this.popup !== null) {
+        if (this.popup.dismissable) this.hidePopup();
+        else if (data === "\x03") this.quit();
+      } else if (data === "\x1b") {
+        if (this.screen?.handleEscape?.() !== true) this.back?.();
+      } else this.screen?.handleInput(data);
       this.tui.requestRender();
       return { consume: true };
     });
@@ -79,6 +88,25 @@ class Router {
     this.tui.requestRender(true);
   }
 
+  showPopup(content: PopupContent, dismissable = false): void {
+    this.hidePopup();
+    const opts = { nonCapturing: true } as const;
+    this.popup = {
+      dismissable,
+      handles: [
+        this.tui.showOverlay(backdrop, { ...opts, anchor: "top-left", width: "100%", maxHeight: "100%" }),
+        this.tui.showOverlay(new Popup(content), { ...opts, anchor: "center", width: popupWidth() }),
+      ],
+    };
+    this.tui.requestRender();
+  }
+
+  hidePopup(): void {
+    for (const h of this.popup?.handles ?? []) h.hide();
+    this.popup = null;
+    this.tui.requestRender();
+  }
+
   quit(): never {
     this.tui.stop({ preserveScreen: true });
     process.exit(0);
@@ -89,6 +117,10 @@ function showReview(review: Review): void {
   const router = new Router();
   router.show(changesView(router.tui, review, () => router.quit()));
   router.tui.start();
+}
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 async function ghLogin(repo: string): Promise<string> {
@@ -104,14 +136,14 @@ function showPrs(repo: string): void {
   let busy = false;
   let me = "";
   const refresh = async (): Promise<void> => {
-    list.setStatus("loading pull requests…");
-    router.tui.requestRender();
+    router.showPopup({ title: "pull requests", text: "loading…", footer: "ctrl+c quit" });
     try {
       const [prs, login] = await Promise.all([listPrs(repo), me === "" ? ghLogin(repo) : Promise.resolve(me)]);
       me = login;
       list.setPrs(prs, me);
+      router.hidePopup();
     } catch (e) {
-      list.setStatus(e instanceof Error ? e.message : String(e), true);
+      router.showPopup({ title: "pull requests", text: errText(e), error: true, footer: "any key" }, true);
     }
     router.tui.requestRender();
   };
@@ -119,15 +151,13 @@ function showPrs(repo: string): void {
   const open = async (pr: PrSummary): Promise<void> => {
     if (busy) return;
     busy = true;
-    list.setStatus(`fetching #${pr.number}…`);
-    router.tui.requestRender();
+    router.showPopup({ title: `#${pr.number}`, text: `fetching ${pr.title}…`, footer: "ctrl+c quit" });
     try {
       const review = await fromPr(repo, String(pr.number));
-      list.setStatus(null);
-      router.show(changesView(router.tui, review, toList), toList);
+      router.hidePopup();
+      router.show(changesView(router.tui, review, toList, "back"), toList);
     } catch (e) {
-      list.setStatus(e instanceof Error ? e.message : String(e), true);
-      router.tui.requestRender();
+      router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
       busy = false;
     }
