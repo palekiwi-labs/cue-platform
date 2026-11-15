@@ -16,8 +16,10 @@ const parameters = Type.Object({
         description:
           "Cumulative levels. identity: locate the context and see its links. " +
           "brief (default): decide whether it is relevant and catch up. " +
-          "working: only when this session works in the context; adds the " +
-          "latest hand-off in full.",
+          "working: only when this session works in the context; a longer " +
+          "log tail. Every level above identity lists the three most recent " +
+          "hand-off addresses as unselected history; none is injected or " +
+          "meant to be acted on by default.",
       },
     ),
   ),

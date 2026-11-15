@@ -184,50 +184,32 @@ async function logBlock(
   return `<log latest="${Math.min(total, limit)}" total="${total}">\n${md}${note}\n</log>`
 }
 
-interface Handoff {
-  address: string
-  path: string
-  since: number
-}
-
 interface Documents {
   specs: ArtifactRecord[]
   masterPlan?: ArtifactRecord
   openPlans: ArtifactRecord[]
-  handoff?: Handoff
+  handoffs: ArtifactRecord[]
+  olderHandoffs: number
 }
 
-const isHandoff = (a: ArtifactRecord) =>
-  a.type === "trace" && (a.name.split("/").pop() ?? "").startsWith("handoff")
+/** How many recent hand-off addresses a context briefing lists. */
+export const HANDOFF_HISTORY = 3
+
+/** True for a trace file name that marks a hand-off (`handoff*`). */
+export const isHandoffName = (name: string) =>
+  (name.split("/").pop() ?? "").startsWith("handoff")
+
+const isHandoff = (a: ArtifactRecord) => a.type === "trace" && isHandoffName(a.name)
 
 const createdAt = (a: ArtifactRecord) => Number(a.frontmatter?.created_at ?? 0)
 
-function latestHandoff(
-  address: string,
-  artifacts: ArtifactRecord[],
-  logs: LogRecord[],
-): Handoff | undefined {
-  const trace = artifacts
-    .filter(isHandoff)
-    .sort((a, b) => createdAt(b) - createdAt(a) || b.name.localeCompare(a.name))[0]
-  if (!trace) return undefined
-  const handoffAddress = artifactAddress(address, trace)
-  const attached = logs.find((l) => l.trace === handoffAddress)
-  const cutoff = attached ? attached.timestamp : createdAt(trace) * 1e9
-  return {
-    address: handoffAddress,
-    path: trace.path,
-    since: logs.filter((l) => l.timestamp > cutoff).length,
-  }
-}
+const newestFirst = (a: ArtifactRecord, b: ArtifactRecord) =>
+  createdAt(b) - createdAt(a) || b.name.localeCompare(a.name)
 
-function selectDocuments(
-  address: string,
-  artifacts: ArtifactRecord[],
-  logs: LogRecord[],
-): Documents {
+function selectDocuments(artifacts: ArtifactRecord[]): Documents {
   const byName = (a: ArtifactRecord, b: ArtifactRecord) => a.name.localeCompare(b.name)
   const plans = artifacts.filter((a) => a.type === "plan")
+  const handoffs = artifacts.filter(isHandoff).sort(newestFirst)
   return {
     specs: artifacts.filter((a) => a.type === "spec").sort(byName),
     masterPlan: plans.find((p) => p.name === "index.md"),
@@ -235,8 +217,15 @@ function selectDocuments(
       .filter((p) => p.name !== "index.md")
       .filter((p) => OPEN.has(String(p.frontmatter?.status ?? "open")))
       .sort(byName),
-    handoff: latestHandoff(address, artifacts, logs),
+    handoffs: handoffs.slice(0, HANDOFF_HISTORY).reverse(),
+    olderHandoffs: Math.max(0, handoffs.length - HANDOFF_HISTORY),
   }
+}
+
+function stamp(a: ArtifactRecord): string {
+  const s = createdAt(a)
+  if (!Number.isFinite(s) || s <= 0) return ""
+  return `  ${new Date(s * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`
 }
 
 function documentsIndex(address: string, docs: Documents): string {
@@ -248,28 +237,86 @@ function documentsIndex(address: string, docs: Documents): string {
   for (const p of docs.openPlans) {
     lines.push(`open plan: ${artifactAddress(address, p)}`)
   }
-  if (docs.handoff) {
+  if (docs.handoffs.length > 0) {
     lines.push(
-      `latest hand-off: ${docs.handoff.address} (${docs.handoff.since} log entries since)`,
+      "hand-off history (oldest first; none is selected for this session, " +
+        "and recency implies neither relevance nor unresolved work):",
+      ...docs.handoffs.map((h) => `  - ${artifactAddress(address, h)}${stamp(h)}`),
     )
+    if (docs.olderHandoffs > 0) {
+      lines.push(`  (${docs.olderHandoffs} older hand-offs not listed)`)
+    }
   }
   if (lines.length === 0) return ""
   return `<documents>\n${lines.join("\n")}\n</documents>`
 }
 
-async function handoffBlock(handoff: Handoff): Promise<string> {
-  const attrs = `address="${handoff.address}" entries-since="${handoff.since}"`
-  const text = await readText(handoff.path)
-  if (text === undefined) return `<handoff ${attrs} missing="true"></handoff>`
+function parseArtifactAddress(value: string): { context: string; type: string; name: string } {
+  const parts = value.trim().replace(/^\/+|\/+$/g, "").split("/")
+  if (parts.length < 5 || parts.some((p) => p === "" || p === ".." || /\s/.test(p))) {
+    throw new ExploreError(
+      `"${value}" is not an artifact address <org>/<repo>/<context>/trace/<name>`,
+    )
+  }
+  return {
+    context: parts.slice(0, 3).join("/"),
+    type: parts[3]!,
+    name: parts.slice(4).join("/"),
+  }
+}
+
+/**
+ * The canonical address and full text of one hand-off trace selected
+ * for a session in a context. Fails when the address is not a hand-off
+ * trace of that context or the trace cannot be read; never falls back
+ * to another one.
+ */
+export async function handoffBriefing(
+  pi: Exec,
+  cwd: string,
+  rawContext: string,
+  rawHandoff: string,
+): Promise<{ address: string; briefing: string }> {
+  const context = parseContextAddress(rawContext)
+  const target = parseArtifactAddress(rawHandoff)
+  const handoff = `${target.context}/${target.type}/${target.name}`
+  if (target.context !== context) {
+    throw new ExploreError(`hand-off ${handoff} does not belong to context ${context}`)
+  }
+  if (target.type !== "trace" || !isHandoffName(target.name)) {
+    throw new ExploreError(
+      `${handoff} is not a hand-off; hand-offs are traces named trace/handoff-*`,
+    )
+  }
+  let artifacts: ArtifactRecord[]
+  try {
+    artifacts = JSON.parse(
+      (await cue(pi, cwd, ["list", "--context", context, "--frontmatter"])) || "[]",
+    ) ?? []
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e)
+    throw new ExploreError(`cannot list artifacts of ${context}: ${why}`)
+  }
+  const trace = artifacts.find((a) => isHandoff(a) && a.name === target.name)
+  if (!trace) throw new ExploreError(`no hand-off ${handoff} in context ${context}`)
+  const text = await readText(trace.path)
+  if (text === undefined) throw new ExploreError(`cannot read hand-off ${handoff}`)
+  const logs = await cueJson<LogRecord[]>(pi, cwd, ["log", "list", "--context", context], [])
+  const attached = logs.find((l) => l.trace === handoff)
+  const cutoff = attached ? attached.timestamp : createdAt(trace) * 1e9
+  const since = logs.filter((l) => l.timestamp > cutoff).length
+  const attrs = `address="${handoff}" selected="true" entries-since="${since}"`
   const lines = text.replace(/\r\n/g, "\n").trimEnd().split("\n")
   if (lines.length <= DOC_MAX_LINES) {
-    return `<handoff ${attrs}>\n${lines.join("\n")}\n</handoff>`
+    return { address: handoff, briefing: `<handoff ${attrs}>\n${lines.join("\n")}\n</handoff>` }
   }
   const shown = lines.slice(0, DOC_MAX_LINES).join("\n")
-  return (
-    `<handoff ${attrs} truncated="true">\n${shown}\n` +
-    `[truncated: ${lines.length - DOC_MAX_LINES} more lines; read ${handoff.address}]\n</handoff>`
-  )
+  return {
+    address: handoff,
+    briefing:
+      `<handoff ${attrs} truncated="true">\n${shown}\n` +
+      `[truncated: ${lines.length - DOC_MAX_LINES} more lines; read ${handoff}]\n</handoff>`,
+  }
 }
 
 function footer(store: string): string {
@@ -319,11 +366,10 @@ export async function exploreContext(
       cueJson<LogRecord[]>(pi, cwd, ["log", "list", "--context", address], []),
     ])
     const bodyText = body === undefined ? "" : stripFrontmatter(body)
-    const docs = selectDocuments(address, artifacts, logs)
+    const docs = selectDocuments(artifacts)
     sections.push(
       bodyText ? `<context-body address="${address}">\n${bodyText}\n</context-body>` : "",
       documentsIndex(address, docs),
-      detail === "working" && docs.handoff ? await handoffBlock(docs.handoff) : "",
       footer(store),
       await logBlock(pi, cwd, address, logs.length, LOG_TAIL[detail]),
       recency.artifacts,
