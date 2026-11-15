@@ -133,13 +133,41 @@ describe("registerSessionNaming", () => {
     ])
   })
 
-  test("session_tree to a branch without a context clears CUE_CONTEXT", async () => {
-    const m = makePi()
-    const env: NodeJS.ProcessEnv = { CUE_CONTEXT: "a/b/old" }
-    registerSessionNaming(m.pi, env)
-    await m.handlers.session_tree!({}, ctx([{ type: "message" }]))
-    expect(env.CUE_CONTEXT).toBeUndefined()
-  })
+  test.each(["a/b/inherited", ""])(
+    "unlinked session preserves inherited CUE_CONTEXT %j",
+    async (initial) => {
+      const m = makePi()
+      const env: NodeJS.ProcessEnv = { CUE_CONTEXT: initial }
+      registerSessionNaming(m.pi, env)
+      await m.handlers.session_start!({}, ctx([]))
+      expect(env.CUE_CONTEXT).toBe(initial)
+      await m.handlers.session_tree!({}, ctx([]))
+      expect(env.CUE_CONTEXT).toBe(initial)
+    },
+  )
+
+  test.each(["a/b/inherited", "", undefined])(
+    "linking overrides and unlinking restores initial CUE_CONTEXT %j",
+    async (initial) => {
+      const m = makePi()
+      const env: NodeJS.ProcessEnv = initial === undefined ? {} : { CUE_CONTEXT: initial }
+      registerSessionNaming(m.pi, env)
+      await m.handlers.session_start!({}, ctx([]))
+      expect(env.CUE_CONTEXT).toBe(initial)
+      for (const address of ["a/b/linked", "a/b/other"]) {
+        const link = {
+          type: "custom_message",
+          customType: CUE_CONTEXT_TYPE,
+          details: { address },
+        }
+        await m.handlers.session_tree!({}, ctx([link]))
+        expect(env.CUE_CONTEXT).toBe(address)
+        await m.handlers.session_tree!({}, ctx([]))
+        expect(env.CUE_CONTEXT).toBe(initial)
+        expect(Object.hasOwn(env, "CUE_CONTEXT")).toBe(initial !== undefined)
+      }
+    },
+  )
 
   test("session rename propagates to the tmux window", async () => {
     const m = makePi()

@@ -80,13 +80,15 @@ export function registerSessionNaming(
   pi: ExtensionAPI,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  const initialContext = env.CUE_CONTEXT
   const sync = async (ctx: {
     sessionManager: { getBranch(): readonly { type: string }[] }
   }) => {
     const address = currentContext(ctx.sessionManager.getBranch())
     if (address) await applyContextName(pi, address, env)
     else {
-      delete env.CUE_CONTEXT
+      if (initialContext === undefined) delete env.CUE_CONTEXT
+      else env.CUE_CONTEXT = initialContext
       debugLog(
         `sync/else event session-name=${pi.getSessionName() ?? "undefined"}`,
         pi.getSessionName() || DEFAULT_WINDOW_NAME,
