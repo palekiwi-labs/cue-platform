@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildPacketFromDiff, diffRange } from "./gen.js";
-import { run, runAsync, spawnAsync } from "./git.js";
+import { catFiles, run, runAsync, spawnAsync } from "./git.js";
+import { highlightFile, type Highlights } from "./highlight.js";
 import type { Packet } from "./packet.js";
 
 export interface Review {
@@ -10,6 +11,7 @@ export interface Review {
   subtitle: string;
   repoPath: string;
   packet: Packet;
+  highlights: Highlights;
 }
 
 function topLevel(cwd: string): string {
@@ -112,6 +114,35 @@ async function ensureWorktree(repo: string, path: string, sha: string): Promise<
   await runAsync(repo, ["worktree", "add", "-q", "--detach", path, sha]);
 }
 
+function highlights(repoPath: string, packet: Packet): Highlights {
+  const specs: string[] = [];
+  const slots: { path: string; side: "old" | "new" }[] = [];
+  for (const f of packet.files) {
+    if (f.binary) continue;
+    if (f.status !== "added") {
+      specs.push(`${packet.base_sha}:${f.old_path ?? f.path}`);
+      slots.push({ path: f.path, side: "old" });
+    }
+    if (f.status !== "deleted") {
+      specs.push(`${packet.head_sha}:${f.path}`);
+      slots.push({ path: f.path, side: "new" });
+    }
+  }
+  const blobs = catFiles(repoPath, specs);
+  const sources = new Map<string, { old: string | null; new: string | null }>();
+  slots.forEach((s, i) => {
+    const entry = sources.get(s.path) ?? { old: null, new: null };
+    entry[s.side] = blobs[i] ?? null;
+    sources.set(s.path, entry);
+  });
+  const out: Highlights = new Map();
+  for (const [path, src] of sources) {
+    const h = highlightFile(path, src);
+    if (h !== null) out.set(path, h);
+  }
+  return out;
+}
+
 function build(repoPath: string, baseSha: string, headSha: string, subject: string): Packet {
   const diff = diffRange(repoPath, baseSha, headSha);
   const branch = run(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
@@ -134,13 +165,15 @@ export async function fromPr(cwd: string, number: string): Promise<Review> {
   const baseSha = (await runAsync(repo, ["merge-base", baseRef, headSha])).trim();
   const wt = join(repo, "worktrees", "review", `pr-${pr.number}`);
   await ensureWorktree(repo, wt, headSha);
+  const packet = build(wt, baseSha, headSha, pr.title);
   const slug = repoSlug(repo);
   return {
     key: `${slug.replace(/\//g, "-")}-pr-${pr.number}`,
     title: `#${pr.number}  ${pr.title}`,
     subtitle: `${slug}  ${pr.headRefName} -> ${pr.baseRefName}`,
     repoPath: wt,
-    packet: build(wt, baseSha, headSha, pr.title),
+    packet,
+    highlights: highlights(wt, packet),
   };
 }
 
@@ -171,13 +204,15 @@ export function fromRange(cwd: string, range: string | undefined): Review {
   const headSha = run(repo, ["rev-parse", `${headRef}^{commit}`]).trim();
   const branch = run(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
   const subject = run(repo, ["log", "-1", "--format=%s", headSha]).trim();
+  const packet = build(repo, baseSha, headSha, subject);
   const slug = repoSlug(repo);
   return {
     key: `${slug.replace(/\//g, "-")}-${baseSha.slice(0, 7)}-${headSha.slice(0, 7)}`,
     title: subject,
     subtitle: `${slug}  ${branch}  ${baseSha.slice(0, 7)}..${headSha.slice(0, 7)}`,
     repoPath: repo,
-    packet: build(repo, baseSha, headSha, subject),
+    packet,
+    highlights: highlights(repo, packet),
   };
 }
 
@@ -198,5 +233,6 @@ export function fromDemo(): Review {
     subtitle: "palekiwi/nix-config  feat/agent-microvm  30a461e..9d8a397",
     repoPath: packet.repo_path,
     packet,
+    highlights: new Map(),
   };
 }

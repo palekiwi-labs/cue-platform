@@ -1,5 +1,6 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
+import type { Highlights } from "./highlight.js";
 import { chunkFingerprint, type FoldState } from "./state.js";
 
 export const RESET = "\x1b[0m";
@@ -45,6 +46,7 @@ export interface ChangesOptions {
   subtitle: string;
   packet: Packet;
   folds: FoldState;
+  highlights?: Highlights;
   headMatches: boolean;
   onQuit: () => void;
   quitLabel?: string;
@@ -84,6 +86,7 @@ export class ChangesView implements Component {
   private readonly packet: Packet;
   private readonly fileChunks: number[][];
   private readonly fingerprints: string[];
+  private readonly chunkFile: number[];
   private folds: FoldState;
   private rows: Row[] = [];
   private rowOfStop: number[] = [];
@@ -102,6 +105,7 @@ export class ChangesView implements Component {
     this.folds = opts.folds;
     const fileIndex = new Map(this.packet.files.map((f, i) => [f.id, i]));
     this.fileChunks = this.packet.files.map(() => []);
+    this.chunkFile = this.packet.chunks.map((c) => fileIndex.get(c.file_id) ?? 0);
     this.fingerprints = this.packet.chunks.map((c, i) => {
       const fi = fileIndex.get(c.file_id) ?? 0;
       this.fileChunks[fi]?.push(i);
@@ -376,6 +380,15 @@ export class ChangesView implements Component {
     }
   }
 
+  private code(row: { chunk: number; sign: string; oldNo: number | null; newNo: number | null; text: string }): string {
+    const path = this.file(this.chunkFile[row.chunk] ?? 0).path;
+    const h = this.opts.highlights?.get(path);
+    const lines = row.sign === "-" ? h?.old : h?.new;
+    const n = row.sign === "-" ? row.oldNo : row.newNo;
+    const line = n === null ? undefined : lines?.[n - 1];
+    return line === undefined ? row.text : line.replaceAll("\x1b[39m", C.text);
+  }
+
   private renderRow(row: Row, w: number): string {
     const cur = this.current();
     const activeChunk = cur.chunk;
@@ -413,12 +426,12 @@ export class ChangesView implements Component {
         if (row.sign === "\\") return mark(on) + C.faint + fit(`            ${row.text}`, w - 1) + RESET;
         const nums = `${num(row.oldNo)} ${num(row.newNo)} `;
         if (row.sign === "+") {
-          return mark(on) + C.addNumBg + C.add + nums + C.addBg + fit(`+ ${C.text}${row.text}`, w - 1 - 12) + RESET;
+          return mark(on) + C.addNumBg + C.add + nums + C.addBg + fit(`+ ${C.text}${this.code(row)}`, w - 1 - 12) + RESET;
         }
         if (row.sign === "-") {
-          return mark(on) + C.delNumBg + C.del + nums + C.delBg + fit(`- ${C.text}${row.text}`, w - 1 - 12) + RESET;
+          return mark(on) + C.delNumBg + C.del + nums + C.delBg + fit(`- ${C.text}${this.code(row)}`, w - 1 - 12) + RESET;
         }
-        return mark(on) + C.faint + nums + C.text + fit(`  ${row.text}`, w - 1 - 12) + RESET;
+        return mark(on) + C.faint + nums + C.text + fit(`  ${this.code(row)}`, w - 1 - 12) + RESET;
       }
     }
   }

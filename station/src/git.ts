@@ -26,3 +26,30 @@ export function spawnAsync(cmd: string, args: string[], cwd: string): Promise<st
 export function runAsync(cwd: string, args: string[]): Promise<string> {
   return spawnAsync("git", ["-C", cwd, ...args], cwd);
 }
+
+export function catFiles(cwd: string, specs: string[]): (string | null)[] {
+  if (specs.length === 0) return [];
+  const res = spawnSync("git", ["-C", cwd, "cat-file", "--batch"], {
+    input: specs.map((s) => `${s}\n`).join(""),
+    maxBuffer: 512 * 1024 * 1024,
+  });
+  if (res.status !== 0) return specs.map(() => null);
+  const buf = res.stdout;
+  const out: (string | null)[] = [];
+  let pos = 0;
+  for (let i = 0; i < specs.length; i++) {
+    const nl = buf.indexOf(10, pos);
+    if (nl === -1) break;
+    const header = buf.subarray(pos, nl).toString("utf8");
+    pos = nl + 1;
+    const m = header.match(/^\S+ blob (\d+)$/);
+    if (m === null) {
+      out.push(null);
+      continue;
+    }
+    const size = Number(m[1]);
+    out.push(buf.subarray(pos, pos + size).toString("utf8"));
+    pos += size + 1;
+  }
+  return out;
+}

@@ -48,6 +48,7 @@ function changesView(
     title: review.title,
     subtitle: review.subtitle,
     packet: review.packet,
+    highlights: review.highlights,
     folds: loadFolds(review.key),
     headMatches: currentHead(review.repoPath) === review.packet.head_sha,
     onQuit,
