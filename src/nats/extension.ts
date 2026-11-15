@@ -1,8 +1,12 @@
-import { hostname } from "node:os"
+import { readFileSync } from "node:fs"
+import { homedir, hostname } from "node:os"
+import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { currentContext } from "../pi/lib/current-context"
 import { createNatsClient, type NatsClient } from "./client"
 import {
+  agentNameOf,
+  contextTitleOf,
   encodeEvent,
   eventSubject,
   messageError,
@@ -36,8 +40,20 @@ function contextAddress(ctx: ExtensionContext, env: NodeJS.ProcessEnv): string |
   return env.CUE_CONTEXT?.trim() || undefined
 }
 
+/** Title of a context read from the cue store; undefined when unreadable. */
+export function readContextTitle(address: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  if (!address || address.split("/").includes("..")) return undefined
+  try {
+    const store = env.CUE_STORE?.trim() || join(homedir(), "cue")
+    return contextTitleOf(readFileSync(join(store, address, "context.md"), "utf8"))
+  } catch {
+    return undefined
+  }
+}
+
 function identity(ctx: ExtensionContext, host: string, env: NodeJS.ProcessEnv): AgentIdentity {
   const sid = ctx.sessionManager.getSessionId()
+  const context = contextAddress(ctx, env)
   return {
     sid,
     host,
@@ -46,8 +62,10 @@ function identity(ctx: ExtensionContext, host: string, env: NodeJS.ProcessEnv): 
     session_file: ctx.sessionManager.getSessionFile(),
     session_name: ctx.sessionManager.getSessionName(),
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-    context: contextAddress(ctx, env),
+    context,
+    context_title: readContextTitle(context, env),
     run_id: runIdOf(sid),
+    agent: agentNameOf(env),
     pid: process.pid,
   }
 }
@@ -135,7 +153,12 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
 
   pi.on("before_agent_start", (event, ctx) => {
     if (!tracker) return
-    tracker.update({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, context: contextAddress(ctx, env) })
+    const context = contextAddress(ctx, env)
+    if (context !== undefined && context !== tracker.row.context) {
+      delete tracker.row.context_title
+      tracker.update({ context_title: readContextTitle(context, env) })
+    }
+    tracker.update({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, context })
     if (event.messageType === "user") emitAndPut(tracker.input(event.prompt, "user"))
     else emitAndPut(tracker.input(event.message.customType ?? "custom", "custom"))
   })

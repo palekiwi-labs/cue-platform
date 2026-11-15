@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { withAgentName } from "../lib/agent-env"
 import { finalize } from "./finalize"
 import { acquireLock, cacheRoot, lockPath } from "./lock"
 import { BUNDLE_FILE, contextDir, prepare } from "./prepare"
@@ -135,7 +136,7 @@ function run(cmd: string, argv: string[], stdin?: string): Promise<{ code: numbe
 
 /** Run the compactor through `cue-agent run - --json` and read its receipt. */
 async function cueAgent(prompt: string, cwd: string): Promise<AgentResult> {
-  const spec = { tasks: [{ agent: AGENT, prompt, cwd }] }
+  const spec = { tasks: [withAgentName({ agent: AGENT, prompt, cwd })] }
   const r = await run("cue-agent", ["run", "-", "--json"], JSON.stringify(spec))
   let receipt: { runs?: { outcome: string; response: string; error: string | null; run_path: string }[] }
   try {

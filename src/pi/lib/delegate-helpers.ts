@@ -5,6 +5,7 @@
  */
 
 import { resolve } from "node:path"
+import { type TaskEnv, withAgentName } from "./agent-env"
 
 /** Per-call task cap enforced by cue-agent (no queue). */
 export const MAX_TASKS = 4
@@ -153,6 +154,7 @@ export interface BatchTaskSpec {
   worktree?: { base: string; ephemeral: boolean }
   model?: string
   context?: string
+  env: TaskEnv
 }
 
 export interface BatchSpec {
@@ -200,15 +202,17 @@ export function buildBatchSpec(
       : { base: w.base, ephemeral: true }
   return {
     ...(defaults ? { defaults: { prompt: defaults } } : {}),
-    tasks: args.tasks.map((t, i) => ({
-      agent: t.agent,
-      ...(prompts[i] !== defaults ? { prompt: prompts[i] as string } : {}),
-      ...(t.worktree
-        ? { worktree: toWorktree(t.worktree) }
-        : { cwd: t.dir ? resolve(cwd, t.dir) : cwd }),
-      ...(t.model ? { model: t.model } : {}),
-      ...(t.context ? { context: t.context } : {}),
-    })),
+    tasks: args.tasks.map((t, i) =>
+      withAgentName({
+        agent: t.agent,
+        ...(prompts[i] !== defaults ? { prompt: prompts[i] as string } : {}),
+        ...(t.worktree
+          ? { worktree: toWorktree(t.worktree) }
+          : { cwd: t.dir ? resolve(cwd, t.dir) : cwd }),
+        ...(t.model ? { model: t.model } : {}),
+        ...(t.context ? { context: t.context } : {}),
+      }),
+    ),
   }
 }
 

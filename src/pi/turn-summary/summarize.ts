@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { withAgentName } from "../lib/agent-env"
 import { cleanSummary } from "./clean"
 
 /** A summary and the run that produced it. */
@@ -66,7 +67,7 @@ function promptHashOf(runPath: string | undefined): string | undefined {
 
 /** Summarize a turn through cue-agent and return the cleaned paragraph with its run details. */
 export async function summarizeTurn(prompt: string, text: string, cwd: string): Promise<SummaryRun> {
-  const spec = { tasks: [{ agent: SUMMARIZER_AGENT, prompt: summarizerPrompt(prompt, text), cwd }] }
+  const spec = { tasks: [withAgentName({ agent: SUMMARIZER_AGENT, prompt: summarizerPrompt(prompt, text), cwd })] }
   const r = await run(["run", "-", "--json"], JSON.stringify(spec))
   let receipt: {
     runs?: {
