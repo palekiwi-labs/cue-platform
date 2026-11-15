@@ -8,6 +8,7 @@ let
       let
         rel = pkgs.lib.removePrefix (toString ../src + "/") (toString path);
         clientFiles = [
+          "pi/lib/agent-env.ts"
           "pi/lib/cue-agent-compat.ts"
           "pi/lib/delegate-helpers.ts"
           "pi/lib/supervisor-client.ts"
