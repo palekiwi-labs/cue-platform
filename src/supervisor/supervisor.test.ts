@@ -39,6 +39,7 @@ describe("systemdRunArgv", () => {
   });
 
   test("names the unit and batch slice and runs in the run dir", () => {
+    expect(argv).toContain("--expand-environment=no");
     expect(argv).toContain("--unit=cue-run-r1.service");
     expect(argv).toContain("--slice=cue-runs-b1.slice");
     expect(argv).toContain("--working-directory=/state/runs/r1");
@@ -50,6 +51,18 @@ describe("systemdRunArgv", () => {
     const setenv = argv.filter((arg) => arg.startsWith("--setenv="));
     expect(setenv).toEqual(["--setenv=PATH", "--setenv=GEMINI_API_KEY", "--setenv=CUE_CONTEXT=ctx"]);
     expect(ENV_ALLOWLIST).not.toContain("PI_SESSION_ID");
+  });
+
+  test("forwards service NATS, certificate and tool credentials by name only", () => {
+    const names = ["CUE_NATS_URL", "CUE_NATS_JS_DOMAIN", "SSL_CERT_FILE", "NIX_SSL_CERT_FILE", "TYPESAFE_API_KEY"];
+    const env = Object.fromEntries(names.map((name) => [name, "service-value"]));
+    const args = systemdRunArgv({
+      runId: "r", batchId: "b", runDir: "/state/r", spec: run,
+      sessionId: "sid", piPath: "/bin/pi", shPath: "/bin/sh",
+      finalizeCommand: ["/bin/finalize"], env,
+    });
+    for (const name of names) expect(args).toContain(`--setenv=${name}`);
+    expect(args.join(" ")).not.toContain("service-value");
   });
 
   test("execs pi in json mode with a per-run session after the caller cwd", () => {
