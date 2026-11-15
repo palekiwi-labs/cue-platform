@@ -204,9 +204,17 @@ describe("buildBatchSpec", () => {
     )
     expect(spec.defaults).toEqual({ prompt: long })
     expect(spec.tasks).toEqual([
-      { agent: "consultant", model: "opus", cwd: "/work" },
-      { agent: "consultant", model: "flash", cwd: "/work" },
+      { agent: "consultant", model: "opus", cwd: "/work", env: { CUE_AGENT_NAME: "consultant" } },
+      { agent: "consultant", model: "flash", cwd: "/work", env: { CUE_AGENT_NAME: "consultant" } },
     ])
+  })
+
+  test("every task names its agent in CUE_AGENT_NAME", () => {
+    const spec = buildBatchSpec(
+      { prompt: long, tasks: [{ agent: "consultant" }, { agent: "explore", worktree: true }] },
+      "/work",
+    )
+    expect(spec.tasks.map((t) => t.env)).toEqual([{ CUE_AGENT_NAME: "consultant" }, { CUE_AGENT_NAME: "explore" }])
   })
 
   test("per-task prompt replaces the default", () => {
