@@ -44,15 +44,18 @@ function recordLaunchFailure(runDir: string, message: string): void {
 export function launchBatch(spec: BatchSpec, launchEnv: LaunchEnvironment): BatchSummary {
   const batchId = newId();
   ensureDir(batchesDir(launchEnv.root));
-  const records: RunRecord[] = spec.runs.map((runSpec) => ({
-    runId: newId(),
-    batchId,
-    unit: "",
-    slice: sliceName(batchId),
-    sessionId: crypto.randomUUID(),
-    spec: runSpec,
-    acceptedAt: Date.now(),
-  }));
+  const records: RunRecord[] = spec.runs.map((runSpec, index) => {
+    const runId = `${batchId}-supervisor-${index + 1}`;
+    return {
+      runId,
+      batchId,
+      unit: "",
+      slice: sliceName(batchId),
+      sessionId: runId,
+      spec: runSpec,
+      acceptedAt: Date.now(),
+    };
+  });
   for (const record of records) {
     if (record.spec.worktree) {
       record.worktree = planWorktree(record.spec.cwd, record.spec.worktree.base, record.runId);

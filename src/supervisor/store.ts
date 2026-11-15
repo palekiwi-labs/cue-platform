@@ -15,8 +15,9 @@ export function batchesDir(root: string): string {
 }
 
 export function newId(): string {
-  const random = crypto.getRandomValues(new Uint8Array(4));
-  return Date.now().toString(36) + Array.from(random, (b) => b.toString(16).padStart(2, "0")).join("");
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const random = crypto.getRandomValues(new Uint8Array(3));
+  return stamp + "-" + Array.from(random, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export function writeJsonAtomic(path: string, value: unknown): void {

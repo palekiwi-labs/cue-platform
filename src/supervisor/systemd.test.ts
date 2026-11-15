@@ -56,6 +56,11 @@ describe.skipIf(!process.env.SUP_SYSTEMD)("systemd runs with a fake pi", () => {
       { CUE_SUPERVISOR_PI: fakePi },
     );
     expect(exitCode).toBe(1);
+    for (const entry of output.runs) {
+      const record = JSON.parse(readFileSync(join(root, "runs", entry.runId, "run.json"), "utf8"));
+      expect(record.sessionId).toBe(entry.runId);
+      expect(entry.runId).toMatch(/^\d{8}-\d{6}-[0-9a-f]{6}-supervisor-\d+$/);
+    }
     const outcomes = output.runs.map((run) => run.result.outcome);
     expect(outcomes).toEqual(["succeeded", "failed", "timed_out", "failed", "launch_failed", "failed"]);
     expect(output.runs[0].result.text).toBe("PONG");
