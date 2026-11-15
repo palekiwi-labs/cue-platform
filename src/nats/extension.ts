@@ -51,6 +51,20 @@ export function readContextTitle(address: string | undefined, env: NodeJS.Proces
   }
 }
 
+function sessionDescription(ctx: ExtensionContext): string | undefined {
+  try {
+    const branch = ctx.sessionManager.getBranch()
+    for (let i = branch.length - 1; i >= 0; i--) {
+      const entry = branch[i]
+      if (entry?.type === "custom" && entry.customType === "session-description") {
+        const text = (entry.data as { text?: unknown } | undefined)?.text
+        return typeof text === "string" ? text.trim() || undefined : undefined
+      }
+    }
+  } catch {}
+  return undefined
+}
+
 function identity(ctx: ExtensionContext, host: string, env: NodeJS.ProcessEnv): AgentIdentity {
   const sid = ctx.sessionManager.getSessionId()
   const context = contextAddress(ctx, env)
@@ -61,6 +75,7 @@ function identity(ctx: ExtensionContext, host: string, env: NodeJS.ProcessEnv): 
     cwd: ctx.cwd,
     session_file: ctx.sessionManager.getSessionFile(),
     session_name: ctx.sessionManager.getSessionName(),
+    session_description: sessionDescription(ctx),
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
     context,
     context_title: readContextTitle(context, env),
@@ -188,8 +203,11 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
     if (tracker) emit(tracker, tracker.toolEnd(event.toolCallId, event.toolName, event.isError, event.durationMs))
   })
 
-  pi.on("agent_settled", (event) => {
-    if (tracker) emitAndPut(tracker.settled(event.aborted))
+  pi.on("agent_settled", (event, ctx) => {
+    if (!tracker) return
+    delete tracker.row.session_description
+    tracker.update({ session_description: sessionDescription(ctx) })
+    emitAndPut(tracker.settled(event.aborted))
   })
 
   pi.on("session_compact", (event) => {
