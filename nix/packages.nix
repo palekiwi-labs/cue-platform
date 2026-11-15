@@ -17,6 +17,7 @@ in
   # the cue-log-compact skill was retired; kept for agent shells.
   inherit (pkgs) gh jq;
   cue-review = import ./cue-review { inherit pkgs; };
+  cue-supervisor = import ./cue-supervisor.nix { inherit pkgs; };
   # Called by the pi cue-recall tool; resolves scope through cue.
   cue-recall = import ./cue-recall { inherit pkgs; };
   inherit (cue.packages.${system}) cue cue-agent;

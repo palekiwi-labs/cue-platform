@@ -34,7 +34,7 @@ import { cueReviewTool } from "./tools/cue-review"
 import { cueSessionLinkTool } from "./tools/cue-session-link"
 import { cueTaskTool } from "./tools/cue-task"
 import { saveBranchDiffTool } from "./tools/save-branch-diff"
-import { delegateTool } from "./tools/delegate"
+import { delegateTool, supervisorStatusTool } from "./tools/delegate"
 
 /**
  * Cue integration for the pi harness.
@@ -59,6 +59,8 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   pi.registerTool(cueTaskTool(pi))
   pi.registerTool(saveBranchDiffTool(pi))
   pi.registerTool(delegateTool())
+  const statusTool = supervisorStatusTool()
+  if (statusTool) pi.registerTool(statusTool)
 
   registerContextCurrentCommand(pi)
   registerContextInjectCommand(pi)

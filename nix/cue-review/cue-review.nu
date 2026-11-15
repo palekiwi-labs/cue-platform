@@ -340,7 +340,11 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
   let start = (date now)
   # stdout (receipt) to a file; cue-agent stderr passes through.
   let code = try {
-    ^cue-agent run --json --spec $spec_file o> $receipt_file
+    if ($env.CUE_DELEGATE_BACKEND? | default "") == "supervisor" {
+      ^cue-supervisor submit --wait --spec $spec_file o> $receipt_file
+    } else {
+      ^cue-agent run --json --spec $spec_file o> $receipt_file
+    }
     0
   } catch {|err| $env.LAST_EXIT_CODE? | default 1 }
   rm -f $spec_file

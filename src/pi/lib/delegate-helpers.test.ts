@@ -44,7 +44,7 @@ const listing = JSON.stringify({
 describe("parseAgentList", () => {
   test("extracts agents with allowlists and the alias registry", () => {
     const r = parseAgentList(listing)
-    expect(r.agents[0]).toEqual({ name: "reviewer", description: "reviews", models: ["opus", "flash"] })
+    expect(r.agents[0]).toMatchObject({ name: "reviewer", description: "reviews", models: ["opus", "flash"], harness: "pi" })
     expect(r.models.flash).toEqual({ id: "google/flash", thinking: null, provider: "google" })
   })
 
@@ -85,6 +85,14 @@ describe("formatReceipt", () => {
       runs: [{ ...base, agent: "explore", outcome: "completed", response: "found it", error: null }],
     })
     expect(text).toBe("## explore - completed (6 turns, 41s, $0.0040)\n\nfound it")
+  })
+
+  test("succeeded supervisor run shows response verbatim", () => {
+    const text = formatReceipt({
+      batch_id: "b",
+      runs: [{ ...base, agent: "explore", outcome: "succeeded", response: "found it", error: null }],
+    })
+    expect(text).toBe("## explore - succeeded (6 turns, 41s, $0.0040)\n\nfound it")
   })
 
   test("header names the resolved model alias", () => {
