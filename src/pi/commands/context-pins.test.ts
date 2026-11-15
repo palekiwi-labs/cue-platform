@@ -15,9 +15,36 @@ import { parseTree } from "../lib/context-tree"
 import { fuzzyNarrow } from "../lib/fuzzy-select"
 import {
   contextOrientation,
+  linkContext,
   pinItems,
   registerContextPinsCommand,
 } from "./context-pins"
+
+describe("linkContext", () => {
+  test("overlapping links name the session after the last link", async () => {
+    const names: string[] = []
+    const entries: string[] = []
+    const releases: (() => void)[] = []
+    const ok = { stdout: "", stderr: "", code: 0, killed: false }
+    const pi = {
+      setSessionName: (n: string) => names.push(n),
+      appendEntry: (_t: string, d: { address: string }) =>
+        entries.push(d.address),
+      exec: (cmd: string) =>
+        cmd === "cue"
+          ? new Promise((resolve) => releases.push(() => resolve(ok)))
+          : Promise.resolve(ok),
+    } as unknown as ExtensionAPI
+    const ctx = { cwd: "/w", sessionManager: { getSessionId: () => "s1" } }
+    const first = linkContext(pi, ctx, "a/b/one")
+    const second = linkContext(pi, ctx, "a/b/two")
+    releases[1]!()
+    releases[0]!()
+    await Promise.all([first, second])
+    expect(entries).toEqual(["a/b/one", "a/b/two"])
+    expect(names[names.length - 1]).toBe("two")
+  })
+})
 
 describe("contextOrientation briefing", () => {
   const address = "outside/repo/demo"

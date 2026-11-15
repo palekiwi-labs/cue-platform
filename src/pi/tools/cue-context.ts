@@ -53,7 +53,8 @@ const parameters = Type.Object({
       description:
         "Canonical address of the parent context (e.g. " +
         "'palekiwi/palekiwi/cue-platform-direction'). Children are derived " +
-        "by scanning for this field, so the parent record needs no edit.",
+        "by scanning for this field, so the parent record needs no edit. " +
+        "Omit only with the operator's approval (creates a root).",
     }),
   ),
   refs: Type.Optional(

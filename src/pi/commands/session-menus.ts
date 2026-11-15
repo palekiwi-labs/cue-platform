@@ -3,7 +3,9 @@ import type { Component, TUI } from "@earendil-works/pi-tui"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu"
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
-import { activeStyle, listStyles, setActiveStyle } from "../response-style"
+import { activeStyle, listStyles, switchStyle } from "../response-style"
+import { type SessionSpeechMode, SPEECH_MODES } from "../speech/settings"
+import { autoSummary, setAutoSummary } from "../turn-summary/settings"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 
@@ -43,11 +45,11 @@ export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding
   ]
 }
 
-/** Settings of the session, as F3 lists them. */
-export function sessionSettings(pi: ExtensionAPI): Setting[] {
+/** Settings of the session, as F3 lists them; speech only where the session can speak. */
+export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode): Setting[] {
   const level = pi.getThinkingLevel() as ThinkingLevel
   const styles = listStyles()
-  return [
+  const settings: Setting[] = [
     {
       label: "thinking",
       group: "display",
@@ -56,13 +58,30 @@ export function sessionSettings(pi: ExtensionAPI): Setting[] {
       apply: (i) => pi.setThinkingLevel(THINKING_LEVELS[i]!),
     },
     {
+      label: "auto summary",
+      group: "display",
+      values: ["off", "on"],
+      current: autoSummary() ? 1 : 0,
+      apply: (i) => setAutoSummary(i === 1),
+    },
+    {
       label: "style",
       group: "display",
       values: styles,
       current: Math.max(0, styles.indexOf(activeStyle())),
-      apply: (i) => setActiveStyle(styles[i]!),
+      apply: (i) => switchStyle(pi, styles[i]!),
     },
   ]
+  if (speech) {
+    settings.push({
+      label: "speech",
+      group: "display",
+      values: [...SPEECH_MODES],
+      current: SPEECH_MODES.indexOf(speech.mode),
+      apply: (i) => speech.set(SPEECH_MODES[i]!),
+    })
+  }
+  return settings
 }
 
 function redrawing(tui: TUI, inner: Component & { handleInput(data: string): void }): Component {
@@ -87,9 +106,9 @@ async function openActions(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   picked?.run?.()
 }
 
-async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext, speech?: SessionSpeechMode): Promise<void> {
   if (!ctx.hasUI) return
-  const settings = sessionSettings(pi)
+  const settings = sessionSettings(pi, speech)
   const title = "settings: session"
   await ctx.ui.custom<boolean>(
     (tui, theme, kb, done) => redrawing(tui, new SettingsForm(theme, kb, title, settings, done)),
@@ -98,7 +117,7 @@ async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
 }
 
 /** F2 session actions and F3 session settings in pi's main view. */
-export function registerSessionMenus(pi: ExtensionAPI): void {
+export function registerSessionMenus(pi: ExtensionAPI, speech?: SessionSpeechMode): void {
   pi.registerCommand(NEW_SESSION_COMMAND, {
     description: "Start a new session",
     handler: async (_args, ctx: ExtensionCommandContext) => {
@@ -115,6 +134,6 @@ export function registerSessionMenus(pi: ExtensionAPI): void {
   })
   pi.registerShortcut(SETTINGS_KEY, {
     description: "Session settings",
-    handler: async (ctx) => openSettings(pi, ctx),
+    handler: async (ctx) => openSettings(pi, ctx, speech),
   })
 }

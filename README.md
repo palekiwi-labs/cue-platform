@@ -10,7 +10,9 @@ cue-platform ships in three parts:
   picker) and the nvf-based nvim. `packages.<system>.default` bundles all of them; each
   is also exported on its own.
 - **The host tools**: cast (re-exported from the cast flake) and
-  cast-tui (`cast-tui/`), the terminal UI that bare `cast` opens.
+  cast-tui (`cast-tui/`), the terminal UI that bare `cast` opens; it
+  lists cast instances and hosts the GitHub PR picker (see
+  `cast-tui/README.md`).
   `packages.<system>.host` bundles both; each is also exported on its
   own.
 - **The pi package** (this repository: `extensions/`, `src/pi/`,

@@ -10,15 +10,19 @@ import { registerContextPinsCommand } from "./commands/context-pins"
 import { registerIdeaCommand } from "./commands/idea"
 import { registerMemoryMonitor } from "./commands/memory-monitor"
 import { registerPrBrowser } from "./commands/prs"
+import { registerReviewMissCommand } from "./commands/review-miss"
 import { registerReviewRunCommand } from "./commands/review-run"
 import { registerViewsLauncher } from "./commands/views-launcher"
 import { registerSessionMenus } from "./commands/session-menus"
+import { registerTurnSummary } from "./commands/turn-summary"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
+import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
 import { registerResponseStyle } from "./response-style"
+import { registerSpeech } from "./speech"
 import { cueAddTool } from "./tools/cue-add"
 import { cueContextTool } from "./tools/cue-context"
 import { cueContextExploreTool } from "./tools/cue-context-explore"
@@ -27,6 +31,7 @@ import { cueLogTool } from "./tools/cue-log"
 import { cuePlanTool } from "./tools/cue-plan"
 import { cueRecallTool } from "./tools/cue-recall"
 import { cueReviewTool } from "./tools/cue-review"
+import { cueSessionLinkTool } from "./tools/cue-session-link"
 import { cueTaskTool } from "./tools/cue-task"
 import { saveBranchDiffTool } from "./tools/save-branch-diff"
 import { delegateTool } from "./tools/delegate"
@@ -50,6 +55,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   pi.registerTool(cuePlanTool(pi))
   pi.registerTool(cueRecallTool(pi))
   pi.registerTool(cueReviewTool(pi))
+  pi.registerTool(cueSessionLinkTool(pi))
   pi.registerTool(cueTaskTool(pi))
   pi.registerTool(saveBranchDiffTool(pi))
   pi.registerTool(delegateTool())
@@ -62,12 +68,16 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerMemoryMonitor(pi)
   registerPrBrowser(pi)
   registerViewsLauncher(pi)
-  registerSessionMenus(pi)
+  const speech = registerSpeech(pi)
+  registerSessionMenus(pi, speech?.setting)
+  registerTurnSummary(pi)
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
+  registerReviewMissCommand(pi)
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
+  registerStoreCommit(pi)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)

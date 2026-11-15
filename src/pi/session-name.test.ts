@@ -64,6 +64,12 @@ describe("applyContextName", () => {
     expect(m.names).toEqual(["slug"])
   })
 
+  test("exports the address as CUE_CONTEXT", async () => {
+    const env: NodeJS.ProcessEnv = {}
+    await applyContextName(makePi().pi, "a/b/slug", env)
+    expect(env.CUE_CONTEXT).toBe("a/b/slug")
+  })
+
   test("tmux failure is swallowed", async () => {
     const m = makePi()
     ;(m.pi as any).exec = async () => {
@@ -125,6 +131,14 @@ describe("registerSessionNaming", () => {
     expect(m.execs).toEqual([
       { cmd: "tmux", args: ["rename-window", "-t", "%1", "pi"] },
     ])
+  })
+
+  test("session_tree to a branch without a context clears CUE_CONTEXT", async () => {
+    const m = makePi()
+    const env: NodeJS.ProcessEnv = { CUE_CONTEXT: "a/b/old" }
+    registerSessionNaming(m.pi, env)
+    await m.handlers.session_tree!({}, ctx([{ type: "message" }]))
+    expect(env.CUE_CONTEXT).toBeUndefined()
   })
 
   test("session rename propagates to the tmux window", async () => {

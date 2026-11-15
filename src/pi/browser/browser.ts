@@ -38,6 +38,7 @@ import {
 import { entryAddress, entryLink, fmtStamp, type LogEntry, logPreview, tracePath } from "./log"
 import { ActionMenu, actionMenuWidth, ACTIONS_KEY, type MenuSection } from "./action-menu"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "./settings-menu"
+import { handoffChoices, HandoffMenu, handoffMenuWidth } from "./handoff-menu"
 import { type Binding, findBinding, helpWidth, HELP_KEYS, hintText, type KeyGroup, KeyHelp } from "./keymap"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "./context-list"
 import {
@@ -51,7 +52,9 @@ import {
   filterRecent,
   isFinished,
   pinnedFirst,
+  ALL_TIME_DAYS,
   RECENCY_STEPS,
+  recencyLabel,
   recencyIndex,
   relativeAge,
   sortArtifacts,
@@ -110,9 +113,10 @@ export interface BrowserDeps {
   ): Promise<{ path: string } | { error: string }>
   /**
    * Start a fresh pi session with the context injected, here or in a
-   * new tmux window; returns an error message on failure.
+   * new tmux window, with the selected hand-off (if any) injected in
+   * full; returns an error message on failure.
    */
-  newSession(address: string, target: Target): string | undefined
+  newSession(address: string, target: Target, handoff?: string): string | undefined
   /** Sessions in the browser's scopes (only the repository's when `repoScope`). */
   loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
@@ -164,8 +168,6 @@ interface ContextsView {
   kind: "contexts"
   /** The scope the rows were loaded with, to reload when it changed. */
   repoScope: boolean
-  /** Recent contexts only, or the whole tree. */
-  recent: boolean
   rows: ContextRow[]
   query: string
   selected: number
@@ -186,8 +188,7 @@ interface ArtifactsView {
   loading: boolean
 }
 
-/** Which sessions tab lists: grouped recent/all, or flat labeled. */
-type SessionSubset = "all" | "recent" | "labeled"
+type SessionSubset = "recent" | "labeled"
 
 interface SessionsView {
   kind: "sessions"
@@ -206,8 +207,6 @@ interface SessionsView {
 interface ActivityView {
   kind: "activity"
   context: ContextRef
-  /** Events within the recency window, or all of them. */
-  recent: boolean
   rows: ActivityEvent[]
   query: string
   selected: number
@@ -217,8 +216,6 @@ interface ActivityView {
 interface LogView {
   kind: "log"
   context: ContextRef
-  /** Entries within the recency window, or all of them. */
-  recent: boolean
   rows: LogEntry[]
   query: string
   selected: number
@@ -229,8 +226,7 @@ type View = ContextsView | ArtifactsView | SessionsView | ActivityView | LogView
 
 const NEXT_SUBSET: Record<SessionSubset, SessionSubset> = {
   recent: "labeled",
-  labeled: "all",
-  all: "recent",
+  labeled: "recent",
 }
 
 
@@ -287,7 +283,6 @@ export class CueBrowser implements Component {
   private describing: { session: SessionRow; input: Input } | undefined
   /** Creating a child of this context, with its own prompt on the bottom line. */
   private creating: { parent: ContextRef; input: Input } | undefined
-  /** Index into RECENCY_STEPS for the recent tabs. */
   private recencyStep: number
   /** Sessions listed flat, newest first, instead of grouped by context. */
   private sessionsFlat = true
@@ -309,7 +304,7 @@ export class CueBrowser implements Component {
     this.target = target
     this.input.focused = true
     this.recencyStep = recencyIndex(deps.recencyDays())
-    if (start.view === "contexts") this.pushContexts(true)
+    if (start.view === "contexts") this.pushContexts()
     else if (start.view === "sessions") this.pushSessions()
     else if (start.view === "activity") this.pushActivity(start.context)
     else if (start.view === "log") this.pushLog(start.context)
@@ -324,9 +319,9 @@ export class CueBrowser implements Component {
     return RECENCY_STEPS[this.recencyStep]!
   }
 
-  private pushContexts(recent: boolean): void {
+  private pushContexts(): void {
     const v: ContextsView = {
-      kind: "contexts", repoScope: this.repoScope, recent, rows: [], query: "", selected: 0, loading: true,
+      kind: "contexts", repoScope: this.repoScope, rows: [], query: "", selected: 0, loading: true,
     }
     this.views.push(v)
     this.input.setValue("")
@@ -371,16 +366,14 @@ export class CueBrowser implements Component {
     this.recencyStep = next
     this.deps.saveRecencyDays(this.recencyDays)
     if (v.kind === "contexts") {
-      if (!v.recent) v.recent = true
       if (!(keep && this.selectContext(v, keep))) v.selected = 0
     } else if (v.kind === "sessions") {
       if (v.subset !== "recent") v.subset = "recent"
       v.selected = 0
     } else if (v.kind === "activity" || v.kind === "log") {
-      if (!v.recent) v.recent = true
       v.selected = 0
     }
-    this.notify(`recency window ${this.recencyDays}d`)
+    this.notify(`recency window: ${recencyLabel(this.recencyDays)}`)
     this.refresh()
   }
 
@@ -397,8 +390,7 @@ export class CueBrowser implements Component {
   private pushSessions(context?: ContextRef): void {
     const v: SessionsView = {
       kind: "sessions", repoScope: this.repoScope, context,
-      // A context's own sessions may be old, so that view starts on all.
-      subset: context ? "all" : "recent", contexts: [], sessions: [], query: "",
+      subset: "recent", contexts: [], sessions: [], query: "",
       selected: 0, loading: true,
     }
     this.views.push(v)
@@ -444,11 +436,12 @@ export class CueBrowser implements Component {
   }
 
   /**
-   * ctrl+r/a/g outside the contexts view: sessions, activity or log of
-   * the view's context (the highlighted session's in the sessions view).
-   * Activity and log replace each other so esc returns past both.
+   * ctrl+r/a/g and alt+a outside the contexts view: sessions, activity,
+   * log or artifacts of the view's context (the highlighted session's in
+   * the sessions view). Artifacts, activity and log replace each other
+   * so esc returns past all of them.
    */
-  private jumpTo(kind: "sessions" | "activity" | "log"): void {
+  private jumpTo(kind: "sessions" | "activity" | "log" | "artifacts"): void {
     const v = this.view
     const context = v.kind === "sessions"
       ? this.actionContext()
@@ -457,15 +450,16 @@ export class CueBrowser implements Component {
       this.notify(v.kind === "sessions" ? "this session has no cue context" : "no context")
       return this.tui.requestRender()
     }
-    if (v.kind === "activity" || v.kind === "log") this.views.pop()
+    if (v.kind === "activity" || v.kind === "log" || v.kind === "artifacts") this.views.pop()
     if (kind === "sessions") this.pushSessions(context)
     else if (kind === "activity") this.pushActivity(context)
+    else if (kind === "artifacts") this.pushArtifacts(context)
     else this.pushLog(context)
   }
 
   private pushActivity(context: ContextRef): void {
     const v: ActivityView = {
-      kind: "activity", context, recent: true, rows: [], query: "", selected: 0,
+      kind: "activity", context, rows: [], query: "", selected: 0,
       loading: true,
     }
     this.views.push(v)
@@ -475,7 +469,7 @@ export class CueBrowser implements Component {
 
   private pushLog(context: ContextRef): void {
     const v: LogView = {
-      kind: "log", context, recent: true, rows: [], query: "", selected: 0,
+      kind: "log", context, rows: [], query: "", selected: 0,
       loading: true,
     }
     this.views.push(v)
@@ -522,7 +516,7 @@ export class CueBrowser implements Component {
   }
 
   private treeRows(v: ContextsView): ContextRow[] {
-    return treeRows(v.rows, v.recent, this.now(), this.recencyDays)
+    return treeRows(v.rows, this.recencyDays !== ALL_TIME_DAYS, this.now(), this.recencyDays)
   }
 
   /** Contexts to group sessions under: recent ones count session activity too. */
@@ -543,10 +537,10 @@ export class CueBrowser implements Component {
       const labeled = v.sessions.filter((s) => s.label !== undefined)
       return flat(v.query.trim() === "" ? labeled : this.matchSessions(v, labeled))
     }
-    const orphans = v.subset === "all" && !v.context
+    const orphans = this.recencyDays === ALL_TIME_DAYS && !v.context
     if (this.sessionsFlat && v.query.trim() === "") {
       // Newest first across contexts; recent keeps the window by session time.
-      const since = this.now() - this.recencyDays * 86400
+      const since = this.recencyDays === ALL_TIME_DAYS ? -Infinity : this.now() - this.recencyDays * 86400
       const pool = groupSessions(v.contexts, v.sessions, new Set(), orphans)
         .flatMap((r) => (r.kind === "session" ? [r.session] : []))
       return flat(v.subset === "recent" ? pool.filter((s) => s.modified >= since) : pool)
@@ -571,7 +565,7 @@ export class CueBrowser implements Component {
   }
 
   private shownActivity(v: ActivityView): ActivityEvent[] {
-    const rows = v.recent
+    const rows = this.recencyDays !== ALL_TIME_DAYS
       ? v.rows.filter((e) => e.timestamp >= Date.now() - this.recencyDays * 86400_000)
       : v.rows
     const q = v.query.trim()
@@ -579,7 +573,7 @@ export class CueBrowser implements Component {
   }
 
   private shownLog(v: LogView): LogEntry[] {
-    const rows = v.recent
+    const rows = this.recencyDays !== ALL_TIME_DAYS
       ? v.rows.filter((e) => e.timestamp >= Date.now() - this.recencyDays * 86400_000)
       : v.rows
     const q = v.query.trim()
@@ -759,9 +753,15 @@ export class CueBrowser implements Component {
   private bindings(): Binding[] {
     const v = this.view
     const k = v.kind
-    const move = (delta: number) => {
+    const move = (delta: number, wrap = false) => {
       const n = this.shownCount()
-      v.selected = n === 0 ? 0 : Math.max(0, Math.min(n - 1, v.selected + delta))
+      if (n === 0) {
+        v.selected = 0
+      } else if (wrap) {
+        v.selected = (v.selected + delta + n) % n
+      } else {
+        v.selected = Math.max(0, Math.min(n - 1, v.selected + delta))
+      }
       this.previewScroll = this.previewStart()
       this.refresh()
     }
@@ -777,12 +777,12 @@ export class CueBrowser implements Component {
     const m = (menu: MenuSection): Partial<Binding> => ({ menu })
 
     add("escape", this.views.length > 1 ? "back" : "close", "navigate", () => this.back(), { display: "esc", hint: true })
-    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1))
-    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1))
+    add(kbKeys("tui.select.up"), "up", "navigate", () => move(-1, true))
+    add(kbKeys("tui.select.down"), "down", "navigate", () => move(1, true))
     add(kbKeys("tui.select.pageUp"), "page up", "navigate", () => move(-page))
     add(kbKeys("tui.select.pageDown"), "page down", "navigate", () => move(page))
-    const enterLabel = k === "contexts" ? "artifacts" : k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
-    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true, ...m(k === "sessions" ? "act" : "open") })
+    const enterLabel = k === "contexts" || k === "sessions" ? "resume" : k === "log" ? "open trace" : "open"
+    add("enter", enterLabel, "act", () => this.onEnter(), { hint: true, ...m(k === "contexts" || k === "sessions" ? "act" : "open") })
     add("ctrl+e", k === "log" ? "open trace" : "open", "act", () => this.onOpen())
     add("ctrl+t", "target here/tmux", "act", () => {
       this.target = this.target === "here" ? "tmux" : "here"
@@ -807,16 +807,9 @@ export class CueBrowser implements Component {
       add("ctrl+down", "recency down", "view", () => this.stepRecency(-1))
     }
     if (v.kind === "contexts") {
-      add("tab", "recent/all", "view", () => {
-        const keep = this.selectedContext()?.address
-        v.recent = !v.recent
-        v.selected = 0
-        if (!(keep && this.selectContext(v, keep))) this.selectHere(v)
-        this.refresh()
-      }, { hint: true })
       add("ctrl+l", "link session", "act", () => this.onLink(), m("act"))
       add("alt+f", "pin", "act", () => this.onTogglePin(v), m("act"))
-      add("alt+a", "archive", "act", () => this.onToggleArchive(v), m("act"))
+      add("alt+x", "archive", "act", () => this.onToggleArchive(v), m("act"))
       add("alt+v", "show archived", "view", () => {
         this.showArchived = !this.showArchived
         return this.loadContexts(v, this.selectedContext()?.address)
@@ -837,6 +830,7 @@ export class CueBrowser implements Component {
         hint: this.contextsFlat || v.query.trim() !== "",
         ...m("view"),
       })
+      add("alt+a", "artifacts", "navigate", pushContext((c) => this.pushArtifacts(c)), m("open"))
       add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)), m("open"))
       add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)), m("open"))
     } else if (v.kind === "artifacts") {
@@ -847,14 +841,8 @@ export class CueBrowser implements Component {
       } else {
         add("alt+k", "time/type order", "view", () => this.relayoutArtifacts(v, () => { v.byType = !v.byType }))
       }
-    } else if (v.kind === "activity" || v.kind === "log") {
-      add("tab", "recent/all", "view", () => {
-        v.recent = !v.recent
-        v.selected = 0
-        this.refresh()
-      }, { hint: true })
     } else if (v.kind === "sessions") {
-      add("tab", "recent/labeled/all", "view", () => {
+      add("tab", "window/labeled", "view", () => {
         v.subset = NEXT_SUBSET[v.subset]
         v.selected = 0
         this.previewScroll = this.previewStart()
@@ -883,6 +871,7 @@ export class CueBrowser implements Component {
       if (k !== "sessions") add("ctrl+r", "sessions", "navigate", () => this.jumpTo("sessions"), m("open"))
       if (k !== "activity") add("ctrl+a", "activity", "navigate", () => this.jumpTo("activity"), m("open"))
       if (k !== "log") add("ctrl+g", "log", "navigate", () => this.jumpTo("log"), m("open"))
+      if (k !== "artifacts") add("alt+a", "artifacts", "navigate", () => this.jumpTo("artifacts"), m("open"))
       add("alt+p", "preview", "view", () => {
         this.showPreview = !this.showPreview
         this.refresh()
@@ -911,14 +900,8 @@ export class CueBrowser implements Component {
     const toggle = (label: string, group: Setting["group"], values: [string, string], on: boolean, set: (on: boolean) => void) =>
       out.push({ label, group, values, current: on ? 1 : 0, apply: (i) => set(i === 1) })
 
-    if (v.kind === "contexts" || v.kind === "activity" || v.kind === "log") {
-      toggle("list", "filter", ["all", "recent"], v.recent, (on) => {
-        v.recent = on
-        v.selected = 0
-      })
-    }
     if (v.kind === "sessions") {
-      const subsets: SessionSubset[] = ["recent", "labeled", "all"]
+      const subsets: SessionSubset[] = ["recent", "labeled"]
       out.push({
         label: "list", group: "filter", values: subsets, current: subsets.indexOf(v.subset),
         apply: (i) => {
@@ -931,7 +914,7 @@ export class CueBrowser implements Component {
     }
     if (k !== "artifacts") {
       out.push({
-        label: "recency", group: "filter", values: RECENCY_STEPS.map((d) => `${d}d`), current: this.recencyStep,
+        label: "recency", group: "filter", values: RECENCY_STEPS.map((d) => recencyLabel(d)), current: this.recencyStep,
         apply: (i) => {
           this.recencyStep = i
           this.deps.saveRecencyDays(this.recencyDays)
@@ -1108,12 +1091,7 @@ export class CueBrowser implements Component {
 
   private async onEnter(): Promise<void> {
     if (this.view.kind === "sessions") return this.onResume()
-    const c = this.selectedContext()
-    if (c) {
-      this.status = ""
-      this.pushArtifacts({ address: c.address, slug: c.slug })
-      return
-    }
+    if (this.view.kind === "contexts") return this.onResumeContext()
     await this.onOpen()
   }
 
@@ -1178,10 +1156,44 @@ export class CueBrowser implements Component {
     }
   }
 
-  private onNewSession(): void {
+  /**
+   * ctrl+s: choose which of the context's hand-offs the new session
+   * starts from (newest preselected, or none), then start it. Without
+   * hand-offs the session starts at once.
+   */
+  private async onNewSession(): Promise<void> {
     const c = this.actionContext()
     if (!c) return
-    const err = this.deps.newSession(c.address, this.target)
+    this.busy = true
+    let rows: ArtifactRow[]
+    try {
+      rows = await this.deps.loadArtifacts(c.address)
+    } finally {
+      this.busy = false
+    }
+    const choices = handoffChoices(c.address, rows, Math.floor(Date.now() / 1000))
+    if (choices.length === 0) return this.startSession(c)
+    const title = `new session: ${c.slug}`
+    let handle: OverlayHandle | undefined
+    const menu = new HandoffMenu(this.theme, this.kb, title, choices, (pick) => {
+      handle?.hide()
+      this.tui.requestRender()
+      if (pick) this.startSession(c, pick.handoff)
+    })
+    const wrapped: Component = {
+      render: (w) => menu.render(w),
+      invalidate: () => menu.invalidate(),
+      handleInput: (data) => {
+        menu.handleInput(data)
+        this.tui.requestRender()
+      },
+    }
+    handle = this.tui.showOverlay(wrapped, { anchor: "center", width: handoffMenuWidth(choices, title) })
+    this.tui.requestRender()
+  }
+
+  private startSession(c: ContextRef, handoff?: string): void {
+    const err = this.deps.newSession(c.address, this.target, handoff)
     if (err) return this.notify(err)
     if (this.target === "here") return this.done()
     this.notify(`started a session for ${c.slug} in tmux`)
@@ -1339,8 +1351,20 @@ export class CueBrowser implements Component {
     this.refresh()
   }
 
-  private onResume(): void {
-    const s = this.selectedSession()
+  /** Contexts view enter: resume the context's most recent session. */
+  private async onResumeContext(): Promise<void> {
+    const c = this.selectedContext()
+    if (!c) return
+    this.sessionsCache ??= this.deps.loadSessions(this.repoScope)
+    const sessions = await this.sessionsCache
+    const newest = sessions
+      .filter((s) => s.address === c.address)
+      .reduce<SessionRow | undefined>((a, s) => (a && a.modified >= s.modified ? a : s), undefined)
+    if (!newest) return this.notify(`no sessions in ${c.slug}; ctrl+s for a new one`)
+    this.onResume(newest)
+  }
+
+  private onResume(s = this.selectedSession()): void {
     if (!s) return
     if (s.path === this.deps.currentSession()) return this.notify("already in this session")
     const err = this.deps.resume(s, this.target)
@@ -1628,15 +1652,15 @@ export class CueBrowser implements Component {
     const v = this.view
     const here = this.deps.sessionAddress()
     const title = v.kind === "contexts"
-      ? `Cue contexts ${t.fg("muted", v.recent ? `(recent ${this.recencyDays}d)` : "(all)")}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
+      ? `Cue contexts ${t.fg("muted", `(${recencyLabel(this.recencyDays)})`)}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? `recent ${this.recencyDays}d` : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? recencyLabel(this.recencyDays) : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
         : v.kind === "activity"
-          ? `Cue activity ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
+          ? `Cue activity ${t.fg("muted", `${recencyLabel(this.recencyDays)} ${v.context.address}`)}`
           : v.kind === "log"
-          ? `Cue log ${t.fg("muted", `${v.recent ? `recent ${this.recencyDays}d` : "all"} ${v.context.address}`)}`
+          ? `Cue log ${t.fg("muted", `${recencyLabel(this.recencyDays)} ${v.context.address}`)}`
           : `Cue artifacts ${t.fg("muted", `${v.tree ? "tree" : v.byType ? "flat by type" : "flat by time"} ${v.context.address}`)}`
-    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const target = t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`)
     const right = t.fg("dim", `session: ${here ?? "none"}`)
     const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
@@ -1665,7 +1689,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownContexts(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no contexts")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no contexts active in ${this.recencyDays}d (ctrl+up: widen)` : "no contexts")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const tree = !this.contextsFlat && v.query.trim() === ""
@@ -1689,7 +1713,7 @@ export class CueBrowser implements Component {
     const t = this.theme
     if (v.loading && v.sessions.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownSessions(v)
-    if (rows.length === 0) return [t.fg("warning", v.subset === "all" ? "no sessions" : `no ${v.subset} sessions (tab: next)`)]
+    if (rows.length === 0) return [t.fg("warning", v.subset === "labeled" ? "no labeled sessions (tab: window)" : "no sessions (ctrl+up: widen, tab: labeled)")]
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Math.floor(Date.now() / 1000)
     const here = this.deps.sessionAddress()
@@ -1797,7 +1821,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownActivity(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no activity in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no activity")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no activity in ${this.recencyDays}d (ctrl+up: widen)` : "no activity")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()
@@ -1821,7 +1845,7 @@ export class CueBrowser implements Component {
     if (v.loading && v.rows.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownLog(v)
     if (rows.length === 0) {
-      return [t.fg("warning", v.recent ? `no log entries in ${this.recencyDays}d (ctrl+up: widen, tab: all)` : "no log entries")]
+      return [t.fg("warning", this.recencyDays !== ALL_TIME_DAYS ? `no log entries in ${this.recencyDays}d (ctrl+up: widen)` : "no log entries")]
     }
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Date.now()

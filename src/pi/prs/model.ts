@@ -9,7 +9,7 @@
  * field a row shows, so nothing is fetched per PR.
  */
 
-import type { SessionRow } from "../browser/sessions"
+import type { SessionLike } from "./ui"
 
 export type View = "repo" | "org"
 export type Preset = "all" | "mine" | "review"
@@ -294,8 +294,8 @@ export function prNote(pr: Pr, checkout: string): string {
 }
 
 /** Newest session of a context. */
-export function latestSession(sessions: SessionRow[], address: string): SessionRow | undefined {
-  let best: SessionRow | undefined
+export function latestSession(sessions: SessionLike[], address: string): SessionLike | undefined {
+  let best: SessionLike | undefined
   for (const s of sessions) {
     if (s.address === address && (!best || s.modified > best.modified)) best = s
   }

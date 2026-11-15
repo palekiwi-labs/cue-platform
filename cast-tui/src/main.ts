@@ -1,15 +1,31 @@
 import { homedir } from "node:os";
-import { matchesKey, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import {
+  getKeybindings,
+  matchesKey,
+  type OverlayHandle,
+  ProcessTerminal,
+  TuiAltScreen,
+} from "@earendil-works/pi-tui";
+import { builtinActions } from "./actions.js";
 import { listInstances } from "./cast.js";
-import { isQuitKey } from "./keys.js";
+import { checkoutRoots } from "./checkouts.js";
+import { configActions } from "./config.js";
+import { exec } from "./exec.js";
+import { isPickerKey, isQuitKey } from "./keys.js";
+import { PrBrowser } from "./picker/prs/browser.js";
+import { PreviewCache } from "./picker/prs/preview.js";
+import { hostDeps, storeRoot } from "./prs.js";
 import { Refresher } from "./refresh.js";
+import { pickerTheme } from "./theme.js";
 import { InstanceListView } from "./view.js";
 
 const REFRESH_INTERVAL_MS = 2000;
 
 export function main(): void {
   const tui = new TuiAltScreen(new ProcessTerminal());
-  const view = new InstanceListView({ home: homedir() });
+  const home = homedir();
+  const view = new InstanceListView({ home });
+  const previews = new PreviewCache();
   tui.addChild(view);
 
   const refresher = new Refresher(async () => {
@@ -21,11 +37,52 @@ export function main(): void {
     tui.requestRender();
   });
 
+  let picker: OverlayHandle | "opening" | undefined;
+
+  const quit = (): void => {
+    refresher.stop();
+    tui.stop();
+    process.exit(0);
+  };
+
+  const openPicker = async (): Promise<void> => {
+    picker = "opening";
+    const cwd = process.cwd();
+    const roots = checkoutRoots(home);
+    const configured = configActions({ exec, roots });
+    const deps = await hostDeps({
+      exec,
+      cwd,
+      store: storeRoot(process.env, home),
+      roots,
+      previews,
+      actions: (pr) => [...builtinActions(exec, cwd), ...configured(pr)],
+    });
+    const close = (): void => {
+      if (picker !== undefined && picker !== "opening") picker.hide();
+      picker = undefined;
+      tui.requestRender();
+    };
+    const keys = getKeybindings();
+    const browser = new PrBrowser(tui, pickerTheme, keys, deps, close);
+    picker = tui.showOverlay(browser, {
+      anchor: "top-left",
+      width: "100%",
+      maxHeight: "100%",
+      margin: 0,
+    });
+    tui.requestRender();
+  };
+
   tui.addInputListener((data) => {
+    if (picker !== undefined) {
+      if (matchesKey(data, "ctrl+c")) quit();
+      return picker === "opening" ? { consume: true } : undefined;
+    }
     if (isQuitKey(data)) {
-      refresher.stop();
-      tui.stop();
-      process.exit(0);
+      quit();
+    } else if (isPickerKey(data)) {
+      void openPicker();
     } else if (matchesKey(data, "up")) {
       view.moveUp();
       tui.requestRender();

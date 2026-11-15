@@ -16,8 +16,9 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test 'build-test/test/**/*.test.js'",
+    "sync": "node scripts/sync-picker.mjs",
+    "build": "npm run sync && tsc -p tsconfig.json",
+    "test": "npm run sync && tsc -p tsconfig.test.json && node --test 'build-test/test/**/*.test.js'",
     "start": "node bin/cast-tui.js"
   },
   "dependencies": {

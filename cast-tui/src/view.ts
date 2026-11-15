@@ -163,7 +163,7 @@ export class InstanceListView implements Component {
     if (this.error !== undefined) out.push("", fg("error", `error: ${this.error}`));
     out.push(
       "",
-      fg("dim", "\u2191/\u2193 select  r refresh  q quit"),
+      fg("dim", "\u2191/\u2193 select  r refresh  P pull requests  q quit"),
     );
     return out.map((l) => truncateToWidth(l, width, fg("dim", "...")));
   }

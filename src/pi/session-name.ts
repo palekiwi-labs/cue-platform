@@ -5,14 +5,17 @@ import { currentContext, slugOf } from "./lib/current-context"
 
 /**
  * Name the pi session, and the tmux window holding this pane, after the
- * slug of a cue context. tmux failures are ignored; the original window
- * name is not restored on exit.
+ * slug of a cue context, and export its address as CUE_CONTEXT so child
+ * processes (the external editor, shell commands) resolve the same
+ * context. tmux failures are ignored; the original window name is not
+ * restored on exit.
  */
 export async function applyContextName(
   pi: ExtensionAPI,
   address: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  env.CUE_CONTEXT = address
   const slug = slugOf(address)
   if (!slug) return
   pi.setSessionName(slug)
@@ -83,6 +86,7 @@ export function registerSessionNaming(
     const address = currentContext(ctx.sessionManager.getBranch())
     if (address) await applyContextName(pi, address, env)
     else {
+      delete env.CUE_CONTEXT
       debugLog(
         `sync/else event session-name=${pi.getSessionName() ?? "undefined"}`,
         pi.getSessionName() || DEFAULT_WINDOW_NAME,

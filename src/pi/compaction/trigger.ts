@@ -66,7 +66,7 @@ export function maybeCompact(
 }
 
 /** Store and address the cue-log call wrote to, via `cue status --json`. */
-async function resolvePaths(
+export async function resolvePaths(
   pi: ExtensionAPI,
   input: Record<string, unknown>,
   cwd: string,

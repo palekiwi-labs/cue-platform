@@ -61,6 +61,16 @@ Agent fields (all optional):
   prompt. Use `{ "file": "path" }` for anything longer than a line; the
   path is relative to the manifest that declares it.
 - `tools`: omit for harness defaults, `[]` for no tools, or a list.
+- `isolated`: `true` runs pi without extensions, skills, context files
+  (`AGENTS.md`), prompt templates or MCP. Use it for small internal
+  agents that need only their prompt; it cuts the input to about the
+  prompt itself. Extension tools (`cue-*`, `delegate`) are gone, so list
+  only pi built-in tools. Pi only.
+- `extensions`: pi extensions loaded with `-e`, also when `isolated`.
+  An isolated agent on an Anthropic model needs the auth extension
+  (`~/.pi/agent/npm/node_modules/@gotgenes/pi-anthropic-auth`). Entries
+  starting `./` or `../` are relative to the manifest, `~/` is home,
+  anything else passes to pi as is. Pi only.
 
 Agents have no `model`/`thinking` field; the model profile supplies both.
 Prompts, cwd, env and context never go in the manifest.

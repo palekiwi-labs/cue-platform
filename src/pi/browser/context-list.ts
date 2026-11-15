@@ -3,7 +3,7 @@
  * which rows show for a query and recency window, and how a row reads.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent"
+import type { Theme } from "../prs/ui"
 import { fuzzyFilter, sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { collapseTree, type ContextRow, filterRecent, relativeAge, sortFlatContexts, treePrefix } from "./model"
 

@@ -181,8 +181,8 @@ export class MemoryMonitor implements Component {
       this.stacked = !this.stacked
       return this.tui.requestRender()
     }
-    if (matchesKey(data, "ctrl+d")) return this.scrollBy(Math.floor(page / 2))
-    if (matchesKey(data, "ctrl+u")) return this.scrollBy(-Math.floor(page / 2))
+    if (matchesKey(data, "shift+down")) return this.scrollBy(Math.floor(page / 2))
+    if (matchesKey(data, "shift+up")) return this.scrollBy(-Math.floor(page / 2))
   }
 
   private scrollBy(delta: number): void {
@@ -233,7 +233,7 @@ export class MemoryMonitor implements Component {
   }
 
   private helpLine(): string {
-    const hints = ["tab/1-3 view", "alt+r refresh", "alt+l layout", "ctrl+d/u scroll", "esc close"]
+    const hints = ["tab/1-3 view", "alt+r refresh", "alt+l layout", "shift+up/down scroll", "esc close"]
     return this.theme.fg("dim", hints.join(" • "))
   }
 

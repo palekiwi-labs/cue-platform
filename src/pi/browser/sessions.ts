@@ -6,7 +6,7 @@
 
 import { calculateContextTokens, type Theme } from "@earendil-works/pi-coding-agent"
 import { truncateToWidth } from "@earendil-works/pi-tui"
-import type { ContextRow } from "./model"
+import { ALL_TIME_DAYS, type ContextRow } from "./model"
 
 const CUE_CONTEXT_TYPE = "cue-context"
 const DESCRIPTION_TYPE = "session-description"
@@ -258,7 +258,7 @@ export function recentSessions(
   days: number,
   limit: number,
 ): { session: SessionRow; context: ContextRow }[] {
-  const since = now - days * 86400
+  const since = days === ALL_TIME_DAYS ? -Infinity : now - days * 86400
   return groupSessions(contexts, sessions, new Set(), false)
     .flatMap((r) => (r.kind === "session" && r.session.modified >= since ? [r] : []))
     .sort((a, b) => b.session.modified - a.session.modified)

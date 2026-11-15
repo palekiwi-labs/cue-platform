@@ -74,15 +74,28 @@ function documentPath(r: RunRow, pane: Pane): string | undefined {
   return p
 }
 
-/** How far back the monitor lists batches. */
-const HISTORY = "7d"
+/** Most batches one monitor load asks cue-agent for. */
+const BATCH_LIMIT = "150"
+
+let labeledSupport: Promise<boolean> | undefined
+
+/** Whether the installed cue-agent ps accepts --labeled; older builds reject it. */
+function supportsLabeled(pi: ExtensionAPI, cwd: string): Promise<boolean> {
+  labeledSupport ??= pi
+    .exec("cue-agent", ["ps", "--help"], { cwd })
+    .then((r) => r.code === 0 && r.stdout.includes("--labeled"))
+    .catch(() => false)
+  return labeledSupport
+}
 
 export async function openMonitor(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return
   let tail: { runId: string; tailer: EventTail } | undefined
   const deps = (tui: TUI): MonitorDeps => ({
-    load: async () => {
-      const r = await pi.exec("cue-agent", ["ps", "--all", "--since", HISTORY, "--json"], { cwd: ctx.cwd })
+    load: async (window, labeledOnly) => {
+      const args = ["ps", "--all", "--since", window, "--limit", BATCH_LIMIT, "--json"]
+      if (labeledOnly && (await supportsLabeled(pi, ctx.cwd))) args.push("--labeled")
+      const r = await pi.exec("cue-agent", args, { cwd: ctx.cwd })
       if (r.code !== 0) return { error: (r.stderr || r.stdout).trim() || `ps failed (${r.code})` }
       return { rows: parsePs(r.stdout) }
     },

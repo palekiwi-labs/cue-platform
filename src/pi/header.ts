@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent"
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { parseContextTree, RECENCY_STEPS, recencyIndex, relativeAge } from "./browser/model"
+import { parseContextTree, ALL_TIME_DAYS, RECENCY_STEPS, recencyIndex, relativeAge } from "./browser/model"
 import { NO_CONTEXT, recentSessions, sessionHeadline, type SessionRow } from "./browser/sessions"
 import type { ContextRow } from "./browser/model"
 import { loadSessions, SESSIONS_SHORTCUT, storedRecencyDays } from "./commands/cue-browser"
@@ -60,7 +60,7 @@ export function headerLines(
     ? LOGO.map((l) => "  " + t.fg("accent", l))
     : ["  " + t.bold(t.fg("accent", "cue platform"))]
   const out = ["", ...logo, "  " + t.fg("dim", revisionText(revision)), ""]
-  const title = `  recent sessions ${t.fg("dim", `(${days}d)`)}`
+  const title = `  recent sessions ${t.fg("dim", `(${days === ALL_TIME_DAYS ? "all-time" : `${days}d`})`)}`
   const hint = t.fg("dim", `${SESSIONS_SHORTCUT} to resume`)
   const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(hint) - 2)
   out.push(fit(title + " ".repeat(gap) + hint))

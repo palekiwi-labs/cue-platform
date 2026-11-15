@@ -4,6 +4,8 @@
  * receipts for the calling agent. No process or filesystem access here.
  */
 
+import { resolve } from "node:path"
+
 /** Per-call task cap enforced by cue-agent (no queue). */
 export const MAX_TASKS = 4
 
@@ -82,6 +84,134 @@ export function aliasFor(roster: Roster, id: string | null): string | null {
   return hit ? hit[0] : id
 }
 
+/**
+ * Resolve the two prompt levels into one prompt per task: a task prompt
+ * replaces the batch prompt, never appends. Throws retryable errors when a
+ * task is left without a prompt, or when a batch prompt is fully shadowed.
+ */
+export function resolvePrompts(
+  batch: string | null,
+  tasks: (string | null)[],
+): { defaults: string | null; prompts: string[] } {
+  const missing = tasks
+    .map((p, i) => (p === null ? i + 1 : null))
+    .filter((n): n is number => n !== null)
+  if (missing.length > 0 && batch === null) {
+    throw new Error(
+      `task${missing.length > 1 ? "s" : ""} ${missing.join(", ")} ` +
+        "ha" + (missing.length > 1 ? "ve" : "s") +
+        " no prompt and no top-level prompt was given; put the full " +
+        "instructions in the top-level prompt.",
+    )
+  }
+  if (batch !== null && tasks.every((p) => p !== null)) {
+    throw new Error(
+      "every task overrides the top-level prompt, so it is unused; " +
+        "keep the shared instructions in the top-level prompt and drop " +
+        "the per-task prompts, or remove the top-level prompt.",
+    )
+  }
+  return {
+    defaults: batch,
+    prompts: tasks.map((p) => p ?? (batch as string)),
+  }
+}
+
+const PLACEHOLDER_WRAPPERS = [/^<.+>$/, /^\{\{.+\}\}$/, /^\[.+\]$/, /^\$.+$/]
+const PLACEHOLDER_WORDS = new Set(["tbd", "todo", "...", "…"])
+const REFERENCE_STARTS = [
+  "same as above",
+  "same as before",
+  "see above",
+  "as above",
+  "as discussed",
+  "same prompt as",
+]
+const MIN_WORDS = 8
+
+/**
+ * Detect a prompt that is an unfilled placeholder or a reference instead of
+ * a self-contained brief. Returns the offending token (for the error) or
+ * null when the prompt looks like real instructions.
+ */
+export function placeholderPrompt(prompt: string): string | null {
+  const s = prompt.trim()
+  if (s.length === 0) return s
+  if (PLACEHOLDER_WORDS.has(s.toLowerCase())) return s
+  if (!/\s/.test(s) && /^[A-Z0-9_-]{4,}$/.test(s)) return s
+  if (!/\s/.test(s) && PLACEHOLDER_WRAPPERS.some((re) => re.test(s))) return s
+  const lower = s.toLowerCase()
+  if (REFERENCE_STARTS.some((p) => lower.startsWith(p))) return s
+  if (s.split(/\s+/).length < MIN_WORDS) return s
+  return null
+}
+
+export interface BatchTaskSpec {
+  agent: string
+  prompt?: string
+  cwd?: string
+  worktree?: { base: string; ephemeral: boolean }
+  model?: string
+  context?: string
+}
+
+export interface BatchSpec {
+  defaults?: { prompt: string }
+  tasks: BatchTaskSpec[]
+}
+
+/**
+ * Build the cue-agent run spec: the batch prompt rides the `defaults`
+ * layer; a task carries its own prompt only when it differs from the
+ * default (cue-agent resolves inheritance itself). Also validates that
+ * no resolved prompt is a placeholder.
+ */
+export function buildBatchSpec(
+  args: {
+    prompt?: string | null
+    tasks: Array<{
+      agent: string
+      prompt?: string | null
+      model?: string
+      dir?: string
+      worktree?: true | { base: string }
+      context?: string | null
+    }>
+  },
+  cwd: string,
+): BatchSpec {
+  const { defaults, prompts } = resolvePrompts(
+    args.prompt ?? null,
+    args.tasks.map((t) => t.prompt ?? null),
+  )
+  for (const p of prompts) {
+    const hit = placeholderPrompt(p)
+    if (hit) {
+      throw new Error(
+        `a task prompt resolved to "${hit}", which looks like an ` +
+          "unfilled placeholder. Rewrite the delegate call with the " +
+          "complete instructions written out in full.",
+      )
+    }
+  }
+  const toWorktree = (w: true | { base: string }) =>
+    w === true
+      ? { base: "HEAD", ephemeral: true }
+      : { base: w.base, ephemeral: true }
+  return {
+    ...(defaults ? { defaults: { prompt: defaults } } : {}),
+    tasks: args.tasks.map((t, i) => ({
+      agent: t.agent,
+      ...(prompts[i] !== defaults ? { prompt: prompts[i] as string } : {}),
+      ...(t.worktree
+        ? { worktree: toWorktree(t.worktree) }
+        : { cwd: t.dir ? resolve(cwd, t.dir) : cwd }),
+      ...(t.model ? { model: t.model } : {}),
+      ...(t.context ? { context: t.context } : {}),
+    })),
+  }
+}
+
 /** The tool description: what it does, when to use it, and the roster. */
 export function buildDescription(roster: Roster): string {
   const { agents, models } = roster
@@ -124,8 +254,8 @@ export function buildDescription(roster: Roster): string {
     "",
     "Choosing agent and model:",
     '- "ask explore ..." -> one task, agent explore, no model (default).',
-    '- "consult opus and flash" -> two tasks, agent consultant, model',
-    "  opus and model flash (same prompt).",
+    '"consult opus and flash" -> one top-level prompt with the full brief,',
+    "plus two tasks that differ only in model (no per-task prompt).",
     '- "code review from reviewer opus" -> agent reviewer, model opus.',
     '- "ask opus" with no agent named -> the agent whose role fits the',
     "  request and that allows opus.",
@@ -136,6 +266,40 @@ export function buildDescription(roster: Roster): string {
     "worktree of the session repo at its current HEAD, deleted when the",
     "task finishes — use it when the agent inspects source while the",
     "operator keeps editing the branch (e.g. code reviews).",
+  ].join("\n")
+}
+
+/** Job id for a background batch: a safe path segment, unique per launch. */
+export function backgroundJobId(now: Date = new Date(), rand: string = Math.random().toString(16).slice(2, 8)): string {
+  const stamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14)
+  return `delegate-${stamp}-${rand}`
+}
+
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
+
+/**
+ * Shell command for a background batch window: runs the spec under the
+ * direnv environment of cwd, writing the receipt and stderr into dir.
+ */
+export function backgroundCommand(binary: string, specPath: string, dir: string, cwd: string): string {
+  return (
+    `direnv exec ${shellQuote(cwd)} ${binary} run --spec ${shellQuote(specPath)} --json` +
+    ` > ${shellQuote(`${dir}/receipt.json`)} 2> ${shellQuote(`${dir}/stderr.log`)}`
+  )
+}
+
+/** What the caller needs to find a background batch again. */
+export function formatBackgroundHandle(jobId: string, dir: string): string {
+  return [
+    `Started in the background as job ${jobId}; continue with other work.`,
+    "",
+    "Check on it with cue-agent:",
+    `- cue-agent ps --all --job ${jobId} --json   (batch id, state)`,
+    "- cue-agent status <batch_id>   (per-run outcome)",
+    "- cue-agent logs <batch_id>     (events)",
+    "- cue-agent stop <batch_id>     (cancel)",
+    "",
+    `Receipt and stderr: ${dir}/receipt.json, ${dir}/stderr.log`,
   ].join("\n")
 }
 
@@ -168,4 +332,18 @@ export function formatReceipt(batch: BatchReceipt, roster?: Roster): string {
       return lines.join("\n")
     })
     .join("\n\n")
+}
+
+const LABEL_WORDS = 6
+
+/**
+ * Batch label for the agent monitor: the distinct agents, then the first
+ * words of the first prompt.
+ */
+export function batchLabel(tasks: { agent: string; prompt: string }[]): string {
+  const agents = [...new Set(tasks.map((t) => t.agent))].join("+")
+  const words = (tasks[0]?.prompt ?? "").trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return agents
+  const head = words.slice(0, LABEL_WORDS).join(" ")
+  return `${agents}: ${head}${words.length > LABEL_WORDS ? "…" : ""}`
 }

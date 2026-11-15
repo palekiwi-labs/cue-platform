@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   ExploreError,
   exploreContext,
+  handoffBriefing,
   parseContextAddress,
   parseDetail,
   stripFrontmatter,
@@ -123,8 +124,10 @@ describe("exploreContext", () => {
       art("plan", "index.md"),
       art("plan", "open.md", { status: "open" }),
       art("plan", "done.md", { status: "complete" }),
-      art("trace", "handoff-new.md", { created_at: 2 }),
+      art("trace", "handoff-new.md", { created_at: 1767225600 }),
       art("trace", "handoff-old.md", { created_at: 1 }),
+      art("trace", "handoff-mid.md", { created_at: 1767139200 }),
+      art("trace", "handoff-oldest.md", {}),
       art("trace", "review.md", { created_at: 3 }),
     ]
     fake.logs = [
@@ -144,40 +147,95 @@ describe("exploreContext", () => {
     expect(out).toContain(
       `spec: ${A}/spec/index.md\nmaster plan: ${A}/plan/index.md\n` +
         `open plan: ${A}/plan/open.md\n` +
-        `latest hand-off: ${A}/trace/handoff-new.md (2 log entries since)`,
+        "hand-off history (oldest first; none is selected for this session, " +
+        "and recency implies neither relevance nor unresolved work):\n" +
+        `  - ${A}/trace/handoff-old.md  1970-01-01 00:00 UTC\n` +
+        `  - ${A}/trace/handoff-mid.md  2025-12-31 00:00 UTC\n` +
+        `  - ${A}/trace/handoff-new.md  2026-01-01 00:00 UTC\n` +
+        "  (1 older hand-offs not listed)\n</documents>",
     )
+    expect(out).not.toContain("latest hand-off")
+    expect(out).not.toContain("trace/review.md")
     expect(out).not.toContain("plan/done.md")
     expect(out).not.toContain("<handoff")
     expect(out.indexOf("<documents>")).toBeLessThan(out.indexOf("<log"))
     expect(out.trimEnd().endsWith("</tasks>\n</cue-context-explore>")).toBe(true)
   })
 
-  test("working prints only the hand-off in full, with truncation", async () => {
+  test("working lists hand-off addresses but never their content", async () => {
     await write(`${A}/spec/index.md`, "# Spec\n")
-    await write(
-      `${A}/trace/handoff-x.md`,
-      Array.from({ length: 305 }, (_, i) => `l${i}`).join("\n"),
-    )
+    await write(`${A}/trace/handoff-x.md`, "# Hand-off body\n")
     fake.artifacts = [
       art("spec", "index.md"),
       art("trace", "handoff-x.md", { created_at: 1 }),
     ]
-    fake.logs = [{ timestamp: 5e9, trace: null }]
+    fake.logs = [{ timestamp: 5e9, trace: `${A}/trace/handoff-x.md` }]
     const out = await exploreContext(fakeExec(store, fake), "/w", A, "working", NOW)
     expect(out).toContain(`spec: ${A}/spec/index.md`)
     expect(out).not.toContain("# Spec")
-    expect(out).toContain(
-      `<handoff address="${A}/trace/handoff-x.md" entries-since="1" truncated="true">`,
-    )
-    expect(out).toContain(`[truncated: 5 more lines; read ${A}/trace/handoff-x.md]`)
+    expect(out).toContain(`  - ${A}/trace/handoff-x.md`)
+    expect(out).not.toContain("<handoff")
+    expect(out).not.toContain("Hand-off body")
   })
 
-  test("working notes a missing hand-off file", async () => {
-    fake.artifacts = [art("trace", "handoff-gone.md", { created_at: 1 })]
-    const out = await exploreContext(fakeExec(store, fake), "/w", A, "working", NOW)
-    expect(out).toContain(
-      `<handoff address="${A}/trace/handoff-gone.md" entries-since="0" missing="true">`,
-    )
+  describe("handoffBriefing", () => {
+    const H = `${A}/trace/handoff-x.md`
+
+    test("injects exactly the selected hand-off, not the newest", async () => {
+      await write(`${A}/trace/handoff-x.md`, "---\ncreated_at: 1\n---\n# X state\n")
+      await write(`${A}/trace/handoff-y.md`, "# Y state\n")
+      fake.artifacts = [
+        art("trace", "handoff-x.md", { created_at: 1 }),
+        art("trace", "handoff-y.md", { created_at: 9 }),
+      ]
+      fake.logs = [
+        { timestamp: 9e9, trace: `${A}/trace/handoff-y.md` },
+        { timestamp: 3e9, trace: null },
+        { timestamp: 2e9, trace: H },
+      ]
+      const r = await handoffBriefing(fakeExec(store, fake), "/w", A, `/${H}/`)
+      expect(r.address).toBe(H)
+      expect(r.briefing).toBe(
+        `<handoff address="${H}" selected="true" entries-since="2">\n` +
+          "---\ncreated_at: 1\n---\n# X state\n</handoff>",
+      )
+      expect(r.briefing).not.toContain("Y state")
+    })
+
+    test("truncates long hand-offs", async () => {
+      await write(`${A}/trace/handoff-x.md`, Array.from({ length: 305 }, (_, i) => `l${i}`).join("\n"))
+      fake.artifacts = [art("trace", "handoff-x.md", { created_at: 1 })]
+      const r = await handoffBriefing(fakeExec(store, fake), "/w", A, H)
+      expect(r.briefing).toContain('truncated="true"')
+      expect(r.briefing).toContain(`[truncated: 5 more lines; read ${H}]`)
+    })
+
+    test.each([
+      ["another context", "o/r/other/trace/handoff-x.md", "does not belong to context o/r/demo"],
+      ["a non-hand-off trace", `${A}/trace/review.md`, "is not a hand-off"],
+      ["a non-trace artifact", `${A}/note/handoff-x.md`, "is not a hand-off"],
+      ["a context address", A, "is not an artifact address"],
+      ["an escaping path", `${A}/trace/../handoff-x.md`, "is not an artifact address"],
+    ])("rejects %s", async (_n, handoff, message) => {
+      fake.artifacts = [art("trace", "handoff-x.md", { created_at: 1 })]
+      await expect(
+        handoffBriefing(fakeExec(store, fake), "/w", A, handoff),
+      ).rejects.toThrow(message)
+    })
+
+    test("fails for a hand-off missing from the context", async () => {
+      fake.artifacts = [art("trace", "handoff-y.md", { created_at: 9 })]
+      await expect(
+        handoffBriefing(fakeExec(store, fake), "/w", A, H),
+      ).rejects.toThrow(`no hand-off ${H} in context ${A}`)
+    })
+
+    test("fails for an unreadable hand-off", async () => {
+      fake.artifacts = [art("trace", "handoff-x.md", { created_at: 1 })]
+      await expect(
+        handoffBriefing(fakeExec(store, fake), "/w", A, H),
+      ).rejects.toThrow(`cannot read hand-off ${H}`)
+    })
   })
 
   test("unknown context fails", async () => {

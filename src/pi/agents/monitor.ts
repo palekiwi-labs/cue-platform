@@ -28,6 +28,7 @@ import {
   fmtTokens,
   haystack,
   inputTokens,
+  isLabeled,
   isLive,
   streamSettled,
   parseReceipt,
@@ -42,9 +43,17 @@ export const POLL_MS = 5000
 /** Stream pane tick while it shows a live run: stat plus appended bytes. */
 export const STREAM_POLL_MS = 1000
 
+/** History windows the monitor steps through, shortest first. */
+export const HISTORY_WINDOWS = ["1d", "7d", "30d"] as const
+export type HistoryWindow = (typeof HISTORY_WINDOWS)[number]
+
 export interface MonitorDeps {
-  /** Every run cue-agent knows, newest batch first; error text on failure. */
-  load(): Promise<{ rows: RunRow[] } | { error: string }>
+  /**
+   * Runs of batches started within the window, newest batch first; error
+   * text on failure. With labeledOnly the caller may leave out unlabeled
+   * batches.
+   */
+  load(window: HistoryWindow, labeledOnly: boolean): Promise<{ rows: RunRow[] } | { error: string }>
   /** The run's prompt.md, if readable. */
   prompt(runPath: string): string | undefined
   /** The run's receipt.json text, if readable. */
@@ -118,6 +127,8 @@ export class AgentMonitor implements Component {
   private loading = false
   private error = ""
   private subset: Subset = "running"
+  private showUnlabeled = false
+  private history: HistoryWindow = HISTORY_WINDOWS[0]
   private pane: Pane = "prompt"
   private stacked = true
   private preview = true
@@ -179,9 +190,12 @@ export class AgentMonitor implements Component {
   private async reload(first: boolean): Promise<void> {
     if (this.loading) return
     this.loading = true
-    const r = await this.deps.load()
+    const window = this.history
+    const labeledOnly = !this.showUnlabeled
+    const r = await this.deps.load(window, labeledOnly)
     this.loading = false
     if (!this.timer && !first) return
+    if (window !== this.history || labeledOnly === this.showUnlabeled) return void this.reload(first)
     if ("error" in r) {
       this.error = r.error
     } else {
@@ -202,7 +216,7 @@ export class AgentMonitor implements Component {
    */
   private groups(): DisplayGroup[] {
     const jobOf = (r: RunRow) => r.jobId ?? r.batchId
-    let base = this.rows
+    let base = this.showUnlabeled ? this.rows : this.rows.filter(isLabeled)
     if (this.subset === "running") {
       const live = new Set(this.rows.filter(isLive).map(jobOf))
       base = base.filter((r) => live.has(jobOf(r)))
@@ -314,6 +328,17 @@ export class AgentMonitor implements Component {
       this.previewScroll = 0
       this.follow = true
       void this.refreshStream()
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "alt+u")) {
+      this.showUnlabeled = !this.showUnlabeled
+      this.previewScroll = 0
+      void this.reload(false)
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
+      this.history = this.stepHistory(matchesKey(data, "ctrl+up") ? 1 : -1)
+      void this.reload(false)
       return this.tui.requestRender()
     }
     if (matchesKey(data, "alt+z")) return this.toggleFold()
@@ -441,19 +466,27 @@ export class AgentMonitor implements Component {
   private headerLine(width: number): string {
     const t = this.theme
     const live = this.rows.filter(isLive).length
-    const target = t.fg(this.target === "tmux" ? "warning" : "muted", `[${this.target}]`)
+    const target = t.fg(this.target === "here" ? "warning" : "muted", `[${this.target}]`)
     const title = t.fg("accent", t.bold("cue-agent runs")) + "  " + target + " " +
-      t.fg("muted", `(${this.subset}) ${live} live, ${this.rows.length} total`)
+      t.fg("muted", `(${this.subset}, last ${this.history}) ${live} live, ${this.rows.length} total`) +
+      (this.showUnlabeled ? "" : t.fg("dim", ", unlabeled hidden"))
     return truncateToWidth(title, width)
+  }
+
+  private stepHistory(delta: number): HistoryWindow {
+    const n = HISTORY_WINDOWS.length
+    return HISTORY_WINDOWS[(HISTORY_WINDOWS.indexOf(this.history) + delta + n) % n]!
   }
 
   private helpLine(width: number): string {
     const hints = [
       "tab running/all",
+      `alt+u ${this.showUnlabeled ? "hide" : "show"} unlabeled`,
       `enter open ${this.pane}`,
       "ctrl+t target",
       `ctrl+r ${PANES[(PANES.indexOf(this.pane) + 1) % PANES.length]}`,
       "alt+r refresh",
+      "ctrl+up/down history",
       `alt+p ${this.preview ? "hide" : "show"} preview`,
       "alt+z fold", "shift+tab fold all",
       "ctrl+s session",

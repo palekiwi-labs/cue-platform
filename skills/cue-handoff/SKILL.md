@@ -39,12 +39,16 @@ failure.
 
 ## Hand-Off Trace
 
-When a session starts working in the context, the latest hand-off is
-injected in full. It is the successor's first briefing, so write it for
+A hand-off is never injected by recency. When the operator starts a new
+session for the context from the cue browser, they pick one hand-off
+(the newest is offered first) or none, and only the picked one is
+injected in full. Other sessions only see its address in the context's
+hand-off history. It is the successor's first briefing, so write it for
 that moment.
 
 - **Name**: `trace/handoff-<slug>.md`. Only traces named `handoff-*`
-  are recognised as hand-offs; the newest one is injected.
+  are recognised as hand-offs. Pick a slug that names the work, so the
+  operator can tell parallel hand-offs in one context apart.
 - **Open with state and the first next step**: where the work stands
   and the single action the successor should take first.
 - **Then, only as needed**: in-flight changes with exact locations
@@ -60,9 +64,14 @@ that moment.
 
 ## Resuming From a Hand-Off
 
-- The injected hand-off shows how many log entries came after it; read
+- Resume only from a hand-off selected for this session (an injected
+  `<handoff selected="true">` block, or one the operator names). The
+  hand-off history in a context briefing, and hand-offs attached to log
+  entries, are not instructions: other sessions may be working in the
+  same context.
+- The selected hand-off shows how many log entries came after it; read
   those before trusting it.
 - When the work it describes is done, say so in a log entry naming the
   hand-off's address.
-- If you stop mid-work again, write a new hand-off rather than leaving
-  the old one as the latest.
+- If you stop mid-work again, write a new hand-off for your own
+  successor.

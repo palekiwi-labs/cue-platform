@@ -1,12 +1,19 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { execFileSync, spawn } from "node:child_process"
-import { resolve } from "node:path"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { Type } from "typebox"
 import {
   type BatchReceipt,
   type Roster,
   MAX_TASKS,
+  backgroundCommand,
+  backgroundJobId,
+  buildBatchSpec,
   buildDescription,
+  formatBackgroundHandle,
+  batchLabel,
   formatReceipt,
   parseAgentList,
   selectableAliases,
@@ -16,6 +23,17 @@ const BINARY = "cue-agent"
 
 function makeParameters(names: string[], aliases: string[]) {
   return Type.Object({
+    prompt: Type.Optional(
+      Type.String({
+        description:
+          "Shared instructions for every task that sets no prompt of its " +
+          "own; the usual place for the brief when tasks differ only in " +
+          "agent or model. Write it out in full — goal, relevant paths " +
+          "and facts, and what to return; never a placeholder, variable, " +
+          "or reference. The delegated agents cannot see this " +
+          "conversation.",
+      }),
+    ),
     tasks: Type.Array(
       Type.Object({
         agent: Type.Unsafe<string>({
@@ -23,11 +41,15 @@ function makeParameters(names: string[], aliases: string[]) {
           enum: names,
           description: "Name of an agent from the list in the tool description.",
         }),
-        prompt: Type.String({
-          description:
-            "Self-contained instructions. The agent cannot see this " +
-            "conversation; include the goal, paths, facts, and what to return.",
-        }),
+        prompt: Type.Optional(
+          Type.String({
+            description:
+              "Instructions for this task only, replacing the top-level " +
+              "prompt. Use it only when tasks need different briefs. Same " +
+              "rules: complete and self-contained, written out in full; " +
+              "never a placeholder, variable, or reference.",
+          }),
+        ),
         model: Type.Optional(
           Type.Unsafe<string>({
             type: "string",
@@ -89,6 +111,14 @@ function makeParameters(names: string[], aliases: string[]) {
           "skip capture.",
       }),
     ),
+    background: Type.Optional(
+      Type.Boolean({
+        description:
+          "Run the batch in a detached tmux window and return at once with " +
+          "a job id; check on it later with cue-agent ps/status/logs/stop. " +
+          "Pair with context to get the results as traces.",
+      }),
+    ),
   })
 }
 
@@ -132,6 +162,19 @@ function runBatch(
   })
 }
 
+/** Start `cue-agent run --spec` in a detached tmux window and return its job id. */
+function launchBackground(spec: Record<string, unknown>, cwd: string): { jobId: string; dir: string } {
+  const jobId = backgroundJobId()
+  const dir = mkdtempSync(join(tmpdir(), `${jobId}-`))
+  const specPath = join(dir, "spec.json")
+  writeFileSync(specPath, JSON.stringify({ ...spec, job: { id: jobId, label: jobId } }), { mode: 0o600 })
+  const command = backgroundCommand(BINARY, specPath, dir, cwd)
+  execFileSync("tmux", ["new-window", "-d", "-n", jobId, "-c", cwd, command], {
+    stdio: ["ignore", "ignore", "pipe"],
+  })
+  return { jobId, dir }
+}
+
 export function delegateTool(cwd: string = process.cwd()) {
   const { roster, error } = loadRoster(cwd)
   const names = roster.agents.map((a) => a.name)
@@ -155,21 +198,34 @@ export function delegateTool(cwd: string = process.cwd()) {
       // Boolean true means HEAD at spawn time; { base } pins to an explicit
       // revision so all agents in a workflow see the same tree even if the
       // operator keeps committing.
-      const toWorktree = (w: true | { base: string }) =>
-        w === true
-          ? { base: "HEAD", ephemeral: true }
-          : { base: w.base, ephemeral: true }
       const spec = {
-        tasks: args.tasks.map((t) => ({
-          agent: t.agent,
-          prompt: t.prompt,
-          ...(t.worktree
-            ? { worktree: toWorktree(t.worktree) }
-            : { cwd: t.dir ? resolve(ctx.cwd, t.dir) : ctx.cwd }),
-          ...(t.model ? { model: t.model } : {}),
-          ...(t.worktree ? { worktree: toWorktree(t.worktree) } : {}),
-          ...(args.context ? { context: args.context } : {}),
-        })),
+        label: batchLabel(
+          args.tasks.map((t) => ({
+            agent: t.agent,
+            prompt: t.prompt ?? args.prompt ?? "",
+          })),
+        ),
+        ...buildBatchSpec(
+          {
+            prompt: args.prompt ?? null,
+            tasks: args.tasks.map((t) => ({
+              agent: t.agent,
+              prompt: t.prompt ?? null,
+              ...(t.model ? { model: t.model } : {}),
+              ...(t.dir ? { dir: t.dir } : {}),
+              ...(t.worktree ? { worktree: t.worktree } : {}),
+              ...(args.context ? { context: args.context } : {}),
+            })),
+          },
+          ctx.cwd,
+        ),
+      }
+      if (args.background) {
+        const { jobId, dir } = launchBackground(spec, ctx.cwd)
+        return {
+          content: [{ type: "text", text: formatBackgroundHandle(jobId, dir) }],
+          details: { job_id: jobId, dir },
+        }
       }
       const { code, stdout, stderr } = await runBatch(spec, ctx.cwd, signal)
 

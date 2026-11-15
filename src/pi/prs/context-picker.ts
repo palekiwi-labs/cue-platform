@@ -1,6 +1,10 @@
 /**
  * Context picker for one PR, over the repo's context tree (as the cue
- * browser lists it), hosted full screen by the PR browser. Two purposes:
+ * browser lists it), hosted full screen by the PR browser. Three purposes:
+ *
+ * Conversation: enter selects an existing context to link to the branch.
+ * ctrl+n opens parent selection for explicit creation. Suggested names
+ * only determine the initial highlight; no manifest controls are shown.
  *
  * Parent: the PR branch has no context yet. The list starts with a
  * (no parent) row; enter creates the context (init.context, editable with
@@ -14,17 +18,17 @@
  * names are refused. tab cycles the manifest.
  */
 
-import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
+import type { Kb, Theme } from "./ui"
 import { Input, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui"
-import { collapseTree, type ContextRow, RECENCY_STEPS, recencyIndex } from "../browser/model"
+import { collapseTree, type ContextRow, ALL_TIME_DAYS, RECENCY_STEPS, recencyIndex, recencyLabel } from "../browser/model"
 import { contextLine, shownContexts, slugWidthFor, treeRows } from "../browser/context-list"
 import type { Pr } from "./model"
 
 export interface PickerInit {
   /** Default "review". */
-  purpose?: "review" | "parent"
+  purpose?: "review" | "parent" | "conversation"
   pr: Pr
-  /** Review: generated review context slug. Parent: the context to create. */
+  /** Review: generated slug. Conversation/parent: the context to create. */
   context: string
   manifests: string[]
   manifest: number
@@ -42,10 +46,12 @@ export interface PickerInit {
 }
 
 export interface PickerResult {
-  /** Slug of the context to review into. */
+  /** Context slug, or an existing address for conversation selection. */
   context: string
   /** Set when the context is created: its parent's address, if any. */
   parent?: string
+  /** Conversation: request explicit creation with parent selection. */
+  create?: true
   /** Review only. */
   manifest?: string
 }
@@ -66,7 +72,6 @@ export class ContextPicker {
   private editing = false
   private under: ContextRow | undefined
   private manifest: number
-  private recent = true
   private step: number
   /** Index into the shown contexts. */
   private selected = 0
@@ -79,7 +84,7 @@ export class ContextPicker {
   constructor(
     private tui: TUI,
     private theme: Theme,
-    private kb: KeybindingsManager,
+    private kb: Kb,
     private init: PickerInit,
     private host: PickerHost,
   ) {
@@ -98,7 +103,7 @@ export class ContextPicker {
     }
     const linkedSlug = init.linked?.split("/").pop()
     const start =
-      this.existing(init.context) ??
+      this.existing(this.conversationMode ? `review-${init.branch ?? init.context}` : init.context) ??
       (linkedSlug ? this.existing(`review-${linkedSlug}`) : undefined) ??
       init.rows.find((r) => r.address === init.linked) ??
       (init.branch ? this.existing(init.branch) : undefined)
@@ -111,11 +116,16 @@ export class ContextPicker {
   private preselect(address: string): void {
     let i = this.shown().findIndex((r) => r.address === address)
     if (i < 0) {
-      this.recent = false
+      const previous = this.step
+      this.step = recencyIndex(ALL_TIME_DAYS)
       i = this.shown().findIndex((r) => r.address === address)
-      if (i < 0) this.recent = true
+      if (i < 0) this.step = previous
     }
     this.selected = i < 0 ? 0 : i + this.top()
+  }
+
+  private get conversationMode(): boolean {
+    return this.init.purpose === "conversation"
   }
 
   private get parentMode(): boolean {
@@ -145,7 +155,7 @@ export class ContextPicker {
   }
 
   private tree(): ContextRow[] {
-    return treeRows(this.init.rows, this.recent, this.now(), this.days)
+    return treeRows(this.init.rows, this.days !== ALL_TIME_DAYS, this.now(), this.days)
   }
 
   private shown(): ContextRow[] {
@@ -186,6 +196,7 @@ export class ContextPicker {
       return this.say("edit the name: enter keep, esc undo")
     }
     if (this.parentMode && (matchesKey(data, "tab") || matchesKey(data, "shift+tab") || matchesKey(data, "ctrl+n"))) return
+    if (this.conversationMode && (matchesKey(data, "tab") || matchesKey(data, "shift+tab"))) return
     if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
       const d = matchesKey(data, "tab") ? 1 : -1
       const k = this.init.manifests.length
@@ -193,6 +204,7 @@ export class ContextPicker {
       return this.tui.requestRender()
     }
     if (matchesKey(data, "ctrl+n")) {
+      if (this.conversationMode) return this.host.submit({ context: this.init.context, create: true })
       this.under = this.highlighted()
       this.editing = true
       this.name.setValue(this.init.context)
@@ -202,20 +214,11 @@ export class ContextPicker {
       this.name.handleInput("\x05")
       return this.say(`new context ${this.under ? `under ${this.under.address}` : "at the top level"}: enter create, esc back`)
     }
-    if (matchesKey(data, "alt+a")) {
-      this.recent = !this.recent
-      this.selected = 0
-      return this.say(this.recent ? `recent: ${this.days}d and pinned` : "all contexts")
-    }
     if (matchesKey(data, "ctrl+up") || matchesKey(data, "ctrl+down")) {
-      const next = Math.max(0, Math.min(RECENCY_STEPS.length - 1, this.step + (matchesKey(data, "ctrl+up") ? 1 : -1)))
-      this.recent = true
+      this.step = (this.step + (matchesKey(data, "ctrl+up") ? 1 : -1) + RECENCY_STEPS.length) % RECENCY_STEPS.length
       this.selected = 0
-      if (next !== this.step) {
-        this.step = next
-        this.host.saveRecencyDays(this.days)
-      }
-      return this.say(`recency window ${this.days}d`)
+      this.host.saveRecencyDays(this.days)
+      return this.say(`recency window: ${recencyLabel(this.days)}`)
     }
     const before = this.query.getValue()
     this.query.handleInput(data)
@@ -282,10 +285,13 @@ export class ContextPicker {
     const row = this.highlighted()
     if (this.parentMode) {
       if (this.count() === 0) return this.say("no matching contexts", "error")
+      if (this.existing(this.newName)) return this.say(`${this.newName} exists; ctrl+e edits the name`, "error")
       return this.host.submit({ context: this.newName, ...(row ? { parent: row.address } : {}) })
     }
     if (!row) return this.say("no context: ctrl+n creates one", "error")
-    this.host.submit({ context: row.slug, manifest: this.manifestName() })
+    this.host.submit(this.conversationMode
+      ? { context: row.address }
+      : { context: row.slug, manifest: this.manifestName() })
   }
 
   // ---- rendering -------------------------------------------------------
@@ -307,15 +313,22 @@ export class ContextPicker {
   render(width: number): string[] {
     const t = this.theme
     const { pr } = this.init
+    const label = (s: string) => t.fg("muted", s) + " "
+    const scope = recencyLabel(this.days)
+    if (this.parentMode) return this.renderParent(width, label, scope)
+    if (this.conversationMode) {
+      const head = t.fg("accent", t.bold(`#${pr.number}`)) + "  " + pr.title + "  " +
+        t.fg("muted", `pick a conversation context (${scope})`)
+      return this.frame(width, head, label("selection links this context to the PR branch"), [
+        "enter select and link", "ctrl+n create context", "ctrl+up/down recency", "esc cancel",
+      ])
+    }
     const manifests = this.init.manifests
       .map((m, i) => (i === this.manifest ? t.fg("accent", t.bold(`[${m}]`)) : t.fg("dim", m)))
       .join(" ")
-    const label = (s: string) => t.fg("muted", s) + " "
-    const scope = this.recent ? `recent ${this.days}d` : "all"
-    if (this.parentMode) return this.renderParent(width, label, scope)
     const hints = this.editing
       ? ["enter create", "esc back"]
-      : ["enter review here", "ctrl+n new under", "tab manifest", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+      : ["enter review here", "ctrl+n new under", "tab manifest", "ctrl+up/down recency", "esc back"]
     const head = t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
       t.fg("muted", `pick the context (${scope})`)
     const settings = this.editing
@@ -330,7 +343,7 @@ export class ContextPicker {
     const { pr } = this.init
     const hints = this.editing
       ? ["enter keep", "esc undo"]
-      : ["enter create and link", "ctrl+e edit name", "alt+a recent/all", "ctrl+up/down recency", "esc cancel"]
+      : ["enter create and link", "ctrl+e edit name", "ctrl+up/down recency", "esc cancel"]
     const head = t.fg("accent", t.bold(`#${pr.number}`)) + "  " + pr.title + "  " +
       t.fg("muted", `no context: pick its parent (${scope})`)
     const row = this.highlighted()
@@ -369,7 +382,7 @@ export class ContextPicker {
       contextLine(t, r, { tree, here: undefined, tones: this.tones, mixed, hidden, slugWidth: this.slugWidth, now, width }))
     if (this.top() > 0) all.unshift(t.fg("muted", "(no parent)"))
     if (rows.length === 0) {
-      all.push(t.fg("warning", q ? "no matching contexts" : `no contexts active in ${this.days}d (alt+a: all)`))
+      all.push(t.fg("warning", q ? "no matching contexts" : this.days === ALL_TIME_DAYS ? "no contexts" : `no contexts active in ${this.days}d (ctrl+up: widen)`))
     }
     const start = Math.max(0, Math.min(this.selected - Math.floor(height / 2), all.length - height))
     return all.slice(start, start + height).map((l, i) =>

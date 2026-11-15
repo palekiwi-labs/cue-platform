@@ -20,6 +20,7 @@ import { parseArtifacts, parseContextTree } from "../browser/model"
 import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browser/sessions"
 import { currentContext, slugOf } from "../lib/current-context"
 import { cueBestEffort } from "./common"
+import { injectArgs } from "./context-inject"
 import { linkContext } from "./context-pins"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
@@ -81,7 +82,8 @@ export function openInTmux(path: string): string | undefined {
  * cannot call newSession, so dispatch the hidden /resume-open command,
  * whose command context can.
  * In tmux: a new window running pi with the inject command as its
- * first message. An optional note follows the injected orientation.
+ * first message. A selected hand-off is injected in full after the
+ * orientation; an optional note follows both.
  */
 export function newSession(
   pi: ExtensionAPI,
@@ -89,8 +91,9 @@ export function newSession(
   address: string,
   target: Target,
   note?: string,
+  handoff?: string,
 ): string | undefined {
-  const args = note ? `${address} ${note}` : address
+  const args = injectArgs(address, { handoff, note })
   if (target === "tmux") {
     const inject = `/cue:context:inject ${args}`
     return tmuxWindow(slugOf(address) || "pi", ctx.cwd, `pi ${shellQuote(inject)}`)
@@ -336,7 +339,8 @@ export async function openBrowser(
         copy: copyToClipboard,
         create: (address, type, filename) =>
           createArtifact(pi, ctx.cwd, address, type, filename),
-        newSession: (address, target) => newSession(pi, ctx, address, target),
+        newSession: (address, target, handoff) =>
+          newSession(pi, ctx, address, target, undefined, handoff),
         loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
         currentSession: () => ctx.sessionManager.getSessionFile(),
         currentCwd: () => {
