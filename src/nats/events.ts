@@ -35,7 +35,9 @@ export interface AgentIdentity {
   session_name?: string
   model?: string
   context?: string
+  context_title?: string
   run_id?: string
+  agent?: string
   pid?: number
 }
 
@@ -68,6 +70,44 @@ export function resolveJsDomain(env: NodeJS.ProcessEnv = process.env): string | 
   if (raw === undefined) return DEFAULT_JS_DOMAIN
   const trimmed = raw.trim()
   return trimmed ? trimmed : undefined
+}
+
+/** The cue-agent agent name a session runs as, from `CUE_AGENT_NAME`. */
+export function agentNameOf(env: NodeJS.ProcessEnv): string | undefined {
+  return env.CUE_AGENT_NAME?.trim() || undefined
+}
+
+function scalar(raw: string): string | undefined {
+  const value = raw.trim()
+  if (!value) return undefined
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return (JSON.parse(value) as string).trim() || undefined
+    } catch {
+      return undefined
+    }
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'").trim() || undefined
+  }
+  return value.replace(/\s+#.*$/, "").trim() || undefined
+}
+
+/**
+ * Title of a context from its `context.md`: the frontmatter `title`,
+ * falling back to `description`. Single-line scalars only.
+ */
+export function contextTitleOf(markdown: string): string | undefined {
+  const lines = markdown.split(/\r?\n/)
+  if (lines[0]?.trim() !== "---") return undefined
+  const fields: Record<string, string | undefined> = {}
+  for (const line of lines.slice(1)) {
+    if (line.trim() === "---") break
+    const m = /^(title|description):(.*)$/.exec(line)
+    if (m) fields[m[1] as string] = scalar(m[2] as string)
+  }
+  const title = fields.title ?? fields.description
+  return title ? truncate(title, INPUT_PREVIEW_CHARS) : undefined
 }
 
 /** Make an arbitrary id usable as a single NATS subject token and KV key. */
@@ -194,6 +234,8 @@ export class SessionTracker {
   private seq = 0
   private thinkingSent = false
   private toolStarts = new Map<string, number>()
+  private busySince: number | undefined
+  private toolsDone = 0
   readonly row: RegistryRow
 
   constructor(
@@ -239,15 +281,23 @@ export class SessionTracker {
     return this.event("start", { reason, ...identity })
   }
 
-  input(text: string, source: string): AgentEvent {
+  private markBusy(): void {
     this.row.state = "busy"
+    if (this.busySince === undefined) {
+      this.busySince = this.now()
+      this.toolsDone = 0
+    }
+  }
+
+  input(text: string, source: string): AgentEvent {
+    this.markBusy()
     delete this.row.error
     const { model, context } = this.row
     return this.event("input", { source, preview: truncate(text, INPUT_PREVIEW_CHARS), model, context })
   }
 
   turnStart(turn: number): AgentEvent {
-    this.row.state = "busy"
+    this.markBusy()
     this.thinkingSent = false
     return this.event("turn_start", { turn })
   }
@@ -278,6 +328,7 @@ export class SessionTracker {
     const startedAt = this.toolStarts.get(callId)
     this.toolStarts.delete(callId)
     const duration = durationMs ?? (startedAt === undefined ? undefined : this.now() - startedAt)
+    this.toolsDone += 1
     return this.event("tool_end", { call_id: callId, tool: toolName, ok: !isError, duration_ms: duration })
   }
 
@@ -288,8 +339,27 @@ export class SessionTracker {
   }
 
   settled(aborted: boolean): AgentEvent {
-    if (this.row.state !== "error") this.row.state = "idle"
-    return this.event("settled", { aborted })
+    const errored = this.row.state === "error"
+    if (!errored) this.row.state = "idle"
+    const turnMs = this.busySince === undefined ? undefined : this.now() - this.busySince
+    const tools = this.toolsDone
+    this.busySince = undefined
+    this.toolsDone = 0
+    const { context, context_title, session_name, cwd, run_id, agent } = this.row
+    const fields: Record<string, unknown> = {
+      aborted,
+      errored,
+      context,
+      context_title,
+      session_name,
+      cwd,
+      run_id,
+      agent,
+      turn_ms: turnMs,
+      tools,
+    }
+    for (const key of Object.keys(fields)) if (fields[key] === undefined) delete fields[key]
+    return this.event("settled", fields)
   }
 
   compact(reason: string): AgentEvent {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import {
+  agentNameOf,
   argPreview,
+  contextTitleOf,
   encodeEvent,
   eventSubject,
   messageError,
@@ -42,6 +44,23 @@ describe("runIdOf", () => {
   test("recognises cue-agent run ids", () => {
     expect(runIdOf("20261114-134753-ae2a53-builder-1")).toBe("20261114-134753-ae2a53-builder-1")
     expect(runIdOf("019a3c1e-7f2b-7000-8000-123456789abc")).toBeUndefined()
+  })
+})
+
+describe("identity sources", () => {
+  test("agent name comes from CUE_AGENT_NAME, trimmed", () => {
+    expect(agentNameOf({ CUE_AGENT_NAME: " summarizer " })).toBe("summarizer")
+    expect(agentNameOf({ CUE_AGENT_NAME: "  " })).toBeUndefined()
+    expect(agentNameOf({})).toBeUndefined()
+  })
+
+  test("context title prefers title, falls back to description", () => {
+    expect(contextTitleOf("---\ntitle: Controller design\ndescription: d\n---\nbody")).toBe("Controller design")
+    expect(contextTitleOf("---\nkind: work\ndescription: 'It''s the desc'\n---\n")).toBe("It's the desc")
+    expect(contextTitleOf('---\ntitle: "Quoted: yes"\n---\n')).toBe("Quoted: yes")
+    expect(contextTitleOf("---\ntitle:\ndescription: fallback\n---\n")).toBe("fallback")
+    expect(contextTitleOf("---\nkind: work\n---\ntitle: not frontmatter\n")).toBeUndefined()
+    expect(contextTitleOf("title: no frontmatter")).toBeUndefined()
   })
 })
 
@@ -116,6 +135,60 @@ describe("SessionTracker", () => {
     tr.input("again", "user")
     expect(tr.row.state).toBe("busy")
     expect(tr.row.error).toBeUndefined()
+  })
+
+  test("settled carries identity, busy-period duration and tool count", () => {
+    let t = 1000
+    const tr = new SessionTracker(
+      {
+        sid: "s1",
+        host: "casm",
+        cwd: "/home/pl/code/x",
+        context: "palekiwi/palekiwi/controller-design",
+        context_title: "Controller design",
+        session_name: "named",
+        agent: "builder",
+      },
+      () => t,
+    )
+    expect(tr.start("startup")).toMatchObject({ agent: "builder", context_title: "Controller design" })
+    tr.input("go", "user")
+    t += 500
+    tr.turnStart(0)
+    tr.toolStart("c1", "bash", { command: "ls" })
+    tr.toolEnd("c1", "bash", false)
+    tr.toolStart("c2", "read", { path: "a" })
+    tr.toolEnd("c2", "read", true)
+    tr.input("steer", "user")
+    t += 1500
+    const { ts: _ts, seq: _seq, ...settled } = tr.settled(false)
+    expect(settled).toEqual({
+      v: 1,
+      sid: "s1",
+      host: "casm",
+      kind: "settled",
+      aborted: false,
+      errored: false,
+      context: "palekiwi/palekiwi/controller-design",
+      context_title: "Controller design",
+      session_name: "named",
+      cwd: "/home/pl/code/x",
+      agent: "builder",
+      turn_ms: 2000,
+      tools: 2,
+    })
+    tr.input("next", "user")
+    t += 100
+    expect(tr.settled(true)).toMatchObject({ aborted: true, turn_ms: 100, tools: 0 })
+  })
+
+  test("settled omits unknown fields and flags an errored busy period", () => {
+    const { tr } = tracker()
+    const bare = tr.settled(false)
+    expect(Object.keys(bare).sort()).toEqual(["aborted", "errored", "host", "kind", "seq", "sid", "tools", "ts", "v"])
+    tr.input("x", "user")
+    tr.error("boom")
+    expect(tr.settled(false)).toMatchObject({ errored: true, turn_ms: 0 })
   })
 
   test("message ids differ across processes resuming one session", () => {

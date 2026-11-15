@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { connect, type NatsConnection } from "@nats-io/transport-node"
 import { jetstreamManager } from "@nats-io/jetstream"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { registerNatsTelemetry } from "./extension"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { readContextTitle, registerNatsTelemetry } from "./extension"
 import { EVENT_STREAM, type AgentEvent, type RegistryRow } from "./events"
 import { openRegistry } from "./jetstream"
 import { natsServerBin, startJetStreamServer, waitFor, type TestServer } from "./test-server"
@@ -22,7 +25,7 @@ function fakePi() {
   return { pi, fire }
 }
 
-function fakeCtx(sid: string) {
+function fakeCtx(sid: string, branch: unknown[] = []) {
   return {
     mode: "json",
     cwd: "/work",
@@ -31,10 +34,34 @@ function fakeCtx(sid: string) {
       getSessionId: () => sid,
       getSessionFile: () => undefined,
       getSessionName: () => "named",
-      getBranch: () => [],
+      getBranch: () => branch,
     },
   }
 }
+
+function tempStore(contexts: Record<string, string>): string {
+  const store = mkdtempSync(join(tmpdir(), "nats-store-"))
+  for (const [address, md] of Object.entries(contexts)) {
+    mkdirSync(join(store, address), { recursive: true })
+    writeFileSync(join(store, address, "context.md"), md)
+  }
+  return store
+}
+
+describe("readContextTitle", () => {
+  test("reads the title from the store and never throws", () => {
+    const store = tempStore({ "o/r/ctx": "---\ntitle: The title\n---\n", "o/r/desc": "---\ndescription: Desc\n---\n" })
+    try {
+      expect(readContextTitle("o/r/ctx", { CUE_STORE: store })).toBe("The title")
+      expect(readContextTitle("o/r/desc", { CUE_STORE: store })).toBe("Desc")
+      expect(readContextTitle("o/r/missing", { CUE_STORE: store })).toBeUndefined()
+      expect(readContextTitle("o/../ctx", { CUE_STORE: store })).toBeUndefined()
+      expect(readContextTitle(undefined, { CUE_STORE: store })).toBeUndefined()
+    } finally {
+      rmSync(store, { recursive: true, force: true })
+    }
+  })
+})
 
 const cleanups: (() => Promise<void>)[] = []
 
@@ -55,12 +82,23 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
     const { server, nc } = await setup()
     const { pi, fire } = fakePi()
     const sid = "20261114-134753-ae2a53-builder-1"
-    const ctx = fakeCtx(sid)
-    registerNatsTelemetry(pi, { url: server.url, env: { CUE_NATS_JS_DOMAIN: "" }, host: "casm" })
+    const store = tempStore({ "o/r/first": "---\ntitle: First\n---\n", "o/r/second": "---\ntitle: Second\n---\n" })
+    cleanups.push(async () => rmSync(store, { recursive: true, force: true }))
+    const branch: unknown[] = []
+    const ctx = fakeCtx(sid, branch)
+    let t = 1000
+    registerNatsTelemetry(pi, {
+      url: server.url,
+      env: { CUE_NATS_JS_DOMAIN: "", CUE_STORE: store, CUE_CONTEXT: "o/r/first", CUE_AGENT_NAME: "builder" },
+      host: "casm",
+      now: () => t,
+    })
     cleanups.push(() => fire("session_shutdown", { reason: "quit" }, ctx))
 
     await fire("session_start", { reason: "startup" }, ctx)
+    branch.push({ type: "custom", customType: "cue-context", data: { address: "o/r/second" } })
     await fire("before_agent_start", { messageType: "user", prompt: "hello there" }, ctx)
+    t += 3000
     await fire("turn_start", { turnIndex: 0 }, ctx)
     await fire("message_update", { assistantMessageEvent: { type: "thinking_start" } }, ctx)
     await fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: { command: "ls" } }, ctx)
@@ -87,19 +125,50 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       row = e && e.operation === "PUT" ? (e.json() as RegistryRow) : undefined
       return row?.state === "idle" && row.turns === 1
     })
-    expect(row).toMatchObject({ run_id: sid, host: "casm", mode: "json", model: "anthropic/opus", tokens: 12 })
+    expect(row).toMatchObject({
+      run_id: sid,
+      host: "casm",
+      mode: "json",
+      model: "anthropic/opus",
+      tokens: 12,
+      agent: "builder",
+      context: "o/r/second",
+      context_title: "Second",
+    })
     expect(row!.cost).toBeCloseTo(0.5)
     expect(row!.last_tool).toBe("bash ls")
 
     const js = (await import("@nats-io/jetstream")).jetstream(nc)
     const consumer = await js.consumers.get(EVENT_STREAM, { filter_subjects: [`agent.evt.${sid}.>`] })
-    const kinds: string[] = []
+    const events: AgentEvent[] = []
     const msgs = await consumer.fetch({ max_messages: 8, expires: 2000 })
     for await (const m of msgs) {
-      kinds.push((m.json() as AgentEvent).kind)
-      if (kinds.length === 8) break
+      events.push(m.json() as AgentEvent)
+      if (events.length === 8) break
     }
-    expect(kinds).toEqual(["start", "input", "turn_start", "thinking", "tool_start", "tool_end", "turn_end", "settled"])
+    expect(events.map((e) => e.kind)).toEqual([
+      "start",
+      "input",
+      "turn_start",
+      "thinking",
+      "tool_start",
+      "tool_end",
+      "turn_end",
+      "settled",
+    ])
+    expect(events[0]).toMatchObject({ agent: "builder", context: "o/r/first", context_title: "First" })
+    expect(events[7]).toMatchObject({
+      aborted: false,
+      errored: false,
+      context: "o/r/second",
+      context_title: "Second",
+      session_name: "named",
+      cwd: "/work",
+      run_id: sid,
+      agent: "builder",
+      turn_ms: 3000,
+      tools: 1,
+    })
 
     await fire("session_shutdown", { reason: "quit" }, ctx)
     await waitFor(async () => {
