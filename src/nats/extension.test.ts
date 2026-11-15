@@ -84,7 +84,9 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
     const sid = "20261114-134753-ae2a53-builder-1"
     const store = tempStore({ "o/r/first": "---\ntitle: First\n---\n", "o/r/second": "---\ntitle: Second\n---\n" })
     cleanups.push(async () => rmSync(store, { recursive: true, force: true }))
-    const branch: unknown[] = []
+    const branch: unknown[] = [
+      { type: "custom", customType: "session-description", data: { text: "Initial description" } },
+    ]
     const ctx = fakeCtx(sid, branch)
     let t = 1000
     registerNatsTelemetry(pi, {
@@ -108,6 +110,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       { turnIndex: 0, message: { role: "assistant", usage: { totalTokens: 12, cost: { total: 0.5 } } } },
       ctx,
     )
+    branch.push({ type: "custom", customType: "session-description", data: { text: " Updated description " } })
     await fire("agent_settled", { aborted: false }, ctx)
 
     const jsm = await jetstreamManager(nc)
@@ -156,13 +159,16 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       "turn_end",
       "settled",
     ])
-    expect(events[0]).toMatchObject({ agent: "builder", context: "o/r/first", context_title: "First" })
+    expect(events[0]).toMatchObject({
+      agent: "builder", context: "o/r/first", context_title: "First", session_description: "Initial description",
+    })
     expect(events[7]).toMatchObject({
       aborted: false,
       errored: false,
       context: "o/r/second",
       context_title: "Second",
       session_name: "named",
+      session_description: "Updated description",
       cwd: "/work",
       run_id: sid,
       agent: "builder",

@@ -33,6 +33,7 @@ export interface AgentIdentity {
   cwd?: string
   session_file?: string
   session_name?: string
+  session_description?: string
   model?: string
   context?: string
   context_title?: string
@@ -345,13 +346,14 @@ export class SessionTracker {
     const tools = this.toolsDone
     this.busySince = undefined
     this.toolsDone = 0
-    const { context, context_title, session_name, cwd, run_id, agent } = this.row
+    const { context, context_title, session_name, session_description, cwd, run_id, agent } = this.row
     const fields: Record<string, unknown> = {
       aborted,
       errored,
       context,
       context_title,
       session_name,
+      session_description,
       cwd,
       run_id,
       agent,
