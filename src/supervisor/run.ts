@@ -41,7 +41,11 @@ function recordLaunchFailure(runDir: string, message: string): void {
 }
 
 /** Accepts a validated batch, persists its records and launches every run. */
-export function launchBatch(spec: BatchSpec, launchEnv: LaunchEnvironment): BatchSummary {
+export function launchBatch(
+  spec: BatchSpec,
+  launchEnv: LaunchEnvironment,
+  request?: { requestId: string; payload: string },
+): BatchSummary {
   const batchId = newId();
   ensureDir(batchesDir(launchEnv.root));
   const records: RunRecord[] = spec.runs.map((runSpec, index) => {
@@ -69,6 +73,7 @@ export function launchBatch(spec: BatchSpec, launchEnv: LaunchEnvironment): Batc
   }
   writeJsonAtomic(join(batchesDir(launchEnv.root), `${batchId}.json`), {
     batchId,
+    ...request,
     runIds: records.map((record) => record.runId),
     acceptedAt: Date.now(),
   });

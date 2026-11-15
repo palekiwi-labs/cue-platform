@@ -24,5 +24,10 @@
     "@types/node": "*",
     "typebox": "1.1.38",
     "typescript": "*"
+  },
+  "dependencies": {
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/kv": "3.4.0",
+    "@nats-io/transport-node": "3.4.0"
   }
 }

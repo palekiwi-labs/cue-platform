@@ -3,6 +3,7 @@ import { cancel } from "./cancel";
 import { reconcileLoop } from "./daemon";
 import { finalize } from "./finalize";
 import { reconcile } from "./reconcile";
+import { serveNats } from "./nats";
 import { launchBatch, waitForResults } from "./run";
 import { parseBatchSpec, SpecError } from "./spec";
 import { stateRoot } from "./store";
@@ -60,12 +61,22 @@ async function main(argv: string[]): Promise<number> {
     process.on("SIGTERM", stop);
     process.on("SIGINT", stop);
     try {
-      await reconcileLoop(stateRoot(), {
-        signal: controller.signal,
-        intervalMs: Number(process.env.CUE_SUPERVISOR_RECONCILE_MS ?? 5_000),
-        report: (states) => console.log(JSON.stringify({ reconciliation: states })),
-      });
+      await Promise.all([
+        serveNats({
+          root: stateRoot(),
+          piPath: process.env.CUE_SUPERVISOR_PI ?? which("pi"),
+          shPath: which("sh"),
+          finalizeCommand: (runDir) => [process.execPath, import.meta.path, "finalize", runDir],
+          env: process.env,
+        }, controller.signal),
+        reconcileLoop(stateRoot(), {
+          signal: controller.signal,
+          intervalMs: Number(process.env.CUE_SUPERVISOR_RECONCILE_MS ?? 5_000),
+          report: (states) => console.log(JSON.stringify({ reconciliation: states })),
+        }),
+      ]);
     } finally {
+      controller.abort();
       process.off("SIGTERM", stop);
       process.off("SIGINT", stop);
     }
