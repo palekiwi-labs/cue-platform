@@ -43,6 +43,7 @@
             ;
         };
         # Host side: cast and its TUI. Kept out of the container bundle.
+        station = import ./nix/station.nix { inherit pkgs; };
         host = {
           inherit (cast.packages.${system}) cast;
           cast-tui = import ./nix/cast-tui.nix { inherit pkgs; };
@@ -53,6 +54,7 @@
           platform
           // host
           // {
+            inherit station;
             cue-github = import ./nix/cue-github.nix { inherit pkgs; };
             host = pkgs.symlinkJoin {
               name = "cue-platform-host";
@@ -64,7 +66,7 @@
             default = pkgs.buildEnv {
               name = "cue-platform";
               # The picker stays off PATH: tmux binds it by store path.
-              paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]);
+              paths = builtins.attrValues (removeAttrs platform [ "tmux-window-picker" ]) ++ [ station ];
             };
           };
 

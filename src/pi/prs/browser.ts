@@ -71,6 +71,8 @@ export interface PrDeps {
   saveRecencyDays(days: number): void
   /** Start a detached cue-review run for a PR. */
   launchReview(req: ReviewRequest): Promise<Outcome>
+  /** Open the review station on a PR in a new tmux window; error text on failure. */
+  openStation(pr: Pr): string | undefined
   /** Copy text to system clipboard. */
   copy(text: string): Promise<void>
   /** The session repo's cue scope (`org/repo`); new contexts land here. */
@@ -414,6 +416,10 @@ export class PrBrowser implements Component {
       void this.openPicker()
       return true
     }
+    if (matchesKey(data, "alt+d")) {
+      this.onStation()
+      return true
+    }
     if (matchesKey(data, "ctrl+y")) {
       void this.onCopy("url")
       return true
@@ -589,6 +595,14 @@ export class PrBrowser implements Component {
     if (path) this.start(pr, address, path)
   }
 
+  private onStation(): void {
+    const pr = this.actionablePr()
+    if (!pr) return
+    const err = this.deps.openStation(pr)
+    if (err) return this.notice(err, "error")
+    this.notice(`opened station on #${pr.number} in tmux`, "success")
+  }
+
   /** Ctrl+o: check out only. */
   private async onCheckout(): Promise<void> {
     const pr = this.actionablePr()
@@ -638,6 +652,7 @@ export class PrBrowser implements Component {
       "alt+w checkout",
       "ctrl+t target",
       "ctrl+r review",
+      "alt+d station",
       "ctrl+y url",
       "ctrl+h md link",
       "alt+r refresh",

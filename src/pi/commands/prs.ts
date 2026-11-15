@@ -25,7 +25,7 @@ import {
   worktreeFor,
 } from "../prs/model"
 import { type ContextRow, parseContextTree, pinnedFirst } from "../browser/model"
-import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays } from "./cue-browser"
+import { loadSessions, newSession, resumeSession, saveRecencyDays, storeRoot, storedRecencyDays, tmuxWindow } from "./cue-browser"
 import { scopeOfRemote } from "../browser/sessions"
 import { currentContext } from "../lib/current-context"
 import { defaultTarget } from "../lib/default-target"
@@ -246,6 +246,7 @@ async function openPrs(pi: ExtensionAPI, ctx: ExtensionContext, previews: Previe
     saveRecencyDays: (d) => saveRecencyDays(cwd, d),
     launchReview: (req) => launchReview(exec, cwd, req),
     copy: copyToClipboard,
+    openStation: (pr) => tmuxWindow(`#${pr.number}`, cwd, `${process.env.CUE_STATION ?? "station"} pr ${pr.number}`),
     scope,
     links: () => links(exec, cwd, scope),
     link: (branch, context, create) => link(exec, cwd, scope, branch, context, create),

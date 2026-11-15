@@ -1,0 +1,57 @@
+diff --git a/home/config/awesome/globalkeys.lua b/home/config/awesome/globalkeys.lua
+index 19d97a9e3db295dbb6d2c8732d4886347c1d68bc..2377a99ebdd0086e6d5e6b3783cdac7127a30ecb 100644
+--- a/home/config/awesome/globalkeys.lua
++++ b/home/config/awesome/globalkeys.lua
+@@ -455,11 +455,6 @@ local globalkeys = gears.table.join(
+     { description = "swap with previous client by index", group = "client" }
+   ),
+ 
+-  -- Spawn programs
+-  awful.key({ ALTKEY }, "XF86AudioRaiseVolume",
+-    function() awful.spawn("cplay", { tag = "med" }) end,
+-    { description = "open cmus", group = "launcher" }),
+-
+   -- Reload/Quit
+   awful.key({ MODKEY, "Control" }, "q", awesome.restart,
+     { description = "reload awesome", group = "awesome" }
+diff --git a/home/config/nvim/lua/config/mappings.lua b/home/config/nvim/lua/config/mappings.lua
+index ce27bc0669520d4c5072566fb378eb2897f684de..9b19827d7faaa6d2c20e01c04f4599e29d538fdd 100644
+--- a/home/config/nvim/lua/config/mappings.lua
++++ b/home/config/nvim/lua/config/mappings.lua
+@@ -40,8 +40,8 @@ local base = {
+   { "<A-PageUp>",      "<cmd>lprev<cr>",                                                            desc = "[Loclist] Prev" },
+   { "<A-PageDown>",    "<cmd>lnext<cr>",                                                            desc = "[Loclist] Next" },
+   -- AI / Cue
+-  { "<C-t>",           function() cue_utils.pick_contexts() end,                                    desc = "[Cue] Contexts" },
+-  { "<A-a>",           cue_utils.pick_active_context_artifacts,                                    desc = "[Cue] Artifacts (active context)" },
++  { "<C-t>",           function() cue_utils.pick_contexts() end,                                    desc = "[Cue] Contexts", mode = { "n", "i" } },
++  { "<A-a>",           cue_utils.pick_active_context_artifacts,                                    desc = "[Cue] Artifacts (active context)", mode = { "n", "i" } },
+   { "<A-t>",           function() cue_utils.pick_artifacts({ task = "master", exclude_type = "task" }) end, desc = "[Cue] Artifacts (master scope)" },
+   { "<A-c>",           cue_utils.open_context,                                                      desc = "[Cue] Open active context" },
+   { "<space>e",        group = "entries" },
+diff --git a/home/programs/gui/sxhkd.nix b/home/programs/gui/sxhkd.nix
+index d0800526dd28f3ec349c688d6ab956cef86ee672..13b4473a6af2153c98e78c0408f104fdf384fd31 100644
+--- a/home/programs/gui/sxhkd.nix
++++ b/home/programs/gui/sxhkd.nix
+@@ -202,6 +202,7 @@ in
+     }
+     // lib.optionalAttrs (speechTarget != null) {
+       "alt + {XF86AudioLowerVolume,XF86AudioRaiseVolume}" = "${speechVolume} {-,+}5%";
++      "alt + {button7,button6}" = "${speechVolume} {-,+}5%";
+     };
+   };
+ }
+diff --git a/home/programs/gui/test-desktop-bindings.nix b/home/programs/gui/test-desktop-bindings.nix
+index e90496a1f1ada8ef3f13083db1aee7cc9537cfe6..70d4135667ddae5799a6deaab898cb4dd6068da9 100644
+--- a/home/programs/gui/test-desktop-bindings.nix
++++ b/home/programs/gui/test-desktop-bindings.nix
+@@ -28,6 +28,9 @@ let
+   speechVolume = "alt + {XF86AudioLowerVolume,XF86AudioRaiseVolume}";
+ in
+ assert !(home.config.services.sxhkd.keybindings ? ${speechVolume});
++assert
++  targeted.config.services.sxhkd.keybindings."alt + {button7,button6}"
++  == targeted.config.services.sxhkd.keybindings.${speechVolume};
+ assert !(absent.config.services.sxhkd.keybindings ? ${speechVolume});
+ assert
+   builtins.match ".*speech-volume \\{-,\\+}5%"
