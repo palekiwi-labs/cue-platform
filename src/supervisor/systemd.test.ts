@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { launchBatch } from "./run";
+import { systemctlIsLive } from "./reconcile";
 
 const CLI = join(import.meta.dir, "cli.ts");
 
@@ -202,4 +204,77 @@ describe.skipIf(!process.env.SUP_PI)("cancelling a real pi run", () => {
     const sessions = Array.from(new Bun.Glob("**/*.jsonl").scanSync(join(runDir, "session")));
     expect(sessions.length).toBe(1);
   }, 120_000);
+});
+
+describe.skipIf(!process.env.SUP_SYSTEMD)("systemd reconciliation", () => {
+  test("runs survive the launcher dying and live units are retained", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sup-rec-"));
+    const root = join(dir, "state");
+    const fakePi = join(dir, "pi");
+    writeFileSync(fakePi, "#!/bin/sh\nfor last; do :; done\n[ \"$last\" = slow ] && sleep 3\n[ \"$last\" = hang ] && sleep 300\n" +
+      "echo '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\",\"content\":[]}}'\n");
+    chmodSync(fakePi, 0o755);
+    const specPath = join(dir, "spec.json");
+    writeFileSync(specPath, JSON.stringify({ runs: [
+      { cwd: dir, context: "c", prompt: "slow" },
+      { cwd: dir, context: "c", prompt: "hang" },
+    ] }));
+
+    const launcher = Bun.spawn([process.execPath, CLI, "run", specPath], {
+      env: { ...process.env, CUE_SUPERVISOR_STATE: root, CUE_SUPERVISOR_PI: fakePi },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const batchesPath = join(root, "batches");
+    await waitFor(batchesPath);
+    let batchFile: string[] = [];
+    while (batchFile.length === 0) {
+      batchFile = readdirSync(batchesPath).filter((name) => name.endsWith(".json"));
+      await Bun.sleep(100);
+    }
+    const runIds: string[] = JSON.parse(readFileSync(join(batchesPath, batchFile[0]), "utf8")).runIds;
+    for (const runId of runIds) await waitFor(join(root, "runs", runId, "started.json"));
+    launcher.kill("SIGKILL");
+    await launcher.exited;
+
+    await waitFor(join(root, "runs", runIds[0], "result.json"));
+    expect(systemctlIsLive(`cue-run-${runIds[1]}.service`)).toBe(true);
+    const live = cli(root, ["reconcile"]);
+    expect(live[runIds[1]]).toBe("running");
+    cli(root, ["cancel", "run", runIds[1]]);
+
+    const states = cli(root, ["reconcile"]);
+    expect(states[runIds[0]]).toBe("finished");
+    const slow = JSON.parse(readFileSync(join(root, "runs", runIds[0], "result.json"), "utf8"));
+    expect(slow.outcome).toBe("succeeded");
+  }, 60_000);
+
+  test("loss of the finalizer leaves an unknown result", async () => {
+    const root = mkdtempSync(join(tmpdir(), "sup-lost-"));
+    const script = join(root, "finalizer");
+    writeFileSync(script, 'touch "$1/finalizing"; exec sleep 300\n');
+    const batch = launchBatch({ runs: [{ cwd: root, context: "c", prompt: "hang" }] }, {
+      root,
+      piPath: Bun.which("false")!,
+      shPath: Bun.which("sh")!,
+      finalizeCommand: (dir) => [Bun.which("sh")!, script, dir],
+      env: process.env,
+    });
+    const { runDir, runId } = batch.runs[0];
+    const unit = `cue-run-${runId}.service`;
+    try {
+      await waitFor(join(runDir, "finalizing"));
+      const killed = Bun.spawnSync(["systemctl", "--user", "kill", "-s", "KILL", unit]);
+      expect(killed.exitCode).toBe(0);
+      const deadline = Date.now() + 10_000;
+      while (systemctlIsLive(unit) && Date.now() < deadline) await Bun.sleep(100);
+      expect(systemctlIsLive(unit)).toBe(false);
+      expect(cli(root, ["reconcile"])[runId]).toBe("unknown");
+      const lost = JSON.parse(readFileSync(join(runDir, "result.json"), "utf8"));
+      expect(lost.outcome).toBe("unknown");
+      expect(existsSync(join(runDir, "outcome.json"))).toBe(false);
+    } finally {
+      Bun.spawnSync(["systemctl", "--user", "stop", unit]);
+    }
+  }, 60_000);
 });

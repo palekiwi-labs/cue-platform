@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { cancel } from "./cancel";
 import { finalize } from "./finalize";
+import { reconcile } from "./reconcile";
 import { launchBatch, waitForResults } from "./run";
 import { parseBatchSpec, SpecError } from "./spec";
 import { stateRoot } from "./store";
 
 const USAGE =
-  "usage: cli.ts run [--detach] <spec.json> | cancel run|batch <id> | finalize <run-dir>";
+  "usage: cli.ts run [--detach] <spec.json> | cancel run|batch <id> | reconcile | finalize <run-dir>";
 
 function which(name: string): string {
   const path = Bun.which(name);
@@ -50,6 +51,10 @@ async function main(argv: string[]): Promise<number> {
     const target =
       arg === "run" ? { kind: "run" as const, runId: extra } : { kind: "batch" as const, batchId: extra };
     console.log(JSON.stringify(cancel(stateRoot(), target)));
+    return 0;
+  }
+  if (command === "reconcile") {
+    console.log(JSON.stringify(reconcile(stateRoot()), null, 2));
     return 0;
   }
   if (command === "finalize" && arg) {

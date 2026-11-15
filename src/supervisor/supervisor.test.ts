@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { cancel } from "./cancel";
+import { reconcile } from "./reconcile";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveRunDir, finalize, terminationFromEnv } from "./finalize";
@@ -138,5 +139,62 @@ describe("cancel", () => {
     const stops: string[][] = [];
     cancel(root, { kind: "batch", batchId: "b1" }, (units) => stops.push(units));
     expect(stops).toEqual([[]]);
+  });
+});
+
+describe("reconcile", () => {
+  function runDir(root: string, runId: string, files: Record<string, unknown>, acceptedAt = 0): string {
+    const dir = join(root, "runs", runId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ unit: `u-${runId}`, acceptedAt }));
+    for (const [name, value] of Object.entries(files)) {
+      writeFileSync(join(dir, name), typeof value === "string" ? value : JSON.stringify(value));
+    }
+    return dir;
+  }
+
+  test("settles each run by its evidence and never relaunches", () => {
+    const root = mkdtempSync(join(tmpdir(), "sup-rec-"));
+    runDir(root, "done", { "result.json": { outcome: "succeeded" } });
+    const derived = runDir(root, "derived", {
+      "outcome.json": { serviceResult: "success", exitCode: "exited", exitStatus: "0", finalizedAt: 5 },
+    });
+    runDir(root, "live", { "started.json": {} });
+    runDir(root, "fresh", {}, 1_000);
+    const lost = runDir(root, "lost", { "started.json": {}, "events.jsonl": "{\"type\":\"agent_start\"}\n" });
+    const unlaunched = runDir(root, "unlaunched", {});
+
+    const states = reconcile(root, (unit) => unit === "u-live", 1_500, 1_000);
+    expect(states).toEqual({
+      done: "finished",
+      derived: "derived",
+      live: "running",
+      fresh: "pending",
+      lost: "unknown",
+      unlaunched: "unknown",
+    });
+    expect(JSON.parse(readFileSync(join(derived, "result.json"), "utf8")).outcome).toBe("failed");
+    expect(JSON.parse(readFileSync(join(lost, "result.json"), "utf8")).outcome).toBe("unknown");
+    expect(JSON.parse(readFileSync(join(unlaunched, "result.json"), "utf8")).partial).toBe(true);
+    expect(existsSync(join(root, "runs", "live", "result.json"))).toBe(false);
+    const before = readFileSync(join(lost, "result.json"), "utf8");
+    expect(reconcile(root, () => false, 3_000, 1_000).fresh).toBe("unknown");
+    expect(readFileSync(join(lost, "result.json"), "utf8")).toBe(before);
+    expect(existsSync(join(unlaunched, "started.json"))).toBe(false);
+  });
+
+  test("recovers an outcome without a result and keeps partial text", () => {
+    const root = mkdtempSync(join(tmpdir(), "sup-rec-"));
+    const dir = runDir(root, "recovered", {
+      "outcome.json": { serviceResult: "success", exitCode: "exited", exitStatus: "0", finalizedAt: 5 },
+      "events.jsonl": JSON.stringify({ type: "message_end", message: {
+        role: "assistant", stopReason: "stop", content: [{ type: "text", text: "recovered" }],
+      } }) + '\n{"type":',
+    });
+    expect(reconcile(root, () => false).recovered).toBe("derived");
+    const result = JSON.parse(readFileSync(join(dir, "result.json"), "utf8"));
+    expect(result.outcome).toBe("succeeded");
+    expect(result.text).toBe("recovered");
+    expect(reconcile(root, () => false).recovered).toBe("finished");
   });
 });
