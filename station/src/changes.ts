@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import type { Highlights } from "./highlight.js";
+import type { RoundComment } from "./round.js";
 import { chunkFingerprint, type CommentState, type DraftComment, type FoldState } from "./state.js";
 
 export const RESET = "\x1b[0m";
@@ -87,6 +88,7 @@ export interface ChangesOptions {
   onComments: (comments: CommentState) => void;
   onCompose: (request: ComposeRequest, done: (text: string | null) => void) => void;
   onOpen: (file: PacketFile, line: number) => void;
+  onSubmit: (comments: RoundComment[], done: (ok: boolean) => void) => void;
 }
 
 function statusLetter(f: PacketFile): string {
@@ -509,6 +511,49 @@ export class ChangesView implements Component {
     this.sideFocus = false;
   }
 
+  private roundComment(e: CommentEntry): RoundComment {
+    const c = e.comment;
+    const base = { path: c.path, chunk: c.chunk, text: c.text, created_at: c.created_at };
+    const ci = e.chunk;
+    if (ci === null) {
+      const anchor = c.from === null ? "chunk" : "lines";
+      return { ...base, outdated: true, anchor, sides: [], old_lines: null, new_lines: null, snippet: null };
+    }
+    const body = this.chunk(ci).patch.split("\n").slice(1);
+    const from = c.from ?? 0;
+    const to = c.to ?? body.length - 1;
+    const nums = this.lineNumbers(ci).slice(from, to + 1);
+    const span = (xs: (number | null)[]): [number, number] | null => {
+      const ns = xs.filter((n): n is number => n !== null);
+      return ns.length === 0 ? null : [Math.min(...ns), Math.max(...ns)];
+    };
+    const old_lines = span(nums.map((n) => n.oldNo));
+    const new_lines = span(nums.map((n) => n.newNo));
+    const sides: ("old" | "new")[] = [];
+    if (old_lines !== null) sides.push("old");
+    if (new_lines !== null) sides.push("new");
+    return {
+      ...base,
+      outdated: false,
+      anchor: c.from === null ? "chunk" : "lines",
+      sides,
+      old_lines,
+      new_lines,
+      snippet: body.slice(from, to + 1).join("\n"),
+    };
+  }
+
+  private submit(): void {
+    const entries = this.commentEntries();
+    if (entries.length === 0) return;
+    const ids = new Set(entries.map((e) => e.comment.id));
+    this.opts.onSubmit(entries.map((e) => this.roundComment(e)), (ok) => {
+      if (!ok) return;
+      this.setComments(this.comments.comments.filter((c) => !ids.has(c.id)));
+      this.commentCursor = 0;
+    });
+  }
+
   private showComments(): void {
     this.sidebar = true;
     this.sideFocus = true;
@@ -698,6 +743,9 @@ export class ChangesView implements Component {
         return;
       case "C":
         this.showFiles();
+        return;
+      case "S":
+        this.submit();
         return;
       case "\t":
         this.sideFocus = false;
@@ -973,7 +1021,7 @@ export class ChangesView implements Component {
     const pos = `file ${cur.file + 1}/${p.files.length}  stop ${this.cursor + 1}/${this.stops.length} `;
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
     const keys = this.sideFocus && this.sideMode === "comments"
-      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("e/d", "edit/delete")}${k("C", "files")}${k("tab/esc", "back to diff")}`
+      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("e/d", "edit/delete")}${k("S", "submit all")}${k("C", "files")}${k("tab/esc", "back to diff")}`
       : this.sideFocus
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null

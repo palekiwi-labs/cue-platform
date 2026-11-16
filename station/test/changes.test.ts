@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "../src/changes.js";
 import { buildPacketFromDiff } from "../src/gen.js";
+import { reviewContext, type RoundComment, slugify } from "../src/round.js";
 import {
   type CommentState,
   emptyComments,
@@ -42,6 +43,8 @@ interface Harness {
   comments: CommentState[];
   composed: ComposeRequest[];
   reply: { text: string | null };
+  submitted: RoundComment[][];
+  submitOk: { ok: boolean };
 }
 
 function view(initial: CommentState = emptyComments()): Harness {
@@ -58,6 +61,8 @@ function view(initial: CommentState = emptyComments()): Harness {
   const comments: CommentState[] = [];
   const composed: ComposeRequest[] = [];
   const reply = { text: "looks odd" as string | null };
+  const submitted: RoundComment[][] = [];
+  const submitOk = { ok: true };
   const v = new ChangesView({
     title: "t",
     subtitle: "sub",
@@ -73,8 +78,12 @@ function view(initial: CommentState = emptyComments()): Harness {
       done(reply.text);
     },
     onOpen: (f, line) => opened.push([f.path, line]),
+    onSubmit: (rc, done) => {
+      submitted.push(rc);
+      done(submitOk.ok);
+    },
   });
-  return { v, saved, opened, comments, composed, reply };
+  return { v, saved, opened, comments, composed, reply, submitted, submitOk };
 }
 
 function screen(v: ChangesView): string {
@@ -268,4 +277,50 @@ test("C toggles the sidebar back to files and esc returns to the diff", () => {
   assert.match(screen(v), /Files 2/);
   assert.equal(v.handleEscape(), true);
   assert.match(screen(v), /enter lines/);
+});
+
+test("S in the navigator submits every listed draft and clears them", () => {
+  const { v, submitted, comments } = view({
+    schema: "station/comments@1",
+    comments: [{ id: "x", path: "src/a.ts", chunk: "gone", from: null, to: null, text: "old", created_at: 0 }],
+  });
+  keys(v, "\r", "j", "V", "j", "c", "C", "S");
+  const round = submitted[0] ?? [];
+  assert.equal(round.length, 2);
+  const lines = round[0];
+  assert.equal(lines?.anchor, "lines");
+  assert.equal(lines?.outdated, false);
+  assert.deepEqual(lines?.sides, ["old", "new"]);
+  assert.deepEqual(lines?.old_lines, [2, 2]);
+  assert.deepEqual(lines?.new_lines, [2, 2]);
+  assert.equal(lines?.snippet, "-old\n+new");
+  assert.equal(lines?.text, "looks odd");
+  assert.deepEqual(
+    { outdated: round[1]?.outdated, anchor: round[1]?.anchor, snippet: round[1]?.snippet },
+    { outdated: true, anchor: "chunk", snippet: null },
+  );
+  assert.equal(comments.at(-1)?.comments.length, 0);
+});
+
+test("failed submit keeps the drafts", () => {
+  const { v, submitted, comments, submitOk } = view();
+  submitOk.ok = false;
+  keys(v, "c", "C", "S");
+  assert.equal(submitted.length, 1);
+  assert.equal(comments.at(-1)?.comments.length, 1);
+});
+
+test("whole-chunk comment carries both line spans and the full body", () => {
+  const { v, submitted } = view();
+  keys(v, "c", "C", "S");
+  const c = submitted[0]?.[0];
+  assert.deepEqual([c?.old_lines, c?.new_lines], [[1, 2], [1, 3]]);
+  assert.equal(c?.snippet, " context\n-old\n+new\n+added");
+});
+
+test("review context follows cue-review naming", () => {
+  assert.equal(slugify("Feat/Some Thing"), "feat-some-thing");
+  assert.equal(reviewContext("feat/x", null), "review-feat-x");
+  assert.equal(reviewContext(null, "mine"), "mine");
+  assert.throws(() => reviewContext(null, null), /--context/);
 });
