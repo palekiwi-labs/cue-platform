@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
-import { ChangesView } from "./changes.js";
+import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { PrsView } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
-import { backdrop, Popup, type PopupContent, popupWidth } from "./popup.js";
+import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
 import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
-import { loadFolds, saveFolds } from "./state.js";
+import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
 
 function usage(code: number): never {
   const out = code === 0 ? console.log : console.error;
@@ -40,7 +40,7 @@ function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line:
 }
 
 function changesView(
-  tui: TuiAltScreen,
+  router: Router,
   review: Review,
   onQuit: () => void,
   quitLabel?: string,
@@ -51,11 +51,14 @@ function changesView(
     packet: review.packet,
     highlights: review.highlights,
     folds: loadFolds(review.key),
+    comments: loadComments(review.key),
     headMatches: currentHead(review.repoPath) === review.packet.head_sha,
     onQuit,
     quitLabel,
     onFolds: (folds) => saveFolds(review.key, folds),
-    onOpen: (file, line) => openEditor(tui, review.repoPath, file, line),
+    onComments: (comments) => saveComments(review.key, comments),
+    onCompose: (request, done) => router.compose(request, done),
+    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line),
   });
 }
 
@@ -69,10 +72,14 @@ class Router {
   private screen: Screen | null = null;
   private back: (() => void) | null = null;
   private popup: { handles: OverlayHandle[]; dismissable: boolean } | null = null;
+  private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
   constructor() {
     this.tui.addInputListener((data) => {
-      if (this.popup !== null) {
+      if (this.composing !== null) {
+        if (data === "\x1b") this.endCompose(null);
+        else this.composing.box.editor.handleInput(data);
+      } else if (this.popup !== null) {
         if (this.popup.dismissable) this.hidePopup();
         else if (data === "\x03") this.quit();
       } else if (data === "\x1b") {
@@ -105,6 +112,23 @@ class Router {
     this.tui.requestRender();
   }
 
+  compose(request: ComposeRequest, done: (text: string | null) => void): void {
+    const box = new ComposeBox(this.tui, request.title, request.text);
+    box.editor.onSubmit = (text) => this.endCompose(text.trim() === "" ? null : text.trimEnd());
+    const handle = this.tui.showOverlay(box, { nonCapturing: true, anchor: "bottom-center", width: "100%" });
+    this.composing = { box, handle, done };
+    this.tui.requestRender();
+  }
+
+  private endCompose(text: string | null): void {
+    const c = this.composing;
+    if (c === null) return;
+    this.composing = null;
+    c.handle.hide();
+    c.done(text);
+    this.tui.requestRender();
+  }
+
   hidePopup(): void {
     for (const h of this.popup?.handles ?? []) h.hide();
     this.popup = null;
@@ -119,7 +143,7 @@ class Router {
 
 function showReview(review: Review): void {
   const router = new Router();
-  router.show(changesView(router.tui, review, () => router.quit()));
+  router.show(changesView(router, review, () => router.quit()));
   router.tui.start();
 }
 
@@ -187,7 +211,7 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(changesView(router.tui, review, toList, "back"), toList);
+      router.show(changesView(router, review, toList, "back"), toList);
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {

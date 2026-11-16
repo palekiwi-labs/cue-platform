@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { ChangesView } from "../src/changes.js";
+import { ChangesView, type ComposeRequest } from "../src/changes.js";
 import { buildPacketFromDiff } from "../src/gen.js";
-import { emptyFolds, type FoldState, parseFolds } from "../src/state.js";
+import {
+  type CommentState,
+  emptyComments,
+  emptyFolds,
+  type FoldState,
+  parseComments,
+  parseFolds,
+} from "../src/state.js";
 
 const diff = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -28,7 +35,16 @@ const diff = [
   "+c",
 ].join("\n");
 
-function view(): { v: ChangesView; saved: FoldState[]; opened: [string, number][] } {
+interface Harness {
+  v: ChangesView;
+  saved: FoldState[];
+  opened: [string, number][];
+  comments: CommentState[];
+  composed: ComposeRequest[];
+  reply: { text: string | null };
+}
+
+function view(initial: CommentState = emptyComments()): Harness {
   const packet = buildPacketFromDiff(diff, {
     repoPath: "/tmp/r",
     branch: "b",
@@ -39,17 +55,34 @@ function view(): { v: ChangesView; saved: FoldState[]; opened: [string, number][
   });
   const saved: FoldState[] = [];
   const opened: [string, number][] = [];
+  const comments: CommentState[] = [];
+  const composed: ComposeRequest[] = [];
+  const reply = { text: "looks odd" as string | null };
   const v = new ChangesView({
     title: "t",
     subtitle: "sub",
     packet,
     folds: emptyFolds(),
+    comments: initial,
     headMatches: true,
     onQuit: () => {},
     onFolds: (f) => saved.push(f),
+    onComments: (c) => comments.push(c),
+    onCompose: (req, done) => {
+      composed.push(req);
+      done(reply.text);
+    },
     onOpen: (f, line) => opened.push([f.path, line]),
   });
-  return { v, saved, opened };
+  return { v, saved, opened, comments, composed, reply };
+}
+
+function screen(v: ChangesView): string {
+  return v.render(100).map(stripTerminalSequences).join("\n");
+}
+
+function keys(v: ChangesView, ...input: string[]): void {
+  for (const k of input) v.handleInput(k);
 }
 
 test("render fills the terminal at exact width", () => {
@@ -84,6 +117,97 @@ test("open jumps to first changed line of the chunk", () => {
     ["src/a.ts", 22],
     ["b.txt", 1],
   ]);
+});
+
+test("comment on a single line in line mode", () => {
+  const { v, comments, composed } = view();
+  keys(v, "\r", "j", "j", "c");
+  assert.equal(composed[0]?.title, "src/a.ts · line 2");
+  const c = comments.at(-1)?.comments[0];
+  assert.equal(c?.path, "src/a.ts");
+  assert.equal(c?.from, 2);
+  assert.equal(c?.to, 2);
+  assert.equal(c?.text, "looks odd");
+  const text = screen(v);
+  assert.match(text, /┃ comment  line 2/);
+  assert.match(text, /┃ looks odd/);
+});
+
+test("range comment stays within one chunk", () => {
+  const { v, comments, composed } = view();
+  keys(v, "\r", "V", "j", "j", "j", "j", "j", "c");
+  assert.equal(composed[0]?.title, "src/a.ts · lines 1 to 3");
+  const c = comments.at(-1)?.comments[0];
+  assert.deepEqual([c?.from, c?.to], [0, 3]);
+});
+
+test("line cursor crosses into the next chunk without a range", () => {
+  const { v, opened } = view();
+  keys(v, "\r", "j", "j", "j", "j", "o");
+  assert.deepEqual(opened, [["src/a.ts", 21]]);
+});
+
+test("chunk comment from chunk mode", () => {
+  const { v, comments } = view();
+  keys(v, "c");
+  const c = comments.at(-1)?.comments[0];
+  assert.equal(c?.from, null);
+  assert.match(screen(v), /comment  whole chunk/);
+});
+
+test("cancelled compose adds nothing", () => {
+  const { v, comments, reply } = view();
+  reply.text = null;
+  keys(v, "\r", "c");
+  assert.equal(comments.length, 0);
+});
+
+test("escape clears the range, then leaves line mode", () => {
+  const { v } = view();
+  assert.equal(v.handleEscape(), false);
+  keys(v, "\r", "V");
+  assert.match(screen(v), /end range/);
+  assert.equal(v.handleEscape(), true);
+  assert.match(screen(v), /e\/d edit\/delete/);
+  assert.equal(v.handleEscape(), true);
+  assert.match(screen(v), /enter lines/);
+  assert.equal(v.handleEscape(), false);
+});
+
+test("edit and delete a comment under the cursor", () => {
+  const { v, comments, reply } = view();
+  keys(v, "\r", "c");
+  assert.equal(comments.at(-1)?.comments.length, 1);
+  reply.text = "changed";
+  keys(v, "e");
+  assert.equal(comments.at(-1)?.comments[0]?.text, "changed");
+  keys(v, "d");
+  assert.equal(comments.at(-1)?.comments.length, 0);
+  assert.doesNotMatch(screen(v), /changed/);
+});
+
+test("folded chunk shows its comment count", () => {
+  const { v } = view();
+  keys(v, "c", " ");
+  assert.match(screen(v), /lines folded\)  1 comment/);
+  assert.match(screen(v), /1 draft comment/);
+});
+
+test("comments on chunks no longer in the diff count as outdated", () => {
+  const { v } = view({
+    schema: "station/comments@1",
+    comments: [{ id: "x", path: "src/a.ts", chunk: "gone", from: 0, to: 0, text: "old", created_at: 0 }],
+  });
+  assert.match(screen(v), /1 draft comment \(1 on outdated code\)/);
+});
+
+test("parseComments tolerates garbage and drops invalid entries", () => {
+  assert.deepEqual(parseComments("nope"), emptyComments());
+  assert.deepEqual(parseComments(null), emptyComments());
+  const parsed = parseComments(
+    JSON.stringify({ schema: "station/comments@1", comments: [{ id: 1 }, { id: "a", path: "p", chunk: "c", from: null, to: null, text: "t", created_at: 1 }] }),
+  );
+  assert.equal(parsed.comments.length, 1);
 });
 
 test("parseFolds tolerates garbage", () => {
