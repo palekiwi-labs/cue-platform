@@ -23,6 +23,7 @@ test("list source reads snapshots, refreshes via service, retains health and vie
   assert.deepEqual(calls, ["list:o/r"]);
   assert.equal(first.viewer, "viewer");
   assert.deepEqual(first.prs[0]?.requested, ["viewer"]);
+  assert.equal(first.prs[0]?.url, "https://github.com/o/r/pull/1");
   assert.equal(first.healthy, true);
   await source.load(true);
   assert.deepEqual(calls, ["list:o/r", "refresh:o/r", "list:o/r"]);

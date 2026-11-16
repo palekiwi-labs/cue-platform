@@ -1,4 +1,4 @@
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import type { PrSummary } from "./source.js";
 
@@ -7,6 +7,7 @@ export interface PrsOptions {
   onQuit: () => void;
   onOpen: (pr: PrSummary) => void;
   onRefresh: () => void;
+  onCopy: (text: string) => void;
 }
 
 export function age(iso: string, now: number): string {
@@ -39,6 +40,7 @@ export class PrsView implements Component {
   private cursor = 0;
   private offset = 0;
   private lastHeight = 20;
+  private notice: { text: string; error: boolean } | null = null;
 
   constructor(opts: PrsOptions) {
     this.opts = opts;
@@ -67,8 +69,34 @@ export class PrsView implements Component {
     this.cursor = Math.max(0, Math.min(to, this.prs.length - 1));
   }
 
+  private copy(what: "url" | "markdown"): void {
+    const pr = this.selected();
+    if (pr === undefined) {
+      this.notice = { text: "copy failed: no pull request selected", error: true };
+      return;
+    }
+    if (pr.url === "") {
+      this.notice = { text: `copy failed: #${pr.number} has no URL`, error: true };
+      return;
+    }
+    const text = what === "url" ? pr.url : `[${pr.title}](${pr.url})`;
+    try {
+      this.opts.onCopy(text);
+      this.notice = { text: `copied ${text}`, error: false };
+    } catch (e) {
+      this.notice = { text: `copy failed: ${e instanceof Error ? e.message : String(e)}`, error: true };
+    }
+  }
+
   handleInput(data: string): void {
+    this.notice = null;
     switch (data) {
+      case "y":
+        this.copy("url");
+        return;
+      case "h":
+        this.copy("markdown");
+        return;
       case "q":
       case "\x03":
         this.opts.onQuit();
@@ -145,10 +173,14 @@ export class PrsView implements Component {
     while (body.length < bodyH) body.push("");
     out.push(...body);
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
     const pos = this.prs.length > 0 ? `${this.cursor + 1}/${this.prs.length} ` : "";
-    const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
-    out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
+    const room = Math.max(1, width - pos.length - 2);
+    const left = this.notice === null
+      ? keys
+      : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, room, "…");
+    const gap = Math.max(1, width - visibleWidth(left) - pos.length);
+    out.push(C.barBg + fit(`${left}${C.barBg}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;
   }
 }

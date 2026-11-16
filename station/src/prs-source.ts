@@ -15,6 +15,7 @@ export class PrsSource {
       prs: data.prs.map((p) => ({
         number: p.number,
         title: p.title,
+        url: p.url,
         author: p.author,
         headRefName: p.headRef,
         isDraft: p.isDraft,
