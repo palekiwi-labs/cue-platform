@@ -8,6 +8,47 @@ export interface PrsOptions {
   onOpen: (pr: PrSummary) => void;
   onRefresh: () => void;
   onCopy: (text: string) => void;
+  onPickSort: (current: PrSort, choose: (sort: PrSort) => void) => void;
+}
+
+export type PrSort = "updated" | "created" | "author";
+
+export const PR_SORTS: readonly { sort: PrSort; key: string; label: string }[] = [
+  { sort: "updated", key: "u", label: "recently updated" },
+  { sort: "created", key: "c", label: "newest created" },
+  { sort: "author", key: "a", label: "author" },
+];
+
+export function sortLabel(sort: PrSort): string {
+  return PR_SORTS.find((s) => s.sort === sort)?.label ?? sort;
+}
+
+export function sortPickerText(current: PrSort): string {
+  return PR_SORTS.map((s) => `${s.sort === current ? `${C.accent}●` : " "} ${C.text}${s.key}${C.dim}  ${s.label}`).join("\n");
+}
+
+function time(iso: string): number {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function text(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+export function sortPrs(prs: readonly PrSummary[], sort: PrSort): PrSummary[] {
+  const updated = (a: PrSummary, b: PrSummary): number => time(b.updatedAt) - time(a.updatedAt);
+  const compare = (a: PrSummary, b: PrSummary): number => {
+    switch (sort) {
+      case "created":
+        return time(b.createdAt) - time(a.createdAt);
+      case "author":
+        return text(a.author.toLowerCase(), b.author.toLowerCase()) || text(a.author, b.author) || updated(a, b);
+      default:
+        return updated(a, b);
+    }
+  };
+  return [...prs].sort((a, b) => compare(a, b) || b.number - a.number);
 }
 
 export function age(iso: string, now: number): string {
@@ -37,6 +78,7 @@ export class PrsView implements Component {
   private me = "";
   private loaded = false;
   private note = "";
+  private sort: PrSort = "updated";
   private cursor = 0;
   private offset = 0;
   private lastHeight = 20;
@@ -53,12 +95,25 @@ export class PrsView implements Component {
   }
 
   setPrs(prs: PrSummary[], me: string): void {
-    const selected = this.selected()?.number;
-    this.prs = prs;
     this.me = me;
     this.loaded = true;
-    const index = prs.findIndex((pr) => pr.number === selected);
-    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, prs.length - 1));
+    this.reorder(prs);
+  }
+
+  sortBy(): PrSort {
+    return this.sort;
+  }
+
+  setSort(sort: PrSort): void {
+    this.sort = sort;
+    this.reorder(this.prs);
+  }
+
+  private reorder(prs: PrSummary[]): void {
+    const selected = this.selected()?.number;
+    this.prs = sortPrs(prs, this.sort);
+    const index = this.prs.findIndex((pr) => pr.number === selected);
+    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, this.prs.length - 1));
   }
 
   selected(): PrSummary | undefined {
@@ -126,6 +181,9 @@ export class PrsView implements Component {
       case "r":
         this.opts.onRefresh();
         return;
+      case "s":
+        this.opts.onPickSort(this.sort, (sort) => this.setSort(sort));
+        return;
       case "\r":
       case "o": {
         const pr = this.selected();
@@ -173,8 +231,8 @@ export class PrsView implements Component {
     while (body.length < bodyH) body.push("");
     out.push(...body);
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
-    const pos = this.prs.length > 0 ? `${this.cursor + 1}/${this.prs.length} ` : "";
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}s${C.dim} sort  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const pos = `sort: ${sortLabel(this.sort)}  ` + (this.prs.length > 0 ? `${this.cursor + 1}/${this.prs.length} ` : "");
     const room = Math.max(1, width - pos.length - 2);
     const left = this.notice === null
       ? keys

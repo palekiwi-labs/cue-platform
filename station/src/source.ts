@@ -58,6 +58,7 @@ export interface PrSummary {
   author: string;
   headRefName: string;
   isDraft: boolean;
+  createdAt: string;
   updatedAt: string;
   reviewDecision: string;
   requested: string[];

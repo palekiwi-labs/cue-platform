@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { type Component, matchesKey, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
-import { PrsView } from "./prs.js";
+import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
 import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
@@ -268,6 +268,12 @@ function showPrs(repo: string): void {
     onOpen: (pr) => void open(pr),
     onRefresh: () => void refresh(),
     onCopy: (text) => process.stdout.write(osc52(text)),
+    onPickSort: (current, choose) =>
+      router.showPopup(
+        { title: "sort", text: sortPickerText(current), footer: "any other key cancel" },
+        true,
+        Object.fromEntries(PR_SORTS.map((s) => [s.key, () => choose(s.sort)])),
+      ),
   });
   router.show(list);
   router.tui.start();
