@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
-import { ChangesView } from "./changes.js";
+import { type Component, matchesKey, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { PrsView } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
-import { backdrop, Popup, type PopupContent, popupWidth } from "./popup.js";
+import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
 import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
-import { loadFolds, saveFolds } from "./state.js";
+import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
+import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
+
+let contextOverride: string | null = null;
 
 function usage(code: number): never {
   const out = code === 0 ? console.log : console.error;
@@ -19,6 +22,8 @@ function usage(code: number): never {
   out("       station <base>..<head>   changes in a commit range");
   out("       station clean            remove review worktrees of closed PRs");
   out("       station demo             built-in demo diff");
+  out("");
+  out("  --context <slug>   cue context for submitted comment rounds (default review-<branch-slug>)");
   process.exit(code);
 }
 
@@ -40,7 +45,7 @@ function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line:
 }
 
 function changesView(
-  tui: TuiAltScreen,
+  router: Router,
   review: Review,
   onQuit: () => void,
   quitLabel?: string,
@@ -51,12 +56,47 @@ function changesView(
     packet: review.packet,
     highlights: review.highlights,
     folds: loadFolds(review.key),
+    comments: loadComments(review.key),
     headMatches: currentHead(review.repoPath) === review.packet.head_sha,
     onQuit,
     quitLabel,
     onFolds: (folds) => saveFolds(review.key, folds),
-    onOpen: (file, line) => openEditor(tui, review.repoPath, file, line),
+    onComments: (comments) => saveComments(review.key, comments),
+    onCompose: (request, done) => router.compose(request, done),
+    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line),
+    onSubmit: (comments, done) => void submit(router, review, comments, done),
   });
+}
+
+async function submit(router: Router, review: Review, comments: RoundComment[], done: (ok: boolean) => void): Promise<void> {
+  const title = "submit comments";
+  const fail = (text: string): void => router.showPopup({ title, text, error: true, footer: "any key" }, true);
+  if (review.cueDir === null) {
+    fail("this review has no repository to submit to");
+    return;
+  }
+  let context: string;
+  try {
+    context = reviewContext(review.branch, contextOverride);
+  } catch (e) {
+    fail(errText(e));
+    return;
+  }
+  router.showPopup({ title, text: `writing ${comments.length} comment${comments.length === 1 ? "" : "s"} to ${context}…` });
+  const target = { repo: review.repo, key: review.key, title: review.title, branch: review.branch, pr: review.pr };
+  const round = buildRound(target, review.packet.base_sha, review.packet.head_sha, comments, Math.floor(Date.now() / 1000));
+  try {
+    const address = await submitRound(review.cueDir, context, round);
+    done(true);
+    router.showPopup(
+      { title: "round submitted", text: address, footer: "y copy  any key close" },
+      true,
+      { y: () => process.stdout.write(osc52(address)) },
+    );
+  } catch (e) {
+    done(false);
+    fail(errText(e));
+  }
 }
 
 interface Screen extends Component {
@@ -68,13 +108,20 @@ class Router {
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
   private back: (() => void) | null = null;
-  private popup: { handles: OverlayHandle[]; dismissable: boolean } | null = null;
+  private popup: { handles: OverlayHandle[]; dismissable: boolean; keys: Record<string, () => void> } | null = null;
+  private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
   constructor() {
     this.tui.addInputListener((data) => {
-      if (this.popup !== null) {
-        if (this.popup.dismissable) this.hidePopup();
-        else if (data === "\x03") this.quit();
+      if (this.composing !== null) {
+        if (data === "\x1b") this.endCompose(null);
+        else this.composing.box.editor.handleInput(matchesKey(data, "alt+enter") ? "\n" : data);
+      } else if (this.popup !== null) {
+        const action = this.popup.keys[data];
+        if (this.popup.dismissable) {
+          this.hidePopup();
+          action?.();
+        } else if (data === "\x03") this.quit();
       } else if (data === "\x1b") {
         if (this.screen?.handleEscape?.() !== true) this.back?.();
       } else this.screen?.handleInput(data);
@@ -92,16 +139,34 @@ class Router {
     this.tui.requestRender(true);
   }
 
-  showPopup(content: PopupContent, dismissable = false): void {
+  showPopup(content: PopupContent, dismissable = false, keys: Record<string, () => void> = {}): void {
     this.hidePopup();
     const opts = { nonCapturing: true } as const;
     this.popup = {
       dismissable,
+      keys,
       handles: [
         this.tui.showOverlay(backdrop, { ...opts, anchor: "top-left", width: "100%", maxHeight: "100%" }),
         this.tui.showOverlay(new Popup(content), { ...opts, anchor: "center", width: popupWidth() }),
       ],
     };
+    this.tui.requestRender();
+  }
+
+  compose(request: ComposeRequest, done: (text: string | null) => void): void {
+    const box = new ComposeBox(this.tui, request.title, request.text);
+    box.editor.onSubmit = (text) => this.endCompose(text.trim() === "" ? null : text.trimEnd());
+    const handle = this.tui.showOverlay(box, { nonCapturing: true, anchor: "bottom-center", width: "100%" });
+    this.composing = { box, handle, done };
+    this.tui.requestRender();
+  }
+
+  private endCompose(text: string | null): void {
+    const c = this.composing;
+    if (c === null) return;
+    this.composing = null;
+    c.handle.hide();
+    c.done(text);
     this.tui.requestRender();
   }
 
@@ -119,7 +184,7 @@ class Router {
 
 function showReview(review: Review): void {
   const router = new Router();
-  router.show(changesView(router.tui, review, () => router.quit()));
+  router.show(changesView(router, review, () => router.quit()));
   router.tui.start();
 }
 
@@ -187,7 +252,7 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(changesView(router.tui, review, toList, "back"), toList);
+      router.show(changesView(router, review, toList, "back"), toList);
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
@@ -233,6 +298,13 @@ async function resolve(args: string[]): Promise<Review | { prs: string }> {
 
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  const flag = args.indexOf("--context");
+  if (flag !== -1) {
+    const value = args[flag + 1];
+    if (value === undefined || value.startsWith("-")) usage(2);
+    contextOverride = value;
+    args.splice(flag, 2);
+  }
   if (args[0] === "--help" || args[0] === "-h") usage(0);
   let target: Review | { prs: string };
   try {

@@ -1,4 +1,12 @@
-import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+  type Component,
+  Editor,
+  type EditorTheme,
+  type TUI,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import { BOLD, C, RESET } from "./changes.js";
 
 const PAD_X = 3;
@@ -33,6 +41,38 @@ export class Popup implements Component {
     };
     const body = wrapTextWithAnsi(`${error === true ? C.del : C.text}${text}`, inner);
     return [top, row(""), ...body.map(row), row(""), bottom].map((l) => truncateToWidth(l, width));
+  }
+}
+
+const plain = (s: string): string => s;
+
+const editorTheme: EditorTheme = {
+  borderColor: (s) => `${C.faint}${s}${RESET}`,
+  selectList: { selectedPrefix: plain, selectedText: plain, description: plain, scrollInfo: plain, noMatch: plain },
+};
+
+export class ComposeBox implements Component {
+  readonly editor: Editor;
+
+  constructor(
+    tui: TUI,
+    private readonly title: string,
+    text: string,
+  ) {
+    this.editor = new Editor(tui, editorTheme, { paddingX: 1 });
+    this.editor.setText(text);
+    this.editor.focused = true;
+  }
+
+  invalidate(): void {
+    this.editor.invalidate();
+  }
+
+  render(width: number): string[] {
+    const head = C.titleBg + truncateToWidth(` ${C.text}${BOLD}comment${RESET}${C.titleBg} ${C.dim}${this.title}`, width, "…", true) + RESET;
+    const keys = ` ${C.text}enter${C.dim} save  ${C.text}alt+enter${C.dim} newline  ${C.text}esc${C.dim} cancel`;
+    const foot = C.barBg + truncateToWidth(keys, width, "", true) + RESET;
+    return [head, ...this.editor.render(width).map((l) => C.barBg + truncateToWidth(l, width, "", true) + RESET), foot];
   }
 }
 

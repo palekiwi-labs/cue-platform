@@ -12,6 +12,10 @@ export interface Review {
   repoPath: string;
   packet: Packet;
   highlights: Highlights;
+  repo: string;
+  branch: string | null;
+  pr: number | null;
+  cueDir: string | null;
 }
 
 function topLevel(cwd: string): string {
@@ -136,6 +140,10 @@ export async function fromPr(cwd: string, number: string): Promise<Review> {
     repoPath: wt,
     packet,
     highlights: highlights(wt, packet),
+    repo: slug,
+    branch: pr.headRefName,
+    pr: pr.number,
+    cueDir: repo,
   };
 }
 
@@ -175,6 +183,10 @@ export function fromRange(cwd: string, range: string | undefined): Review {
     repoPath: repo,
     packet,
     highlights: highlights(repo, packet),
+    repo: slug,
+    branch: branch === "HEAD" ? null : branch,
+    pr: null,
+    cueDir: repo,
   };
 }
 
@@ -196,5 +208,9 @@ export function fromDemo(): Review {
     repoPath: packet.repo_path,
     packet,
     highlights: new Map(),
+    repo: "palekiwi/nix-config",
+    branch: "feat/agent-microvm",
+    pr: null,
+    cueDir: null,
   };
 }
