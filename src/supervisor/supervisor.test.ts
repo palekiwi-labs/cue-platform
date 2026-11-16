@@ -93,6 +93,16 @@ describe("systemdRunArgv", () => {
     expect(ENV_ALLOWLIST).not.toContain("PI_SESSION_ID");
   });
 
+  test("names the agent of a run for its pi telemetry", () => {
+    const args = systemdRunArgv({
+      runId: "r", batchId: "b", runDir: "/state/r", spec: { ...run, agent: { name: "builder" } },
+      sessionId: "sid", piPath: "/bin/pi", shPath: "/bin/sh",
+      finalizeCommand: ["/bin/finalize"], env: { CUE_AGENT_NAME: "caller" },
+    });
+    const setenv = args.filter((arg) => arg.startsWith("--setenv="));
+    expect(setenv).toEqual(["--setenv=CUE_CONTEXT=ctx", "--setenv=CUE_AGENT_NAME=builder"]);
+  });
+
   test("forwards service NATS, certificate and tool credentials by name only", () => {
     const names = ["CUE_NATS_URL", "CUE_NATS_JS_DOMAIN", "SSL_CERT_FILE", "NIX_SSL_CERT_FILE", "TYPESAFE_API_KEY"];
     const env = Object.fromEntries(names.map((name) => [name, "service-value"]));

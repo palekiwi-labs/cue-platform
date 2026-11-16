@@ -113,6 +113,7 @@ export function systemdRunArgv(params: UnitParams): string[] {
     `--working-directory=${params.runDir}`,
     ...forwarded,
     `--setenv=CUE_CONTEXT=${params.spec.context}`,
+    ...(params.spec.agent !== undefined ? [`--setenv=CUE_AGENT_NAME=${params.spec.agent.name}`] : []),
     "--property=KillMode=control-group",
     "--property=TimeoutStopSec=10",
     ...(params.spec.timeoutSec !== undefined ? [`--property=RuntimeMaxSec=${params.spec.timeoutSec}`] : []),
