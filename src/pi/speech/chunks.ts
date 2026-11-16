@@ -1,4 +1,4 @@
-import { classifyLine, opensBlock, sentenceMayEnd, START, type BlockState, type LineInfo } from "./markdown"
+import { classifyLine, opensBlock, sentenceMayEnd, spokenLine, START, type BlockState, type LineInfo } from "./markdown"
 
 /** A chunk is cut at the first cut point that gives at least this many characters. */
 export const MIN_CHUNK = 40
@@ -207,8 +207,40 @@ export class Chunker {
   }
 }
 
+/**
+ * A Chunker whose chunks are prepared for speech: heading markers and
+ * setext underlines are left out and ordered list items carry the number
+ * Markdown renders them with. Everything else is kept as written.
+ */
+export class SpokenChunker extends Chunker {
+  protected override render(start: number, end: number): string {
+    let out = ""
+    let at = start
+    for (let index = this.lineAt(start); at < end; index++) {
+      const line = this.lines[index]
+      const lineEnd = line ? line.end : this.text.length
+      const until = Math.min(lineEnd, end)
+      const segment = this.text.slice(at, until)
+      if (this.text.slice(this.lineStart(index), at).trim() === "") {
+        out += spokenLine(segment, this.lineInfo(index), until === lineEnd && (line !== undefined || this.final))
+      } else {
+        out += segment
+      }
+      if (until < end) out += "\n"
+      at = until + 1
+    }
+    return out.trim()
+  }
+}
+
 /** Cut a whole text into chunks, as a Chunker fed all of it at once. */
 export function splitChunks(text: string, min = MIN_CHUNK, max = MAX_CHUNK): string[] {
   const chunker = new Chunker(min, max)
+  return [...chunker.push(text), ...chunker.flush()]
+}
+
+/** Cut a whole text into spoken chunks, as a SpokenChunker fed all of it at once. */
+export function spokenChunks(text: string, min = MIN_CHUNK, max = MAX_CHUNK): string[] {
+  const chunker = new SpokenChunker(min, max)
   return [...chunker.push(text), ...chunker.flush()]
 }

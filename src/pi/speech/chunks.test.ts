@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunker, MAX_CHUNK, MIN_CHUNK, splitChunks } from "./chunks"
+import { Chunker, MAX_CHUNK, MIN_CHUNK, SpokenChunker, spokenChunks, splitChunks } from "./chunks"
 
 function expectLossless(text: string, chunks: string[], max = MAX_CHUNK): void {
   let at = 0
@@ -421,6 +421,73 @@ describe("streaming lookahead", () => {
   })
 })
 
+describe("spoken chunks", () => {
+  const spoken = (text: string, min = MIN_CHUNK) => spokenChunks(text, min)
+
+  test("drop heading markers that TTS reads as \"number\"", () => {
+    expect(spoken("## Recommended fix\n\nChange the chunker so that line ends are soft.")).toEqual([
+      "Recommended fix\n\nChange the chunker so that line ends are soft.",
+    ])
+    expect(spoken("### Closing hashes ###", 1)).toEqual(["Closing hashes"])
+    expect(spoken("#", 1)).toEqual([])
+    expect(spoken("Title\n=====\n\nBody text.", 1)).toEqual(["Title", "Body text."])
+  })
+
+  test("keep # everywhere else", () => {
+    for (const text of ["#hashtag is not a heading", "Issue #42 is fixed, C# too", "Text\n#5 on a wrapped line"]) {
+      expect(spoken(text)).toEqual([text])
+    }
+    expect(spoken("```sh\n# a comment\n```")).toEqual(["```sh\n# a comment\n```"])
+  })
+
+  test("number ordered items as Markdown renders them", () => {
+    const item = "an item long enough to be a chunk of its own"
+    expect(spoken(`1. ${item}\n1. ${item}\n1. ${item}`)).toEqual([`1. ${item}`, `2. ${item}`, `3. ${item}`])
+    expect(spoken(`3. ${item}\n3. ${item}`)).toEqual([`3. ${item}`, `4. ${item}`])
+    expect(spoken("1. a\n1. b\n1. c")).toEqual(["1. a\n2. b\n3. c"])
+    expect(spoken("1. a\n\n1. b\n\n   still b\n1. c")).toEqual(["1. a\n\n2. b\n\n   still b\n3. c"])
+    expect(spoken("1. a\nlazy line\n1. b")).toEqual(["1. a\nlazy line\n2. b"])
+    expect(spoken("1. a\n   1. x\n   1. y\n1. b", 1)).toEqual(["1. a", "1. x", "2. y", "2. b"])
+    expect(spoken("1. a\n- x\n1. b", 1)).toEqual(["1. a", "- x", "1. b"])
+    expect(spoken("1. a\n1) b")).toEqual(["1. a\n1) b"])
+    expect(spoken("1. a\n\nParagraph.\n\n1. b", 1)).toEqual(["1. a", "Paragraph.", "1. b"])
+  })
+
+  test("keep decimals, years and numbered plain text as written", () => {
+    for (const text of [
+      "The ratio is 1.5 now, it was 2.0 before.",
+      "1.5 is the ratio at the start of a line.",
+      "It happened in the year\n2024. Then it fell.",
+      "The list was\n2. not a list here",
+      "v1.2.3 and 10.0.0.1 and 3.14",
+    ]) {
+      expect(spoken(text).join(" ")).toBe(splitChunks(text).join(" "))
+    }
+    expect(spoken("1. a\n\n2. b\n\n2. c")).toEqual(["1. a\n\n2. b\n\n3. c"])
+  })
+
+  test("numbering and headings survive every split of the stream", () => {
+    const whole = spokenChunks(FIXTURE)
+    expect(whole.join("\n")).toContain("2. Second step")
+    expect(whole.join("\n")).toContain("4. Fourth step")
+    expect(whole.join("\n")).toContain("Summary of the change")
+    expect(whole.join("\n")).not.toContain("## Summary")
+    expect(whole.join("\n")).toContain("# a comment. Not a heading")
+    expect(whole.join("\n")).not.toContain("==")
+    for (let i = 0; i <= FIXTURE.length; i++) {
+      expect(streamed(FIXTURE, [i], MIN_CHUNK, MAX_CHUNK, new SpokenChunker())).toEqual(whole)
+    }
+    const random = seeded(11)
+    for (let run = 0; run < 200; run++) {
+      expect(streamed(FIXTURE, randomCuts(FIXTURE.length, random), MIN_CHUNK, MAX_CHUNK, new SpokenChunker())).toEqual(whole)
+    }
+    const cuts = Array.from({ length: FIXTURE.length }, (_, i) => i)
+    for (const [min, max] of [[1, 20], [10, 30]] as const) {
+      expect(streamed(FIXTURE, cuts, min, max, new SpokenChunker(min, max))).toEqual(spokenChunks(FIXTURE, min, max))
+    }
+  })
+})
+
 describe("random Markdown", () => {
   const TOKENS = [
     "\n", "\n", " ", "  ", "\t", "\r\n", "1.", "1)", "2.", "10.", "#", "## ", "- ", "* ", "+ ", "```", "~~~", "> ",
@@ -437,9 +504,11 @@ describe("random Markdown", () => {
       const whole = splitChunks(text, min, max)
       expectLossless(text, whole, max)
       for (const p of whole) expect(LONE_SURROGATE.test(p)).toBe(false)
+      const spoken = spokenChunks(text, min, max)
       for (let k = 0; k < 3; k++) {
         const cuts = randomCuts(text.length, random)
         expect(streamed(text, cuts, min, max)).toEqual(whole)
+        expect(streamed(text, cuts, min, max, new SpokenChunker(min, max))).toEqual(spoken)
       }
     }
   })

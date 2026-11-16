@@ -154,7 +154,11 @@ Streamed text is cut into chunks at sentence ends, paragraph breaks and
 Markdown block starts (headings, list items, quotes, table rows, fences);
 a line end inside a paragraph is a soft wrap and never a cut. A cut that
 depends on text not yet received waits for it: the next line's marker, or
-the first character after a sentence end.
+the first character after a sentence end. Before sending, heading markers
+and setext underlines are dropped (Kokoro reads `#` as "number") and
+ordered list items carry the number Markdown renders, so a list written
+as repeated `1.` is read as one, two, three. Everything else is sent as
+written.
 
 Each session picks its Kokoro voice in session settings (F3): Bella
 (`af_bella`, the default), Heart (`af_heart`), Jessica (`af_jessica`), Sky

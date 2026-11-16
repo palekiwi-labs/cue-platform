@@ -298,6 +298,30 @@ describe("live mode", () => {
     }
   })
 
+  test("speaks wrapped lines whole, without heading marks, with list numbers as rendered", async () => {
+    const reply = [
+      "## Recommended fix",
+      "",
+      "Change the streaming chunker so that a single line end inside a",
+      "paragraph is plain whitespace and never a reason to cut.",
+      "",
+      "1. Treat soft-wrapped line ends as spaces between words",
+      "1. Keep paragraph breaks, headings and list items as cuts",
+    ].join("\n")
+    const s = setup()
+    const m = streaming(s)
+    await m.start()
+    for (const piece of reply.match(/[\s\S]{1,3}/g)!) await m.delta(0, piece)
+    await m.textEnd(0, reply)
+    await m.end([text(reply)])
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([
+      "/say Recommended fix\n\nChange the streaming chunker so that a single line end inside a\nparagraph is plain whitespace and never a reason to cut.",
+      "/say 1. Treat soft-wrapped line ends as spaces between words",
+      "/say 2. Keep paragraph breaks, headings and list items as cuts",
+    ])
+  })
+
   test("flushes each text block once, at text_end or else at message_end", async () => {
     const s = setup()
     const m = streaming(s)

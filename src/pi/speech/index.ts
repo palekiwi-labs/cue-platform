@@ -1,5 +1,5 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { Chunker } from "./chunks"
+import { SpokenChunker } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
 import { SessionSpeechMode, SessionSpeechVoice, type SpeechMode, type SpeechVoice } from "./settings"
@@ -26,7 +26,7 @@ interface StreamEvent {
 }
 
 interface LiveBlock {
-  chunker: Chunker
+  chunker: SpokenChunker
   fed: string
   done: boolean
 }
@@ -175,7 +175,7 @@ export class Speech {
   private block(current: CurrentMessage, index: number): LiveBlock {
     let block = current.blocks.get(index)
     if (!block) {
-      block = { chunker: new Chunker(), fed: "", done: false }
+      block = { chunker: new SpokenChunker(), fed: "", done: false }
       current.blocks.set(index, block)
     }
     return block

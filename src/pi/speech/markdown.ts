@@ -219,3 +219,24 @@ export function sentenceMayEnd(state: BlockState, prefix: string, token: string)
   const item: Item = { ordered: true, delimiter: ".", start: Number(rest), content: width + rest.length + 2, empty: false }
   return placeItem(state, width, item) === null
 }
+
+/**
+ * The words to speak for one line of a chunk: heading markers and setext
+ * underlines are dropped (TTS reads `#` as "number") and ordered list
+ * items carry the number Markdown renders them with. `segment` starts at
+ * the line start or at its first non-blank character.
+ */
+export function spokenLine(segment: string, info: LineInfo, wholeLine: boolean): string {
+  switch (info.kind) {
+    case "heading": {
+      const text = segment.replace(/^([ \t]*)#{1,6}(?:[ \t]+|$)/, "$1")
+      return wholeLine ? text.replace(/(?:^|[ \t]+)#+[ \t]*(\r?)$/, "$1") : text
+    }
+    case "underline":
+      return ""
+    case "item":
+      return info.number === undefined ? segment : segment.replace(/^([ \t]*)\d{1,9}/, `$1${info.number}`)
+    default:
+      return segment
+  }
+}
