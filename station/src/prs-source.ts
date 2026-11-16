@@ -19,6 +19,7 @@ export class PrsSource {
         author: p.author,
         headRefName: p.headRef,
         isDraft: p.isDraft,
+        createdAt: p.createdAt,
         updatedAt: p.updatedAt,
         reviewDecision: p.reviewDecision ?? "",
         requested: p.reviewers,
