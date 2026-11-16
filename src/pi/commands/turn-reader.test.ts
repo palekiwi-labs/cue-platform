@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { openTurnReader, READER_SHORTCUT, registerTurnReader } from "./turn-reader"
 
-const F5 = "\x1b[15~"
+const ALT_U = "\x1bu"
 const ESC = "\x1b"
 
 function fakeCtx(branch: unknown[], idle = true) {
@@ -54,7 +54,7 @@ describe("openTurnReader", () => {
     expect(events).toEqual([])
   })
 
-  for (const [name, key] of [["q", "q"], ["the shortcut", F5], ["escape", ESC]] as const) {
+  for (const [name, key] of [["q", "q"], ["the shortcut", ALT_U], ["escape", ESC]] as const) {
     test(`renders the turn text and closes on ${name}`, async () => {
       const { ctx, events, keys, rendered } = fakeCtx(turn)
       keys.push("j", key)
@@ -77,6 +77,6 @@ describe("registerTurnReader", () => {
     registerTurnReader(pi)
     expect(commands).toEqual(["cue:read"])
     expect(shortcuts).toEqual([READER_SHORTCUT])
-    expect(READER_SHORTCUT).toBe("f5")
+    expect(READER_SHORTCUT).toBe("alt+u")
   })
 })
