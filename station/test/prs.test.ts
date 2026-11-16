@@ -7,6 +7,7 @@ import type { PrSummary } from "../src/source.js";
 const pr = (n: number, requested: string[] = []): PrSummary => ({
   number: n,
   title: `title ${n}`,
+  url: `https://github.com/o/r/pull/${n}`,
   author: "alice",
   headRefName: `b${n}`,
   isDraft: n === 2,
@@ -24,7 +25,7 @@ test("age buckets", () => {
 
 test("list renders, navigates and opens", () => {
   const opened: number[] = [];
-  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: (p) => opened.push(p.number), onRefresh: () => {} });
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: (p) => opened.push(p.number), onRefresh: () => {}, onCopy: () => {} });
   v.setPrs([pr(1), pr(2, ["me"])], "me");
   const lines = v.render(100).map(stripTerminalSequences);
   assert.ok(lines.every((l) => visibleWidth(l) <= 100));
@@ -33,4 +34,40 @@ test("list renders, navigates and opens", () => {
   v.handleInput("j");
   v.handleInput("\r");
   assert.deepEqual(opened, [2]);
+});
+
+test("y copies the selected URL, h copies a Markdown link, with notices", () => {
+  const copied: string[] = [];
+  let fail = false;
+  const v = new PrsView({
+    repo: "o/r",
+    onQuit: () => {},
+    onOpen: () => {},
+    onRefresh: () => {},
+    onCopy: (text) => {
+      if (fail) throw new Error("no terminal");
+      copied.push(text);
+    },
+  });
+  const footer = (): string => stripTerminalSequences(v.render(200).at(-1) ?? "");
+  assert.match(footer(), /y copy url {2}h copy md/);
+  v.handleInput("y");
+  assert.match(footer(), /copy failed: no pull request selected/);
+  v.setPrs([pr(1), pr(2)], "me");
+  v.handleInput("j");
+  v.handleInput("y");
+  v.handleInput("h");
+  assert.deepEqual(copied, ["https://github.com/o/r/pull/2", "[title 2](https://github.com/o/r/pull/2)"]);
+  assert.match(footer(), /copied \[title 2\]\(https:\/\/github.com\/o\/r\/pull\/2\)/);
+  assert.ok(v.render(80).every((l) => visibleWidth(l) <= 80));
+  v.handleInput("k");
+  assert.doesNotMatch(footer(), /copied/);
+  fail = true;
+  v.handleInput("y");
+  assert.match(footer(), /copy failed: no terminal/);
+  fail = false;
+  v.setPrs([{ ...pr(3), url: "" }], "me");
+  v.handleInput("h");
+  assert.match(footer(), /copy failed: #3 has no URL/);
+  assert.equal(copied.length, 2);
 });

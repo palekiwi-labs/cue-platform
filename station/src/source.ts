@@ -54,6 +54,7 @@ async function ghPr(repo: string, number: string): Promise<GhPr> {
 export interface PrSummary {
   number: number;
   title: string;
+  url: string;
   author: string;
   headRefName: string;
   isDraft: boolean;

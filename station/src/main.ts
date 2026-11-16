@@ -282,6 +282,7 @@ function showPrs(repo: string): void {
     },
     onOpen: (pr) => void open(pr),
     onRefresh: () => void refresh(),
+    onCopy: (text) => process.stdout.write(osc52(text)),
   });
   router.show(list);
   router.tui.start();
