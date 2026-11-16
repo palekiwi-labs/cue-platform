@@ -150,6 +150,12 @@ Whole-message sends use a fresh utterance and finalize it. Text is split to
 1000 Unicode characters and checked against the bridge's 8192-byte JSON
 limit. One persistent client serves the extension and closes on shutdown.
 
+Streamed text is cut into chunks at sentence ends, paragraph breaks and
+Markdown block starts (headings, list items, quotes, table rows, fences);
+a line end inside a paragraph is a soft wrap and never a cut. A cut that
+depends on text not yet received waits for it: the next line's marker, or
+the first character after a sentence end.
+
 Each session picks its Kokoro voice in session settings (F3): Bella
 (`af_bella`, the default), Heart (`af_heart`), Jessica (`af_jessica`), Sky
 (`af_sky`), Isabella (`bf_isabella`) or Echo (`am_echo`). The choice is kept
