@@ -63,6 +63,11 @@ describe("TurnReader", () => {
     expect(lines.every((l) => l.length === 30)).toBe(true)
   })
 
+  test("hints the speak key only when speech is available", () => {
+    expect(new TurnReader(plain, md, ["text"], () => 40, false, true).render(40).at(-1)).toContain("s speak · esc close")
+    expect(new TurnReader(plain, md, ["text"], () => 40).render(40).at(-1)).not.toContain("s speak")
+  })
+
   test("wraps prose to the inner width", () => {
     const reader = new TurnReader(plain, md, ["word ".repeat(30).trim()], () => 40)
     const body = reader.render(26).slice(2, -2)
