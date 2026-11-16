@@ -832,7 +832,7 @@ export class ChangesView implements Component {
         this.sideFocus = true;
         this.fileCursor = this.current().file;
         return;
-      case "o":
+      case "e":
         this.open();
         return;
       case "\r":
@@ -1026,7 +1026,7 @@ export class ChangesView implements Component {
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
       ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("e/d", "edit/delete")}${k("o", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
-      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}o${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;

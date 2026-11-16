@@ -117,10 +117,12 @@ test("fold chunk persists and hides its lines", () => {
 test("open jumps to first changed line of the chunk", () => {
   const { v, opened } = view();
   v.handleInput("o");
+  assert.deepEqual(opened, []);
+  v.handleInput("e");
   v.handleInput("j");
-  v.handleInput("o");
+  v.handleInput("e");
   v.handleInput("n");
-  v.handleInput("o");
+  v.handleInput("e");
   assert.deepEqual(opened, [
     ["src/a.ts", 2],
     ["src/a.ts", 22],
