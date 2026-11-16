@@ -63,7 +63,7 @@ describe("sessionActions", () => {
 describe("sessionSettings", () => {
   test("thinking starts at the current level and applies the picked one", () => {
     const { pi, levels } = fakePi("low")
-    const [thinking] = sessionSettings(pi)
+    const thinking = sessionSettings(pi).find((s) => s.label === "thinking")
     expect(thinking!.values[thinking!.current]).toBe("low")
     thinking!.apply(thinking!.values.indexOf("high"))
     expect(levels).toEqual(["high"])
@@ -99,7 +99,15 @@ describe("speech setting", () => {
     expect(again.values[again.current]).toBe("Isabella")
   })
 
+  test("lists speech first, voice second and style third", () => {
+    const entries = { appendEntry: () => {} } as never
+    const labels = sessionSettings(fakePi().pi, new SessionSpeechMode(entries), new SessionSpeechVoice(entries)).map(
+      (s) => s.label,
+    )
+    expect(labels).toEqual(["speech", "voice", "style", "thinking", "auto summary"])
+  })
+
   test("is not listed where the session cannot speak", () => {
-    expect(sessionSettings(fakePi().pi).map((s) => s.label)).toEqual(["thinking", "auto summary", "style"])
+    expect(sessionSettings(fakePi().pi).map((s) => s.label)).toEqual(["style", "thinking", "auto summary"])
   })
 })
