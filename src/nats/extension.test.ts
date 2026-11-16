@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { readContextTitle, registerNatsTelemetry } from "./extension"
+import { readContextTitle, readTmuxNames, registerNatsTelemetry } from "./extension"
 import { EVENT_STREAM, type AgentEvent, type RegistryRow } from "./events"
 import { openRegistry } from "./jetstream"
 import { natsServerBin, startJetStreamServer, waitFor, type TestServer } from "./test-server"
@@ -47,6 +47,39 @@ function tempStore(contexts: Record<string, string>): string {
   }
   return store
 }
+
+describe("readTmuxNames", () => {
+  function execPi(results: Record<string, { code: number; stdout: string } | Error>) {
+    const calls: string[][] = []
+    const pi = {
+      async exec(command: string, args: string[]) {
+        calls.push([command, ...args])
+        const r = results[args[args.length - 1] as string]
+        if (r instanceof Error) throw r
+        return { stdout: r?.stdout ?? "", stderr: "", code: r?.code ?? 1, killed: false }
+      },
+    } as unknown as ExtensionAPI
+    return { pi, calls }
+  }
+  const env = { TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%3" }
+
+  test("reads the window and session names of the pane", async () => {
+    const { pi, calls } = execPi({
+      "#{window_name}": { code: 0, stdout: "notifications\n" },
+      "#{session_name}": { code: 0, stdout: "palekiwi\n" },
+    })
+    expect(await readTmuxNames(pi, env, true)).toEqual({ window: "notifications", session: "palekiwi" })
+    expect(calls).toContainEqual(["tmux", "display-message", "-p", "-t", "%3", "#{window_name}"])
+  })
+
+  test("reports nothing outside tmux, without a tty, or when tmux fails", async () => {
+    const { pi, calls } = execPi({ "#{window_name}": new Error("gone"), "#{session_name}": { code: 1, stdout: "x" } })
+    expect(await readTmuxNames(pi, {}, true)).toEqual({})
+    expect(await readTmuxNames(pi, env, false)).toEqual({})
+    expect(calls).toEqual([])
+    expect(await readTmuxNames(pi, env, true)).toEqual({ window: undefined, session: undefined })
+  })
+})
 
 describe("readContextTitle", () => {
   test("reads the title from the store and never throws", () => {
@@ -94,6 +127,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       env: { CUE_NATS_JS_DOMAIN: "", CUE_STORE: store, CUE_CONTEXT: "o/r/first", CUE_AGENT_NAME: "builder" },
       host: "casm",
       now: () => t,
+      tmuxNames: async () => ({ window: "second", session: "palekiwi" }),
     })
     cleanups.push(() => fire("session_shutdown", { reason: "quit" }, ctx))
 
@@ -169,6 +203,8 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       context_title: "Second",
       session_name: "named",
       session_description: "Updated description",
+      tmux_window: "second",
+      tmux_session: "palekiwi",
       cwd: "/work",
       run_id: sid,
       agent: "builder",

@@ -30,6 +30,40 @@ export interface NatsTelemetryOptions {
   now?: () => number
   heartbeatMs?: number
   env?: NodeJS.ProcessEnv
+  tmuxNames?: () => Promise<TmuxNames>
+}
+
+/** Names of the tmux window and session holding an interactive pi. */
+export interface TmuxNames {
+  window?: string
+  session?: string
+}
+
+export const TMUX_TIMEOUT_MS = 1_000
+
+/**
+ * Read the tmux window and session names of this pane, as `#W` and `#S`
+ * show them. Only an interactive pi owning the pane's tty reports names:
+ * child pi processes inherit TMUX_PANE from the window that launched them.
+ */
+export async function readTmuxNames(
+  pi: ExtensionAPI,
+  env: NodeJS.ProcessEnv,
+  isTTY = process.stdout.isTTY === true,
+): Promise<TmuxNames> {
+  const pane = env.TMUX_PANE
+  if (!env.TMUX || !pane || !isTTY) return {}
+  const read = async (format: string): Promise<string | undefined> => {
+    try {
+      const r = await pi.exec("tmux", ["display-message", "-p", "-t", pane, format], { timeout: TMUX_TIMEOUT_MS })
+      if (r.code !== 0) return undefined
+      return r.stdout.replace(/\r?\n$/, "") || undefined
+    } catch {
+      return undefined
+    }
+  }
+  const [window, session] = await Promise.all([read("#{window_name}"), read("#{session_name}")])
+  return { window, session }
 }
 
 function contextAddress(ctx: ExtensionContext, env: NodeJS.ProcessEnv): string | undefined {
@@ -97,6 +131,7 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
   const now = options.now ?? Date.now
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS
   const domain = resolveJsDomain(env)
+  const tmuxNames = options.tmuxNames ?? (() => readTmuxNames(pi, env))
 
   let client: NatsClient | undefined = options.client
   let tracker: SessionTracker | undefined
@@ -203,11 +238,16 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
     if (tracker) emit(tracker, tracker.toolEnd(event.toolCallId, event.toolName, event.isError, event.durationMs))
   })
 
-  pi.on("agent_settled", (event, ctx) => {
+  pi.on("agent_settled", async (event, ctx) => {
     if (!tracker) return
-    delete tracker.row.session_description
-    tracker.update({ session_description: sessionDescription(ctx) })
-    emitAndPut(tracker.settled(event.aborted))
+    const t = tracker
+    const names = await tmuxNames().catch((): TmuxNames => ({}))
+    if (tracker !== t) return
+    delete t.row.session_description
+    delete t.row.tmux_window
+    delete t.row.tmux_session
+    t.update({ session_description: sessionDescription(ctx), tmux_window: names.window, tmux_session: names.session })
+    emitAndPut(t.settled(event.aborted))
   })
 
   pi.on("session_compact", (event) => {
