@@ -645,13 +645,13 @@ export class ChangesView implements Component {
       case "c":
         this.commentLines();
         return;
-      case "e":
+      case "E":
         this.editComment();
         return;
       case "d":
         this.deleteComment();
         return;
-      case "o":
+      case "e":
         this.openItem();
         return;
       case "\x04":
@@ -733,7 +733,7 @@ export class ChangesView implements Component {
       case "l":
         if (e !== undefined) this.jumpToComment(e);
         return;
-      case "e":
+      case "E":
         if (e !== undefined) this.edit(e);
         return;
       case "d":
@@ -1021,11 +1021,11 @@ export class ChangesView implements Component {
     const pos = `file ${cur.file + 1}/${p.files.length}  stop ${this.cursor + 1}/${this.stops.length} `;
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
     const keys = this.sideFocus && this.sideMode === "comments"
-      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("e/d", "edit/delete")}${k("S", "submit all")}${k("C", "files")}${k("tab/esc", "back to diff")}`
+      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("E/d", "edit/delete")}${k("S", "submit all")}${k("C", "files")}${k("tab/esc", "back to diff")}`
       : this.sideFocus
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
-      ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("e/d", "edit/delete")}${k("o", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
+      ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
       : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
