@@ -214,3 +214,58 @@ test("parseFolds tolerates garbage", () => {
   assert.deepEqual(parseFolds("nope"), emptyFolds());
   assert.deepEqual(parseFolds(null), emptyFolds());
 });
+
+test("comments navigator lists drafts in diff order with outdated last", () => {
+  const { v, comments } = view();
+  keys(v, "j", "c", "k", "\r", "j", "j", "c");
+  const { v: w } = view({
+    schema: "station/comments@1",
+    comments: [
+      { id: "x", path: "src/gone.ts", chunk: "gone", from: 0, to: 0, text: "stale note", created_at: 0 },
+      ...(comments.at(-1)?.comments ?? []),
+    ],
+  });
+  keys(w, "C");
+  const text = screen(w);
+  assert.match(text, /Comments 3/);
+  const side = text.split("\n").filter((l) => l.includes("│")).map((l) => l.split("│")[0]).join("\n");
+  const order = ["line 2", "whole chunk", "outdated"].map((s) => side.indexOf(s));
+  assert.ok(order.every((i) => i !== -1), text);
+  assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, text);
+  assert.match(text, /stale note/);
+  assert.match(text, /e\/d edit\/delete/);
+});
+
+test("enter in the navigator jumps to the comment in line mode, unfolding", () => {
+  const { v } = view();
+  keys(v, "j", "c", " ", "g", "C", "\r");
+  assert.doesNotMatch(screen(v), /lines folded/);
+  assert.match(screen(v), /▶.*comment  whole chunk/);
+  assert.match(screen(v), /e\/d edit\/delete/);
+});
+
+test("outdated drafts can be edited and deleted from the navigator", () => {
+  const { v, comments, composed, reply } = view({
+    schema: "station/comments@1",
+    comments: [{ id: "x", path: "src/a.ts", chunk: "gone", from: 0, to: 0, text: "old", created_at: 0 }],
+  });
+  keys(v, "C", "\r");
+  assert.match(screen(v), /Comments 1/);
+  reply.text = "newer";
+  keys(v, "e");
+  assert.equal(composed[0]?.title, "src/a.ts · outdated");
+  assert.equal(comments.at(-1)?.comments[0]?.text, "newer");
+  keys(v, "d");
+  assert.equal(comments.at(-1)?.comments.length, 0);
+  assert.match(screen(v), /no draft comments/);
+});
+
+test("C toggles the sidebar back to files and esc returns to the diff", () => {
+  const { v } = view();
+  keys(v, "C");
+  assert.match(screen(v), /Comments 0/);
+  keys(v, "C");
+  assert.match(screen(v), /Files 2/);
+  assert.equal(v.handleEscape(), true);
+  assert.match(screen(v), /enter lines/);
+});

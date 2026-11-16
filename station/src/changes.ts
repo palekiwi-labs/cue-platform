@@ -63,6 +63,11 @@ interface Stop {
 
 type Item = { chunk: number; line: number } | { chunk: number; comment: string };
 
+interface CommentEntry {
+  comment: DraftComment;
+  chunk: number | null;
+}
+
 export interface ComposeRequest {
   title: string;
   text: string;
@@ -129,7 +134,9 @@ export class ChangesView implements Component {
   private offset = 0;
   private sidebarOffset = 0;
   private sidebar = true;
-  private filesFocus = false;
+  private sideFocus = false;
+  private sideMode: "files" | "comments" = "files";
+  private commentCursor = 0;
   private fileCursor = 0;
   private lastHeight = 20;
 
@@ -454,11 +461,70 @@ export class ChangesView implements Component {
     const it = this.item;
     if (it === null || !("comment" in it)) return;
     const c = this.commentById(it.comment);
-    if (c === undefined) return;
-    this.opts.onCompose({ title: this.composeTitle(it.chunk, this.commentLabel(it.chunk, c)), text: c.text }, (text) => {
+    if (c !== undefined) this.edit({ comment: c, chunk: it.chunk });
+  }
+
+  private entryLabel(e: CommentEntry): string {
+    return e.chunk === null ? "outdated" : this.commentLabel(e.chunk, e.comment);
+  }
+
+  private edit(e: CommentEntry): void {
+    const c = e.comment;
+    this.opts.onCompose({ title: `${c.path} · ${this.entryLabel(e)}`, text: c.text }, (text) => {
       if (text === null) return;
       this.setComments(this.comments.comments.map((x) => (x.id === c.id ? { ...x, text } : x)));
     });
+  }
+
+  private commentEntries(): CommentEntry[] {
+    const chunkOf = new Map(this.fingerprints.map((fp, i) => [fp, i]));
+    const live: CommentEntry[] = [];
+    const outdated: CommentEntry[] = [];
+    for (const c of this.comments.comments) {
+      const chunk = chunkOf.get(c.chunk);
+      if (chunk === undefined) outdated.push({ comment: c, chunk: null });
+      else live.push({ comment: c, chunk });
+    }
+    live.sort((a, b) => (a.chunk ?? 0) - (b.chunk ?? 0) || (a.comment.to ?? -1) - (b.comment.to ?? -1));
+    outdated.sort((a, b) => a.comment.path.localeCompare(b.comment.path) || a.comment.created_at - b.comment.created_at);
+    return [...live, ...outdated];
+  }
+
+  private jumpToComment(e: CommentEntry): void {
+    const ci = e.chunk;
+    if (ci === null) return;
+    const path = this.file(this.chunkFile[ci] ?? 0).path;
+    const fp = this.fingerprints[ci] ?? "";
+    if (this.folds.files.includes(path) || this.folds.chunks.includes(fp)) {
+      this.folds = {
+        ...this.folds,
+        files: this.folds.files.filter((p) => p !== path),
+        chunks: this.folds.chunks.filter((f) => f !== fp),
+      };
+      this.opts.onFolds(this.folds);
+      this.rebuild();
+    }
+    this.anchor = null;
+    this.setItem({ chunk: ci, comment: e.comment.id });
+    this.sideFocus = false;
+  }
+
+  private showComments(): void {
+    this.sidebar = true;
+    this.sideFocus = true;
+    if (this.sideMode !== "comments") this.sidebarOffset = 0;
+    this.sideMode = "comments";
+    const it = this.item;
+    const entries = this.commentEntries();
+    const at = it !== null && "comment" in it ? entries.findIndex((e) => e.comment.id === it.comment) : -1;
+    if (at !== -1) this.commentCursor = at;
+    this.commentCursor = Math.max(0, Math.min(this.commentCursor, entries.length - 1));
+  }
+
+  private showFiles(): void {
+    if (this.sideMode !== "files") this.sidebarOffset = 0;
+    this.sideMode = "files";
+    this.fileCursor = this.current().file;
   }
 
   private deleteComment(): void {
@@ -501,8 +567,8 @@ export class ChangesView implements Component {
   }
 
   handleEscape(): boolean {
-    if (this.filesFocus) {
-      this.filesFocus = false;
+    if (this.sideFocus) {
+      this.sideFocus = false;
       return true;
     }
     if (this.item === null) return false;
@@ -578,13 +644,66 @@ export class ChangesView implements Component {
       case "\r":
       case "l":
         this.jumpFile(this.fileCursor);
-        this.filesFocus = false;
+        this.sideFocus = false;
         return;
       case "\t":
-        this.filesFocus = false;
+        this.sideFocus = false;
+        return;
+      case "C":
+        this.showComments();
         return;
       case "t":
-        this.filesFocus = false;
+        this.sideFocus = false;
+        this.sidebar = false;
+        return;
+      case "q":
+      case "\x03":
+        this.opts.onQuit();
+        return;
+      default:
+        return;
+    }
+  }
+
+  private handleCommentsInput(data: string): void {
+    const entries = this.commentEntries();
+    const n = entries.length;
+    const e = entries[this.commentCursor];
+    switch (data) {
+      case "j":
+      case "\x1b[B":
+        this.commentCursor = Math.max(0, Math.min(n - 1, this.commentCursor + 1));
+        return;
+      case "k":
+      case "\x1b[A":
+        this.commentCursor = Math.max(0, this.commentCursor - 1);
+        return;
+      case "g":
+        this.commentCursor = 0;
+        return;
+      case "G":
+        this.commentCursor = Math.max(0, n - 1);
+        return;
+      case "\r":
+      case "l":
+        if (e !== undefined) this.jumpToComment(e);
+        return;
+      case "e":
+        if (e !== undefined) this.edit(e);
+        return;
+      case "d":
+        if (e === undefined) return;
+        this.setComments(this.comments.comments.filter((x) => x.id !== e.comment.id));
+        this.commentCursor = Math.max(0, Math.min(this.commentCursor, n - 2));
+        return;
+      case "C":
+        this.showFiles();
+        return;
+      case "\t":
+        this.sideFocus = false;
+        return;
+      case "t":
+        this.sideFocus = false;
         this.sidebar = false;
         return;
       case "q":
@@ -597,8 +716,13 @@ export class ChangesView implements Component {
   }
 
   handleInput(data: string): void {
-    if (this.filesFocus) {
-      this.handleFilesInput(data);
+    if (this.sideFocus) {
+      if (this.sideMode === "comments") this.handleCommentsInput(data);
+      else this.handleFilesInput(data);
+      return;
+    }
+    if (data === "C") {
+      this.showComments();
       return;
     }
     if (this.item !== null) {
@@ -657,7 +781,7 @@ export class ChangesView implements Component {
         return;
       case "\t":
         this.sidebar = true;
-        this.filesFocus = true;
+        this.sideFocus = true;
         this.fileCursor = this.current().file;
         return;
       case "o":
@@ -748,7 +872,7 @@ export class ChangesView implements Component {
     const known = new Set(this.fingerprints);
     const detached = all.filter((c) => !known.has(c.chunk)).length;
     const extra = detached > 0 ? ` (${detached} on outdated code)` : "";
-    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}`;
+    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}${C.dim} (C list)`;
   }
 
   private lineSelection(row: LineRow): "cursor" | "range" | null {
@@ -761,13 +885,42 @@ export class ChangesView implements Component {
     return row.index >= lo && row.index <= hi ? "range" : null;
   }
 
+  private renderCommentsSidebar(height: number, w: number): string[] {
+    const entries = this.commentEntries();
+    const out: string[] = [];
+    const label = this.sideFocus ? C.accent : C.text;
+    out.push(C.barBg + fit(` ${label}${BOLD}Comments${RESET}${C.barBg} ${C.dim}${entries.length}`, w) + RESET);
+    if (entries.length === 0) out.push(fit(` ${C.faint}no draft comments`, w) + RESET);
+    const listH = Math.max(1, Math.floor((height - 1) / 2));
+    const cur = this.commentCursor;
+    if (cur < this.sidebarOffset) this.sidebarOffset = cur;
+    if (cur >= this.sidebarOffset + listH) this.sidebarOffset = cur - listH + 1;
+    for (let i = this.sidebarOffset; i < entries.length && out.length + 2 <= height; i++) {
+      const e = entries[i] as CommentEntry;
+      const outdated = e.chunk === null;
+      const on = i === cur;
+      const base = on ? C.selBg : "";
+      const marker = on ? `${this.sideFocus ? C.accent : C.dim}▎` : " ";
+      const where = this.entryLabel(e);
+      const path = tailPath(e.comment.path, Math.max(4, w - 3 - visibleWidth(where)));
+      const pathStyle = outdated ? C.faint : on ? `${C.text}${BOLD}` : C.text;
+      const whereStyle = outdated ? C.del : C.dim;
+      out.push(base + fit(`${marker}${pathStyle}${path}${RESET}${base} ${whereStyle}${where}`, w) + RESET);
+      const first = e.comment.text.split("\n")[0] ?? "";
+      out.push(base + fit(`${marker} ${outdated ? C.faint : C.mod}${first}`, w) + RESET);
+    }
+    while (out.length < height) out.push(" ".repeat(w));
+    return out;
+  }
+
   private renderSidebar(height: number, w: number): string[] {
+    if (this.sideMode === "comments") return this.renderCommentsSidebar(height, w);
     const files = this.packet.files;
     const out: string[] = [];
-    const label = this.filesFocus ? C.accent : C.text;
+    const label = this.sideFocus ? C.accent : C.text;
     out.push(C.barBg + fit(` ${label}${BOLD}Files${RESET}${C.barBg} ${C.dim}${files.length}`, w) + RESET);
     const listH = height - 1;
-    const cur = this.filesFocus ? this.fileCursor : this.current().file;
+    const cur = this.sideFocus ? this.fileCursor : this.current().file;
     if (cur < this.sidebarOffset) this.sidebarOffset = cur;
     if (cur >= this.sidebarOffset + listH) this.sidebarOffset = cur - listH + 1;
     for (let i = this.sidebarOffset; i < files.length && out.length < height; i++) {
@@ -819,11 +972,13 @@ export class ChangesView implements Component {
     const cur = this.current();
     const pos = `file ${cur.file + 1}/${p.files.length}  stop ${this.cursor + 1}/${this.stops.length} `;
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = this.filesFocus
-      ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}tab/esc${C.dim} back to diff`
+    const keys = this.sideFocus && this.sideMode === "comments"
+      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("e/d", "edit/delete")}${k("C", "files")}${k("tab/esc", "back to diff")}`
+      : this.sideFocus
+      ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
       ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("e/d", "edit/delete")}${k("o", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
-      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}o${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}o${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;
