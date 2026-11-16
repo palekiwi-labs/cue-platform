@@ -164,7 +164,7 @@ describe("NATS speech", () => {
     const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" }
     speech.agentStart(ctx as any)
     speech.messageStart(message, ctx as any)
-    speech.messageUpdate(message, { type: "text_delta", contentIndex: 0, delta: text + " " }, ctx as any)
+    speech.messageUpdate(message, { type: "text_delta", contentIndex: 0, delta: text + "\n\n" }, ctx as any)
     expect(f.publications.at(-1)!.subject).toBe("speech.intent.say")
     expect(f.publications.at(-1)!.body.final).toBe(false)
     speech.messageEnd(message, ctx as any)

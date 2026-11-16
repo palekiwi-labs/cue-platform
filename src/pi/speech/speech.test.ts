@@ -298,6 +298,30 @@ describe("live mode", () => {
     }
   })
 
+  test("speaks wrapped lines whole, without heading marks, with list numbers as rendered", async () => {
+    const reply = [
+      "## Recommended fix",
+      "",
+      "Change the streaming chunker so that a single line end inside a",
+      "paragraph is plain whitespace and never a reason to cut.",
+      "",
+      "1. Treat soft-wrapped line ends as spaces between words",
+      "1. Keep paragraph breaks, headings and list items as cuts",
+    ].join("\n")
+    const s = setup()
+    const m = streaming(s)
+    await m.start()
+    for (const piece of reply.match(/[\s\S]{1,3}/g)!) await m.delta(0, piece)
+    await m.textEnd(0, reply)
+    await m.end([text(reply)])
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([
+      "/say Recommended fix\n\nChange the streaming chunker so that a single line end inside a\nparagraph is plain whitespace and never a reason to cut.",
+      "/say 1. Treat soft-wrapped line ends as spaces between words",
+      "/say 2. Keep paragraph breaks, headings and list items as cuts",
+    ])
+  })
+
   test("flushes each text block once, at text_end or else at message_end", async () => {
     const s = setup()
     const m = streaming(s)
@@ -413,12 +437,12 @@ describe("live mode", () => {
     const m = streaming(s)
     await s.emit("agent_start")
     await m.start()
-    await m.delta(0, `${SENTENCE} `)
+    await m.delta(0, `${SENTENCE}\n\n`)
     await bridge.received(1)
     s.controller.abort()
     await bridge.received(2)
-    await m.delta(0, `${OTHER} `)
-    await m.end([text(`${SENTENCE} ${OTHER} `)], "aborted")
+    await m.delta(0, `${OTHER}\n\n`)
+    await m.end([text(`${SENTENCE}\n\n${OTHER}\n\n`)], "aborted")
     await s.emit("agent_settled", { aborted: true })
     await s.speech.sender.settled()
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, "/stop", "/stop"])
@@ -428,10 +452,10 @@ describe("live mode", () => {
     const s = setup()
     const m = streaming(s)
     await m.start()
-    await m.delta(0, `${SENTENCE} `)
+    await m.delta(0, `${SENTENCE}\n\n`)
     mode = "off"
-    await m.delta(0, `${OTHER} `)
-    await m.end([text(`${SENTENCE} ${OTHER} `)])
+    await m.delta(0, `${OTHER}\n\n`)
+    await m.end([text(`${SENTENCE}\n\n${OTHER}\n\n`)])
     await s.speech.sender.settled()
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`])
   })
@@ -491,11 +515,11 @@ describe("live mode", () => {
     const s = setup()
     const m = streaming(s)
     await m.start()
-    await m.delta(0, `${SENTENCE} `)
+    await m.delta(0, `${SENTENCE}\n\n`)
     await s.speech.sender.settled()
     await s.emit("session_shutdown", { reason: "quit" })
-    await m.delta(0, `${OTHER} `)
-    await m.end([text(`${SENTENCE} ${OTHER} `)])
+    await m.delta(0, `${OTHER}\n\n`)
+    await m.end([text(`${SENTENCE}\n\n${OTHER}\n\n`)])
     await s.speech.sender.settled()
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, "/stop"])
   })
