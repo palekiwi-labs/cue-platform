@@ -5,6 +5,7 @@ import { Type } from "typebox"
 import {
   type BatchReceipt,
   type Roster,
+  BACKGROUND_GUARDRAIL,
   MAX_TASKS,
   buildDescription,
   formatReceipt,
@@ -23,6 +24,7 @@ function makeParameters(names: string[], aliases: string[], supervisor = false) 
           background: Type.Optional(
             Type.Boolean({
               description:
+                BACKGROUND_GUARDRAIL +
                 "Return at once with the batch id instead of waiting; the " +
                 "runs keep going without you. Collect or cancel them later " +
                 "with delegate-status.",

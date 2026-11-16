@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { buildDescription, formatReceipt, parseAgentList, selectableAliases } from "./delegate-helpers"
+import {
+  BACKGROUND_GUARDRAIL,
+  buildDescription,
+  formatReceipt,
+  parseAgentList,
+  selectableAliases,
+} from "./delegate-helpers"
 
 const listing = JSON.stringify({
   models: {
@@ -36,6 +42,17 @@ describe("buildDescription", () => {
     expect(d).toContain("- plain [harness default; no model override]")
     expect(d).toContain("- opus: anthropic/claude-opus (anthropic, thinking medium)")
     expect(d).toContain("does NOT see this conversation")
+  })
+})
+
+describe("BACKGROUND_GUARDRAIL", () => {
+  test("reserves background for an explicit operator request", () => {
+    expect(BACKGROUND_GUARDRAIL).toContain("only when the operator explicitly asks")
+    expect(BACKGROUND_GUARDRAIL).toContain("Foreground is the default")
+  })
+
+  test("says foreground tasks still run concurrently", () => {
+    expect(BACKGROUND_GUARDRAIL).toContain("still run concurrently while it waits")
   })
 })
 
