@@ -3,7 +3,16 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { recordedSpeechMode, SessionSpeechMode, SPEECH_ENTRY, speechStatus } from "./settings"
+import {
+  recordedSpeechMode,
+  recordedSpeechVoice,
+  SessionSpeechMode,
+  SessionSpeechVoice,
+  SPEECH_ENTRY,
+  SPEECH_VOICE_ENTRY,
+  SPEECH_VOICES,
+  speechStatus,
+} from "./settings"
 
 const custom = (customType: string, data?: unknown) => ({ type: "custom", customType, data }) as unknown as SessionEntry
 
@@ -55,6 +64,46 @@ describe("SessionSpeechMode", () => {
     setting.set("live")
     setting.set("live")
     expect(appended).toEqual([{ mode: "live" }])
+  })
+})
+
+describe("speech voices", () => {
+  test("offers the six Kokoro voices in menu order", () => {
+    expect(SPEECH_VOICES.map((v) => `${v.label} ${v.id}`)).toEqual([
+      "Bella af_bella",
+      "Heart af_heart",
+      "Jessica af_jessica",
+      "Sky af_sky",
+      "Isabella bf_isabella",
+      "Echo am_echo",
+    ])
+  })
+
+  test("a session that never picked a voice speaks with Bella", () => {
+    expect(recordedSpeechVoice([])).toBe("af_bella")
+  })
+
+  test("takes the last valid voice entry", () => {
+    expect(
+      recordedSpeechVoice([
+        custom(SPEECH_VOICE_ENTRY, { voice: "af_sky" }),
+        custom(SPEECH_ENTRY, { voice: "am_echo" }),
+        custom(SPEECH_VOICE_ENTRY, { voice: "bf_emma" }),
+      ]),
+    ).toBe("af_sky")
+  })
+
+  test("restores from the session and records only actual changes", () => {
+    const appended: unknown[] = []
+    const setting = new SessionSpeechVoice({ appendEntry: (_t: string, d: unknown) => appended.push(d) } as never)
+    setting.restore({
+      sessionManager: { getEntries: () => [custom(SPEECH_VOICE_ENTRY, { voice: "bf_isabella" })] },
+    } as unknown as ExtensionContext)
+    expect(setting.voice).toBe("bf_isabella")
+    setting.set("bf_isabella")
+    setting.set("af_heart")
+    expect(setting.voice).toBe("af_heart")
+    expect(appended).toEqual([{ voice: "af_heart" }])
   })
 })
 

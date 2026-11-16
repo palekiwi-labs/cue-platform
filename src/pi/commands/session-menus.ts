@@ -4,7 +4,7 @@ import { ActionMenu, actionMenuWidth, ACTIONS_KEY } from "../browser/action-menu
 import type { Binding } from "../browser/keymap"
 import { type Setting, SETTINGS_KEY, SettingsForm, settingsWidth } from "../browser/settings-menu"
 import { activeStyle, listStyles, switchStyle } from "../response-style"
-import { type SessionSpeechMode, SPEECH_MODES } from "../speech/settings"
+import { type SessionSpeechMode, type SessionSpeechVoice, SPEECH_MODES, SPEECH_VOICES } from "../speech/settings"
 import { autoSummary, setAutoSummary } from "../turn-summary/settings"
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
@@ -46,7 +46,7 @@ export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding
 }
 
 /** Settings of the session, as F3 lists them; speech only where the session can speak. */
-export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode): Setting[] {
+export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode, voice?: SessionSpeechVoice): Setting[] {
   const level = pi.getThinkingLevel() as ThinkingLevel
   const styles = listStyles()
   const settings: Setting[] = [
@@ -81,6 +81,15 @@ export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode): S
       apply: (i) => speech.set(SPEECH_MODES[i]!),
     })
   }
+  if (voice) {
+    settings.push({
+      label: "voice",
+      group: "display",
+      values: SPEECH_VOICES.map((v) => v.label),
+      current: Math.max(0, SPEECH_VOICES.findIndex((v) => v.id === voice.voice)),
+      apply: (i) => voice.set(SPEECH_VOICES[i]!.id),
+    })
+  }
   return settings
 }
 
@@ -106,9 +115,14 @@ async function openActions(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   picked?.run?.()
 }
 
-async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext, speech?: SessionSpeechMode): Promise<void> {
+async function openSettings(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  speech?: SessionSpeechMode,
+  voice?: SessionSpeechVoice,
+): Promise<void> {
   if (!ctx.hasUI) return
-  const settings = sessionSettings(pi, speech)
+  const settings = sessionSettings(pi, speech, voice)
   const title = "settings: session"
   await ctx.ui.custom<boolean>(
     (tui, theme, kb, done) => redrawing(tui, new SettingsForm(theme, kb, title, settings, done)),
@@ -117,7 +131,7 @@ async function openSettings(pi: ExtensionAPI, ctx: ExtensionContext, speech?: Se
 }
 
 /** F2 session actions and F3 session settings in pi's main view. */
-export function registerSessionMenus(pi: ExtensionAPI, speech?: SessionSpeechMode): void {
+export function registerSessionMenus(pi: ExtensionAPI, speech?: SessionSpeechMode, voice?: SessionSpeechVoice): void {
   pi.registerCommand(NEW_SESSION_COMMAND, {
     description: "Start a new session",
     handler: async (_args, ctx: ExtensionCommandContext) => {
@@ -134,6 +148,6 @@ export function registerSessionMenus(pi: ExtensionAPI, speech?: SessionSpeechMod
   })
   pi.registerShortcut(SETTINGS_KEY, {
     description: "Session settings",
-    handler: async (ctx) => openSettings(pi, ctx, speech),
+    handler: async (ctx) => openSettings(pi, ctx, speech, voice),
   })
 }

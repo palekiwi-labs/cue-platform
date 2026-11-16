@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { menuColumns } from "../browser/action-menu"
-import { SessionSpeechMode } from "../speech/settings"
+import { SessionSpeechMode, SessionSpeechVoice } from "../speech/settings"
 import { sessionActions, sessionSettings } from "./session-menus"
 
 function fakePi(level = "medium") {
@@ -83,6 +83,20 @@ describe("speech setting", () => {
     expect(appended).toEqual([{ mode: "live" }])
     const again = sessionSettings(fakePi().pi, session).find((s) => s.label === "speech")!
     expect(again.values[again.current]).toBe("live")
+  })
+
+  test("offers the six voices, starting at Bella, and records the picked one", () => {
+    const appended: unknown[] = []
+    const session = new SessionSpeechVoice({ appendEntry: (_t: string, d: unknown) => appended.push(d) } as never)
+    const voice = sessionSettings(fakePi().pi, undefined, session).find((s) => s.label === "voice")!
+    expect(voice.group).toBe("display")
+    expect(voice.values).toEqual(["Bella", "Heart", "Jessica", "Sky", "Isabella", "Echo"])
+    expect(voice.values[voice.current]).toBe("Bella")
+    voice.apply(voice.values.indexOf("Isabella"))
+    expect(session.voice).toBe("bf_isabella")
+    expect(appended).toEqual([{ voice: "bf_isabella" }])
+    const again = sessionSettings(fakePi().pi, undefined, session).find((s) => s.label === "voice")!
+    expect(again.values[again.current]).toBe("Isabella")
   })
 
   test("is not listed where the session cannot speak", () => {

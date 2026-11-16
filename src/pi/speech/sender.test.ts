@@ -35,6 +35,13 @@ describe("SpeechSender", () => {
     expect(s.used).toBe(true)
   })
 
+  test("sends only the text; the HTTP bridge keeps its configured voice", async () => {
+    const s = sender()
+    s.say(["one"], s.newMessage("am_echo"))
+    await s.settled()
+    expect(bridge.requests.map((r) => r.body)).toEqual([{ text: "one" }])
+  })
+
   test("stop drops pending sentences and reaches the bridge without waiting", async () => {
     bridge.holdSay = true
     const s = sender()

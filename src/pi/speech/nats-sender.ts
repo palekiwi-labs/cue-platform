@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto"
 import { createNatsClient, type NatsClient } from "../../nats/client"
 import type { SenderOptions } from "./sender"
+import type { SpeechVoice } from "./settings"
 
 export type SpeechPublisher = Pick<NatsClient, "start" | "publish" | "close">
 
 interface Utterance {
   message: number
   utt: string
+  voice: SpeechVoice | undefined
   seq: number
   sent: boolean
   closed: boolean
@@ -24,10 +26,11 @@ export class NatsSpeechSender {
     this.client.start()
   }
 
-  newMessage(): number {
+  /** A new utterance; every chunk of it, the final one included, carries the given voice. */
+  newMessage(voice?: SpeechVoice): number {
     if (this.current) this.complete(this.current.message)
     const message = ++this.messages
-    this.current = { message, utt: randomUUID(), seq: 0, sent: false, closed: false }
+    this.current = { message, utt: randomUUID(), voice, seq: 0, sent: false, closed: false }
     return message
   }
 
@@ -74,7 +77,14 @@ export class NatsSpeechSender {
 
   private send(current: Utterance, text: string, final: boolean): boolean {
     this.used = true
-    const body = { utt: current.utt, seq: current.seq, final, text, origin: "pi" }
+    const body = {
+      utt: current.utt,
+      seq: current.seq,
+      final,
+      text,
+      origin: "pi",
+      ...(current.voice ? { voice: current.voice } : {}),
+    }
     if (Buffer.byteLength(JSON.stringify(body)) > 8192 || !this.client.publish("speech.intent.say", body)) {
       current.closed = true
       this.options.onFailure?.("NATS unavailable; utterance dropped")

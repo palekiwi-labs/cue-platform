@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net"
 export interface BridgeRequest {
   path: string
   text?: string
+  body?: unknown
 }
 
 /** A local stand-in for the host speech bridge, for tests. */
@@ -47,7 +48,8 @@ export class FakeBridge {
     req.on("end", () => {
       const path = req.url ?? ""
       if (path === "/say") {
-        this.requests.push({ path, text: (JSON.parse(body) as { text: string }).text })
+        const parsed = JSON.parse(body) as { text: string }
+        this.requests.push({ path, text: parsed.text, body: parsed })
         const answer = () => res.writeHead(this.sayStatus).end()
         if (this.holdSay) this.held.push(answer)
         else answer()

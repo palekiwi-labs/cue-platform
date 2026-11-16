@@ -2,7 +2,7 @@ import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendi
 import { Chunker } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
-import { SessionSpeechMode, type SpeechMode } from "./settings"
+import { SessionSpeechMode, SessionSpeechVoice, type SpeechMode, type SpeechVoice } from "./settings"
 
 /** Set in the turn summarizer's own pi, which must never speak. */
 export const SUMMARIZER_ENV = "CUE_TURN_SUMMARIZER"
@@ -46,6 +46,7 @@ function textBlocks(message: SpokenMessage): { index: number; text: string }[] {
 
 export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSuccess"> {
   mode?: () => SpeechMode
+  voice?: () => SpeechVoice
   publisher?: SpeechPublisher
 }
 
@@ -57,16 +58,20 @@ export interface SpeechOptions extends Omit<SenderOptions, "onFailure" | "onSucc
 export class Speech {
   readonly sender: SpeechSender | NatsSpeechSender
   readonly setting: SessionSpeechMode | undefined
+  readonly voiceSetting: SessionSpeechVoice | undefined
   private readonly mode: () => SpeechMode
+  private readonly voice: () => SpeechVoice | undefined
   private muted = false
   private warned = false
   private current: CurrentMessage | null = null
   private notifyCtx: Pick<ExtensionContext, "ui"> | undefined
   private detachAbort: (() => void) | null = null
 
-  constructor(options: SpeechOptions = {}, setting?: SessionSpeechMode) {
+  constructor(options: SpeechOptions = {}, setting?: SessionSpeechMode, voiceSetting?: SessionSpeechVoice) {
     this.setting = setting
+    this.voiceSetting = voiceSetting
     this.mode = options.mode ?? (() => setting?.mode ?? "off")
+    this.voice = options.voice ?? (() => voiceSetting?.voice)
     const senderOptions = {
       ...options,
       onFailure: (reason: string) => this.failed(reason),
@@ -164,7 +169,7 @@ export class Speech {
   private newMessage(ctx: MessageContext): CurrentMessage {
     const mode = ctx.mode === "tui" ? this.mode() : "off"
     if (mode !== "off") this.notifyCtx = ctx
-    return { id: this.sender.newMessage(), mode, blocks: new Map() }
+    return { id: this.sender.newMessage(this.voice()), mode, blocks: new Map() }
   }
 
   private block(current: CurrentMessage, index: number): LiveBlock {
@@ -231,8 +236,12 @@ export class Speech {
 export function registerSpeech(pi: ExtensionAPI, options: SpeechOptions = {}): Speech | undefined {
   if (process.env[SUMMARIZER_ENV]) return undefined
   const setting = new SessionSpeechMode(pi)
-  const speech = new Speech(options, setting)
-  pi.on("session_start", (_event, ctx) => setting.restore(ctx))
+  const voiceSetting = new SessionSpeechVoice(pi)
+  const speech = new Speech(options, setting, voiceSetting)
+  pi.on("session_start", (_event, ctx) => {
+    setting.restore(ctx)
+    voiceSetting.restore(ctx)
+  })
   pi.on("agent_start", (_event, ctx) => speech.agentStart(ctx))
   pi.on("agent_end", () => speech.runEnd())
   pi.on("agent_settled", (event, ctx) => speech.settled(event, ctx))

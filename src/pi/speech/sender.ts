@@ -1,4 +1,5 @@
 import { request } from "node:http"
+import type { SpeechVoice } from "./settings"
 
 /** Overrides the bridge address, for tests and other hosts. */
 export const SPEECH_URL_ENV = "CUE_SPEECH_URL"
@@ -84,8 +85,12 @@ export class SpeechSender {
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
   }
 
-  /** A new message number, for sending one message in several parts. */
-  newMessage(): number {
+  /**
+   * A new message number, for sending one message in several parts. The
+   * HTTP bridge always speaks with its own configured voice, so a voice
+   * passed here is not sent.
+   */
+  newMessage(_voice?: SpeechVoice): number {
     return ++this.messages
   }
 

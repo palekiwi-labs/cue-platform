@@ -150,6 +150,14 @@ Whole-message sends use a fresh utterance and finalize it. Text is split to
 1000 Unicode characters and checked against the bridge's 8192-byte JSON
 limit. One persistent client serves the extension and closes on shutdown.
 
+Each session picks its Kokoro voice in session settings (F3): Bella
+(`af_bella`, the default), Heart (`af_heart`), Jessica (`af_jessica`), Sky
+(`af_sky`), Isabella (`bf_isabella`) or Echo (`am_echo`). The choice is kept
+in the session, so it survives resume and reload. The voice is fixed when a
+message starts and sent as `voice` on every chunk of its utterance, the empty
+final chunk included; a change applies from the next message. Pi does not
+queue or serialize utterances across sessions.
+
 Publications never await bridge acknowledgements. Connected publication is
 not proof of playback: holds, queue limits and stale IDs can reject speech;
 inspect host `speech.evt.rejected` events for these failures. A failed local
@@ -160,6 +168,8 @@ For temporary legacy use only, start pi with `CUE_SPEECH_TRANSPORT=http`.
 in the extension options also selects HTTP unless `transport` is `nats`.
 The HTTP sender retains its existing delayed-stop race workaround; the
 NATS sender never uses it. Do not use HTTP to circumvent coordination.
+The HTTP sender sends only the text: the HTTP bridge speaks with its own
+configured voice and ignores the session voice.
 
 ## GitHub snapshot service
 
