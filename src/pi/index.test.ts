@@ -94,6 +94,7 @@ describe("cuePlugins registration", () => {
       "cue-review",
       "cue-task",
       "delegate",
+      "delegate-status",
       "save-branch-diff",
     ])
   })
