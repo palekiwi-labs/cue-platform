@@ -10,6 +10,13 @@ import { type TaskEnv, withAgentName } from "./agent-env"
 /** Per-call task cap enforced by cue-agent (no queue). */
 export const MAX_TASKS = 4
 
+/** Guardrail leading every backend's `background` parameter description. */
+export const BACKGROUND_GUARDRAIL =
+  "Set only when the operator explicitly asks for a background run; " +
+  "otherwise omit it. Foreground is the default: the call waits for the " +
+  "batch, and its tasks still run concurrently while it waits, so " +
+  "parallel work never needs background. "
+
 export interface AgentInfo {
   name: string
   description: string | null
