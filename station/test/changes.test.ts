@@ -155,6 +155,8 @@ test("range comment stays within one chunk", () => {
 test("line cursor crosses into the next chunk without a range", () => {
   const { v, opened } = view();
   keys(v, "\r", "j", "j", "j", "j", "o");
+  assert.deepEqual(opened, []);
+  keys(v, "e");
   assert.deepEqual(opened, [["src/a.ts", 21]]);
 });
 
@@ -179,18 +181,21 @@ test("escape clears the range, then leaves line mode", () => {
   keys(v, "\r", "V");
   assert.match(screen(v), /end range/);
   assert.equal(v.handleEscape(), true);
-  assert.match(screen(v), /e\/d edit\/delete/);
+  assert.match(screen(v), /E\/d edit\/delete  e open/);
   assert.equal(v.handleEscape(), true);
   assert.match(screen(v), /enter lines/);
   assert.equal(v.handleEscape(), false);
 });
 
 test("edit and delete a comment under the cursor", () => {
-  const { v, comments, reply } = view();
+  const { v, comments, reply, opened, composed } = view();
   keys(v, "\r", "c");
   assert.equal(comments.at(-1)?.comments.length, 1);
   reply.text = "changed";
   keys(v, "e");
+  assert.equal(composed.length, 1);
+  assert.equal(opened.length, 1);
+  keys(v, "E");
   assert.equal(comments.at(-1)?.comments[0]?.text, "changed");
   keys(v, "d");
   assert.equal(comments.at(-1)?.comments.length, 0);
@@ -244,7 +249,7 @@ test("comments navigator lists drafts in diff order with outdated last", () => {
   assert.ok(order.every((i) => i !== -1), text);
   assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, text);
   assert.match(text, /stale note/);
-  assert.match(text, /e\/d edit\/delete/);
+  assert.match(text, /E\/d edit\/delete/);
 });
 
 test("enter in the navigator jumps to the comment in line mode, unfolding", () => {
@@ -252,7 +257,7 @@ test("enter in the navigator jumps to the comment in line mode, unfolding", () =
   keys(v, "j", "c", " ", "g", "C", "\r");
   assert.doesNotMatch(screen(v), /lines folded/);
   assert.match(screen(v), /▶.*comment  whole chunk/);
-  assert.match(screen(v), /e\/d edit\/delete/);
+  assert.match(screen(v), /E\/d edit\/delete/);
 });
 
 test("outdated drafts can be edited and deleted from the navigator", () => {
@@ -264,6 +269,8 @@ test("outdated drafts can be edited and deleted from the navigator", () => {
   assert.match(screen(v), /Comments 1/);
   reply.text = "newer";
   keys(v, "e");
+  assert.equal(composed.length, 0);
+  keys(v, "E");
   assert.equal(composed[0]?.title, "src/a.ts · outdated");
   assert.equal(comments.at(-1)?.comments[0]?.text, "newer");
   keys(v, "d");
