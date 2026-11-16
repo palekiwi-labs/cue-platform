@@ -38,6 +38,43 @@ test("list renders, navigates and opens", () => {
   assert.deepEqual(opened, [2]);
 });
 
+test("j/k and arrows wrap around the list ends and keep the selection visible", () => {
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  for (const key of ["j", "k", "\x1b[A", "\x1b[B"]) v.handleInput(key);
+  assert.equal(v.selected(), undefined);
+  v.setPrs([pr(1)], "me");
+  for (const key of ["j", "k", "\x1b[A", "\x1b[B"]) {
+    v.handleInput(key);
+    assert.equal(v.selected()?.number, 1);
+  }
+  const rows = process.stdout.rows;
+  process.stdout.rows = 8;
+  try {
+    v.setPrs(Array.from({ length: 30 }, (_, i) => pr(i + 1)), "me");
+    const body = (): string[] => v.render(100).map(stripTerminalSequences).slice(2, -1);
+    const shown = (n: number): boolean => body().some((l) => l.includes(`#${n} `));
+    assert.equal(v.selected()?.number, 1);
+    for (const up of ["k", "\x1b[A"]) {
+      v.handleInput(up);
+      assert.equal(v.selected()?.number, 30);
+      assert.ok(shown(30));
+      assert.ok(!shown(1));
+      v.handleInput(up === "k" ? "j" : "\x1b[B");
+      assert.equal(v.selected()?.number, 1);
+      assert.ok(shown(1));
+      assert.ok(!shown(30));
+    }
+    v.handleInput("G");
+    v.handleInput("\x04");
+    assert.equal(v.selected()?.number, 30);
+    v.handleInput("g");
+    v.handleInput("\x15");
+    assert.equal(v.selected()?.number, 1);
+  } finally {
+    process.stdout.rows = rows;
+  }
+});
+
 test("y copies the selected URL, h copies a Markdown link, with notices", () => {
   const copied: string[] = [];
   let fail = false;

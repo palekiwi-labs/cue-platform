@@ -124,6 +124,12 @@ export class PrsView implements Component {
     this.cursor = Math.max(0, Math.min(to, this.prs.length - 1));
   }
 
+  private step(delta: 1 | -1): void {
+    const n = this.prs.length;
+    if (n === 0) return;
+    this.cursor = (this.cursor + delta + n) % n;
+  }
+
   private copy(what: "url" | "markdown"): void {
     const pr = this.selected();
     if (pr === undefined) {
@@ -158,11 +164,11 @@ export class PrsView implements Component {
         return;
       case "j":
       case "\x1b[B":
-        this.move(this.cursor + 1);
+        this.step(1);
         return;
       case "k":
       case "\x1b[A":
-        this.move(this.cursor - 1);
+        this.step(-1);
         return;
       case "g":
         this.move(0);
