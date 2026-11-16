@@ -11,12 +11,19 @@ export const READER_SPEAK_KEY = "s"
 
 export type TurnSpeaker = Pick<Speech, "request">
 
-const SPEAK_NOTES: Record<SpeakResult, [string, "info" | "warning"]> = {
-  sent: ["Speaking the latest turn", "info"],
-  busy: ["Speech request refused while the agent is running", "warning"],
-  unavailable: ["Speech is only available in the TUI", "warning"],
-  empty: ["Nothing to speak in the latest turn", "info"],
+export type SpeakNotes = Record<SpeakResult, [string, "info" | "warning"]>
+
+/** Notifications for each speech request outcome, given what is spoken. */
+export function speakNotes(subject: string): SpeakNotes {
+  return {
+    sent: [`Speaking ${subject}`, "info"],
+    busy: ["Speech request refused while the agent is running", "warning"],
+    unavailable: ["Speech is only available in the TUI", "warning"],
+    empty: [`Nothing to speak in ${subject}`, "info"],
+  }
 }
+
+const SPEAK_NOTES = speakNotes("the latest turn")
 
 let live: ReaderMessage | undefined
 

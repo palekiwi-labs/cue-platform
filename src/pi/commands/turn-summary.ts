@@ -4,11 +4,19 @@ import { autoSummary } from "../turn-summary/settings"
 import { feedbackNote, writeFeedbackNote } from "../turn-summary/feedback"
 import { SUMMARIZER_ENV, summarizerPrompt, summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
+import { speakNotes, type TurnSpeaker } from "./turn-reader"
 
 /** Open the turn summary popup. */
 export const SUMMARY_SHORTCUT = "ctrl+u"
+/** Summary popup key that speaks the shown summary. */
+export const SUMMARY_SPEAK_KEY = "s"
 
-const FOOTER = "← → turns • ctrl+y copy • ctrl+r report • esc close"
+const SPEAK_NOTES = speakNotes("the turn summary")
+
+function footer(speakable: boolean): string {
+  const speak = speakable ? " • s speak" : ""
+  return `← → turns${speak} • ctrl+y copy • ctrl+r report • esc close`
+}
 const PAD_X = 3
 const MAX_WIDTH = 86
 
@@ -45,6 +53,7 @@ class SummaryPopup implements Component {
     private theme: Theme,
     private turns: Turn[],
     stored: Map<string, TurnSummaryData>,
+    private speakable = false,
   ) {
     this.index = turns.length - 1
     for (const [id, data] of stored) this.slots.set(id, { state: "ready", data })
@@ -105,7 +114,7 @@ class SummaryPopup implements Component {
           ? wrapTextWithAnsi(t.fg("error", `summary failed: ${slot.text}`), inner)
           : [t.fg("dim", "summarizing…")]
     const border = (s: string) => t.fg("border", s)
-    const foot = ` ${this.flash || FOOTER} `
+    const foot = ` ${this.flash || footer(this.speakable)} `
     const top = border("╭─") + t.fg("accent", t.bold(head)) +
       border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮")
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
@@ -129,13 +138,18 @@ function popupComponent(
   tui: TUI,
   kb: KeybindingsManager,
   done: (r?: Reported) => void,
+  speak?: (text: string) => void,
 ): Component {
   return {
     render: (width) => popup.render(width),
     invalidate: () => popup.invalidate(),
     handleInput(data: string) {
       popup.clearFlash()
-      if (matchesKey(data, "ctrl+y")) popup.copy()
+      if (speak && data === SUMMARY_SPEAK_KEY) {
+        const r = popup.current()
+        if (r) speak(r.summary.text)
+      }
+      else if (matchesKey(data, "ctrl+y")) popup.copy()
       else if (matchesKey(data, "ctrl+r")) {
         const r = popup.current()
         if (r) return done(r)
@@ -150,7 +164,7 @@ function popupComponent(
   }
 }
 
-export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext, speaker?: TurnSpeaker): Promise<void> {
   if (!ctx.hasUI) return
   const branch = ctx.sessionManager.getBranch() as Parameters<typeof turnsOf>[0]
   const turns = turnsOf(branch)
@@ -165,10 +179,17 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext): 
         { render: (width) => Array(tui.terminal.rows).fill(" ".repeat(width)), invalidate: () => {} },
         { anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
       )
-      return popupComponent(new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored), tui, kb, (r) => {
+      const speak = speaker
+        ? (text: string) => {
+            const [note, level] = SPEAK_NOTES[speaker.request([text], ctx)]
+            ctx.ui.notify(note, level)
+          }
+        : undefined
+      const popup = new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored, !!speaker)
+      return popupComponent(popup, tui, kb, (r) => {
         backdrop.hide()
         done(r)
-      })
+      }, speak)
     },
     { overlay: true, overlayOptions: () => ({ anchor: "center", width: popupWidth() }) },
   )
@@ -209,16 +230,16 @@ function summarizeLastTurn(pi: ExtensionAPI, ctx: ExtensionContext): void {
   })
 }
 
-export function registerTurnSummary(pi: ExtensionAPI): void {
+export function registerTurnSummary(pi: ExtensionAPI, speaker?: TurnSpeaker): void {
   pi.on("agent_end", (_event, ctx) => {
     if (ctx.hasUI && !process.env[SUMMARIZER_ENV] && autoSummary()) summarizeLastTurn(pi, ctx)
   })
   pi.registerCommand("cue:summary", {
     description: "Show a short summary of the last turn and browse earlier ones",
-    handler: async (_args, ctx) => openTurnSummary(pi, ctx),
+    handler: async (_args, ctx) => openTurnSummary(pi, ctx, speaker),
   })
   pi.registerShortcut(SUMMARY_SHORTCUT, {
     description: "Show turn summaries",
-    handler: async (ctx) => openTurnSummary(pi, ctx),
+    handler: async (ctx) => openTurnSummary(pi, ctx, speaker),
   })
 }
