@@ -72,7 +72,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   const speech = registerSpeech(pi)
   registerSessionMenus(pi, speech?.setting, speech?.voiceSetting)
   registerTurnSummary(pi)
-  registerTurnReader(pi)
+  registerTurnReader(pi, speech)
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
   registerReviewMissCommand(pi)

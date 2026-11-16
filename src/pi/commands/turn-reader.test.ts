@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { openTurnReader, READER_SHORTCUT, registerTurnReader } from "./turn-reader"
+import type { SpeakResult } from "../speech"
+import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader } from "./turn-reader"
 
 const ALT_U = "\x1bu"
 const ESC = "\x1b"
@@ -63,6 +64,38 @@ describe("openTurnReader", () => {
       expect(events).toEqual(["render", "backdrop hidden", "done"])
     })
   }
+})
+
+describe("speaking from the reader", () => {
+  function speaker(result: SpeakResult) {
+    const requests: (readonly string[])[] = []
+    return { requests, request: (texts: readonly string[]) => (requests.push(texts), result) }
+  }
+
+  test("s requests speech of the displayed text and reports it", async () => {
+    const { ctx, notes, keys, rendered } = fakeCtx(turn)
+    const s = speaker("sent")
+    keys.push(READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx, s)
+    expect(s.requests).toEqual([["answer"]])
+    expect(notes).toEqual(["Speaking the latest turn"])
+    expect(rendered().at(-1)).toContain("s speak")
+  })
+
+  test("a refused request is reported", async () => {
+    const { ctx, notes, keys } = fakeCtx(turn, false)
+    keys.push(READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx, speaker("busy"))
+    expect(notes).toEqual(["Speech request refused while the agent is running"])
+  })
+
+  test("without speech, s does nothing and no hint shows", async () => {
+    const { ctx, notes, keys, rendered } = fakeCtx(turn)
+    keys.push(READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx)
+    expect(notes).toEqual([])
+    expect(rendered().at(-1)).not.toContain("s speak")
+  })
 })
 
 describe("registerTurnReader", () => {

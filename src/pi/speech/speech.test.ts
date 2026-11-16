@@ -524,3 +524,37 @@ describe("live mode", () => {
     expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, "/stop"])
   })
 })
+
+describe("requested speech", () => {
+  const idleCtx = (s: ReturnType<typeof setup>, idle = true, ctxMode = "tui") =>
+    ({ ...s.ctx, mode: ctxMode, isIdle: () => idle }) as any
+
+  test("speaks the given texts even with automatic speech off", async () => {
+    mode = "off"
+    const s = setup()
+    expect(s.speech.request([SENTENCE, OTHER], idleCtx(s))).toBe("sent")
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([`/say ${SENTENCE}`, `/say ${OTHER}`])
+  })
+
+  test("is refused while the agent runs or a message is live, leaving live speech alone", async () => {
+    const s = setup()
+    expect(s.speech.request([OTHER], idleCtx(s, false))).toBe("busy")
+    const m = streaming(s)
+    await m.start()
+    await m.delta(0, `${SENTENCE} `)
+    expect(s.speech.request([OTHER], idleCtx(s))).toBe("busy")
+    await m.textEnd(0, SENTENCE)
+    await m.end([text(SENTENCE)])
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([`/say ${SENTENCE}`])
+  })
+
+  test("reports outside the TUI and empty text without sending", async () => {
+    const s = setup()
+    expect(s.speech.request([SENTENCE], idleCtx(s, true, "rpc"))).toBe("unavailable")
+    expect(s.speech.request(["", "  "], idleCtx(s))).toBe("empty")
+    await s.speech.sender.settled()
+    expect(bridge.paths()).toEqual([])
+  })
+})

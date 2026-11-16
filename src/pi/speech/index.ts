@@ -1,5 +1,5 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { SpokenChunker } from "./chunks"
+import { SpokenChunker, spokenChunks } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
 import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
 import { SessionSpeechMode, SessionSpeechVoice, type SpeechMode, type SpeechVoice } from "./settings"
@@ -11,6 +11,10 @@ export const SPEECH_STOP_SHORTCUT = "alt+x"
 
 type ModeContext = Pick<ExtensionContext, "mode">
 type MessageContext = ModeContext & Pick<ExtensionContext, "ui">
+type RequestContext = MessageContext & Pick<ExtensionContext, "isIdle">
+
+/** Outcome of a speech request: sent, refused while a run is live, outside the TUI, or nothing to say. */
+export type SpeakResult = "sent" | "busy" | "unavailable" | "empty"
 
 interface SpokenMessage {
   role: string
@@ -86,6 +90,23 @@ export class Speech {
   stop(): Promise<void> {
     this.muted = true
     return this.sender.stop()
+  }
+
+  /**
+   * Speak whole texts on request with the session voice, whatever the
+   * speech mode. Refused while the agent runs, so live speech of the
+   * streaming reply is never cut or interleaved.
+   */
+  request(texts: readonly string[], ctx: RequestContext): SpeakResult {
+    if (ctx.mode !== "tui") return "unavailable"
+    if (!ctx.isIdle() || this.current) return "busy"
+    const chunks = texts.flatMap((text) => spokenChunks(text))
+    if (chunks.length === 0) return "empty"
+    this.notifyCtx = ctx
+    const id = this.sender.newMessage(this.voice())
+    this.sender.say(chunks, id)
+    this.sender.complete(id)
+    return "sent"
   }
 
   agentStart(ctx: ModeContext & Pick<ExtensionContext, "signal">): void {

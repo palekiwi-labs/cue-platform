@@ -212,4 +212,22 @@ describe("NATS speech", () => {
     expect(second.every((b) => b.voice === "af_sky")).toBe(true)
     await speech.shutdown(ctx as any)
   })
+
+  test("requested speech is one utterance in the session voice", () => {
+    const f = fixture()
+    const pi = {
+      on: () => {},
+      registerCommand: () => {},
+      registerShortcut: () => {},
+      appendEntry: () => {},
+    } as unknown as ExtensionAPI
+    const speech = registerSpeech(pi, { transport: "nats", publisher: f.client, mode: () => "off" })!
+    speech.voiceSetting!.set("af_heart")
+    const ctx = { mode: "tui", isIdle: () => true, ui: { notify() {}, setStatus() {} } }
+    expect(speech.request(["First reply text here.", "Second reply text here."], ctx as any)).toBe("sent")
+    const bodies = f.publications.map((p) => p.body)
+    expect(new Set(bodies.map((b) => b.utt)).size).toBe(1)
+    expect(bodies.map((b) => b.final)).toEqual([false, false, true])
+    expect(bodies.every((b) => b.voice === "af_heart")).toBe(true)
+  })
 })

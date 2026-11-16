@@ -43,6 +43,7 @@ export class TurnReader implements Component {
     private messages: readonly string[],
     private rows: () => number,
     private running = false,
+    private speakable = false,
   ) {}
 
   invalidate(): void {
@@ -98,7 +99,8 @@ export class TurnReader implements Component {
     const head = ` latest turn · ${count}${this.running ? " · snapshot" : ""} `
     const scrolls = body.length > height
     const position = scrolls ? `${this.offset + 1}-${this.offset + height}/${body.length} · ` : ""
-    const keys = scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close"
+    const speak = this.speakable ? "s speak · " : ""
+    const keys = speak + (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
     const foot = ` ${position}${keys} `
 
     const border = (s: string) => t.fg("border", s)
