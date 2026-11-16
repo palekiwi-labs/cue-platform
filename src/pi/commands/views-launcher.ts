@@ -8,7 +8,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui"
 import { setViewSwitcher, type ViewSwitcher } from "../lib/view-switch"
-import { openMonitor } from "./agent-monitor"
+import { openAgentMonitor } from "../../nats/monitor-command"
 import {
   openActivity,
   openArtifacts,
@@ -38,7 +38,7 @@ export const VIEWS: readonly LauncherView[] = [
   },
   { label: "activity", open: openActivity },
   { label: "GitHub PRs", open: openPrBrowser },
-  { label: "agent monitor", open: openMonitor },
+  { label: "agent monitor", open: (_pi, ctx) => openAgentMonitor(ctx) },
 ]
 
 const TITLE = "views"
