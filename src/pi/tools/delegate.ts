@@ -124,9 +124,10 @@ function makeParameters(names: string[], aliases: string[], supervisor = false) 
             "Return at once with the batch id instead of waiting; the " +
             "runs keep going without you. Collect or cancel them later " +
             "with delegate-status."
-          : "Run the batch in a detached tmux window and return at once with " +
-          "a job id; check on it later with cue-agent ps/status/logs/stop. " +
-          "Pair with context to get the results as traces.",
+          : BACKGROUND_GUARDRAIL +
+            "Run the batch in a detached tmux window and return at once with " +
+            "a job id; check on it later with cue-agent ps/status/logs/stop. " +
+            "Pair with context to get the results as traces.",
       }),
     ),
   })
