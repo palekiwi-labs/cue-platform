@@ -133,6 +133,7 @@ describe("command registration", () => {
       "cue:memory",
       "cue:new-session",
       "cue:prs",
+      "cue:read",
       "cue:reload",
       "cue:sessions",
       "cue:summary",
