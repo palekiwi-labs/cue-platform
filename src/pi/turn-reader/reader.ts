@@ -51,7 +51,7 @@ export class TurnReader implements Component {
 
   private body(inner: number): string[] {
     if (this.cache?.width === inner) return this.cache.lines
-    const rule = this.theme.fg("dim", "┄".repeat(inner))
+    const rule = this.theme.fg("dim", "---")
     const lines: string[] = []
     this.messages.forEach((text, i) => {
       if (i > 0) lines.push("", rule, "")
