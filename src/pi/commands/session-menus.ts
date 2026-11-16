@@ -49,29 +49,7 @@ export function sessionActions(pi: ExtensionAPI, ctx: ExtensionContext): Binding
 export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode, voice?: SessionSpeechVoice): Setting[] {
   const level = pi.getThinkingLevel() as ThinkingLevel
   const styles = listStyles()
-  const settings: Setting[] = [
-    {
-      label: "thinking",
-      group: "display",
-      values: [...THINKING_LEVELS],
-      current: Math.max(0, THINKING_LEVELS.indexOf(level)),
-      apply: (i) => pi.setThinkingLevel(THINKING_LEVELS[i]!),
-    },
-    {
-      label: "auto summary",
-      group: "display",
-      values: ["off", "on"],
-      current: autoSummary() ? 1 : 0,
-      apply: (i) => setAutoSummary(i === 1),
-    },
-    {
-      label: "style",
-      group: "display",
-      values: styles,
-      current: Math.max(0, styles.indexOf(activeStyle())),
-      apply: (i) => switchStyle(pi, styles[i]!),
-    },
-  ]
+  const settings: Setting[] = []
   if (speech) {
     settings.push({
       label: "speech",
@@ -90,6 +68,29 @@ export function sessionSettings(pi: ExtensionAPI, speech?: SessionSpeechMode, vo
       apply: (i) => voice.set(SPEECH_VOICES[i]!.id),
     })
   }
+  settings.push(
+    {
+      label: "style",
+      group: "display",
+      values: styles,
+      current: Math.max(0, styles.indexOf(activeStyle())),
+      apply: (i) => switchStyle(pi, styles[i]!),
+    },
+    {
+      label: "thinking",
+      group: "display",
+      values: [...THINKING_LEVELS],
+      current: Math.max(0, THINKING_LEVELS.indexOf(level)),
+      apply: (i) => pi.setThinkingLevel(THINKING_LEVELS[i]!),
+    },
+    {
+      label: "auto summary",
+      group: "display",
+      values: ["off", "on"],
+      current: autoSummary() ? 1 : 0,
+      apply: (i) => setAutoSummary(i === 1),
+    },
+  )
   return settings
 }
 
