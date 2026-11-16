@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
 import { registerSpeech, SPEECH_STOP_COMMAND, SPEECH_STOP_SHORTCUT } from "./index"
+import { SPEECH_VOICE_ENTRY } from "./settings"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { connect } from "@nats-io/transport-node"
 import { createNatsClient } from "../../nats/client"
@@ -89,6 +90,18 @@ describe("NATS speech", () => {
     expect(f.closes()).toBe(1)
   })
 
+  test("every chunk of an utterance, the final one included, carries its voice", () => {
+    const f = fixture()
+    const id = f.sender.newMessage("bf_isabella")
+    f.sender.say(["First.", "x".repeat(1500)], id)
+    f.sender.complete(id)
+    const bodies = f.publications.map((p) => p.body)
+    expect(bodies.map((b) => [b.seq, b.final])).toEqual([[0, false], [1, false], [2, false], [3, true]])
+    expect(bodies.every((b) => b.voice === "bf_isabella")).toBe(true)
+    f.sender.say(["Unvoiced."])
+    expect(f.publications.slice(4).every((p) => !("voice" in p.body))).toBe(true)
+  })
+
   test("stop is global even before speech and drops late chunks without a delayed stop", async () => {
     const f = fixture()
     await f.sender.stop()
@@ -167,5 +180,36 @@ describe("NATS speech", () => {
     expect(f.publications.at(-1)!.subject).toBe("speech.intent.stop")
     await speech.shutdown(ctx as any)
     expect(f.closes()).toBe(1)
+  })
+
+  test("extension sends the session voice, fixed for each message", async () => {
+    const f = fixture()
+    const handlers = new Map<string, Function>()
+    const entries: unknown[] = [{ type: "custom", customType: SPEECH_VOICE_ENTRY, data: { voice: "am_echo" } }]
+    const pi = {
+      on: (name: string, fn: Function) => handlers.set(name, fn),
+      registerCommand: () => {},
+      registerShortcut: () => {},
+      appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
+    } as unknown as ExtensionAPI
+    const speech = registerSpeech(pi, { transport: "nats", publisher: f.client, mode: () => "live" })!
+    const ctx = { mode: "tui", ui: { notify() {}, setStatus() {} }, sessionManager: { getEntries: () => entries } }
+    handlers.get("session_start")!({ type: "session_start" }, ctx)
+    expect(speech.voiceSetting!.voice).toBe("am_echo")
+    const text = "This is a sentence long enough to be spoken while streaming."
+    const message = { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" }
+    speech.messageStart(message, ctx as any)
+    speech.messageUpdate(message, { type: "text_delta", contentIndex: 0, delta: text + " " }, ctx as any)
+    speech.voiceSetting!.set("af_sky")
+    speech.messageEnd(message, ctx as any)
+    const first = f.publications.map((p) => p.body)
+    expect(first.at(-1)!.final).toBe(true)
+    expect(first.every((b) => b.voice === "am_echo")).toBe(true)
+    speech.messageStart(message, ctx as any)
+    speech.messageEnd(message, ctx as any)
+    const second = f.publications.slice(first.length).map((p) => p.body)
+    expect(second.length).toBeGreaterThan(1)
+    expect(second.every((b) => b.voice === "af_sky")).toBe(true)
+    await speech.shutdown(ctx as any)
   })
 })
