@@ -70,7 +70,7 @@ export class ComposeBox implements Component {
 
   render(width: number): string[] {
     const head = C.titleBg + truncateToWidth(` ${C.text}${BOLD}comment${RESET}${C.titleBg} ${C.dim}${this.title}`, width, "…", true) + RESET;
-    const keys = ` ${C.text}enter${C.dim} save  ${C.text}shift+enter${C.dim} newline  ${C.text}esc${C.dim} cancel`;
+    const keys = ` ${C.text}enter${C.dim} save  ${C.text}alt+enter${C.dim} newline  ${C.text}esc${C.dim} cancel`;
     const foot = C.barBg + truncateToWidth(keys, width, "", true) + RESET;
     return [head, ...this.editor.render(width).map((l) => C.barBg + truncateToWidth(l, width, "", true) + RESET), foot];
   }

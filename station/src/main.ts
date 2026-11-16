@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { type Component, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { type Component, matchesKey, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { PrsView } from "./prs.js";
@@ -78,7 +78,7 @@ class Router {
     this.tui.addInputListener((data) => {
       if (this.composing !== null) {
         if (data === "\x1b") this.endCompose(null);
-        else this.composing.box.editor.handleInput(data);
+        else this.composing.box.editor.handleInput(matchesKey(data, "alt+enter") ? "\n" : data);
       } else if (this.popup !== null) {
         if (this.popup.dismissable) this.hidePopup();
         else if (data === "\x03") this.quit();
