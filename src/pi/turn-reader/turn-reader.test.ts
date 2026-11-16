@@ -57,7 +57,7 @@ describe("TurnReader", () => {
     const lines = reader.render(30)
     expect(lines[0]).toStartWith("╭─ latest turn · 2 messages ")
     expect(lines.slice(1, -1).map((l) => l.slice(1, -1).trim())).toEqual([
-      "", "Title", "", "body", "", "┄".repeat(24), "", "second", "",
+      "", "Title", "", "body", "", "---", "", "second", "",
     ])
     expect(lines.at(-1)).toContain("esc close")
     expect(lines.every((l) => l.length === 30)).toBe(true)

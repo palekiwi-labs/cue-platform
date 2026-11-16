@@ -4,7 +4,7 @@ import { latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
 import { MARGIN_Y, readerWidth, TurnReader } from "../turn-reader/reader"
 
 /** Open the latest turn reader. */
-export const READER_SHORTCUT = "f5"
+export const READER_SHORTCUT = "alt+u"
 
 let live: ReaderMessage | undefined
 
