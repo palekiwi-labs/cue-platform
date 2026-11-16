@@ -7,6 +7,7 @@ import { Type } from "typebox"
 import {
   type BatchReceipt,
   type Roster,
+  BACKGROUND_GUARDRAIL,
   MAX_TASKS,
   backgroundCommand,
   backgroundJobId,
@@ -97,6 +98,7 @@ function makeParameters(names: string[], aliases: string[]) {
     background: Type.Optional(
       Type.Boolean({
         description:
+          BACKGROUND_GUARDRAIL +
           "Run the batch in a detached tmux window and return at once with " +
           "a job id; check on it later with cue-agent ps/status/logs/stop. " +
           "Pair with context to get the results as traces.",
