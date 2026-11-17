@@ -80,6 +80,7 @@ function changesView(
     onQuit,
     quitLabel,
     onFolds: (folds) => saveFolds(review.key, folds),
+    onCopy: (text) => process.stdout.write(osc52(text)),
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
     onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line),
