@@ -319,7 +319,7 @@ describe("TurnReader chunk comments", () => {
     type(reader, "why two?")
     const composing = reader.render(60).map(strip)
     expect(reader.composing()).toBe(true)
-    expect(composing.at(-1)).toContain("enter save · shift+enter newline · esc cancel")
+    expect(composing.at(-1)).toContain("enter save · alt+enter newline · esc cancel")
     expect(composing.some((l) => l.includes("why two?"))).toBe(true)
     reader.composeInput("\r")
     expect(reader.composing()).toBe(false)
@@ -330,6 +330,8 @@ describe("TurnReader chunk comments", () => {
       "│  one" + " ".repeat(53) + "│",
       "│" + " ".repeat(58) + "│",
       "│  two" + " ".repeat(53) + "│",
+      "│" + " ".repeat(58) + "│",
+      "│  ┃ comment" + " ".repeat(47) + "│",
       "│  ┃ why two?" + " ".repeat(46) + "│",
       "│" + " ".repeat(58) + "│",
       "╰─────── f unfocus · c comment · d delete · r reply · esc ─╯",
@@ -389,8 +391,9 @@ describe("TurnReader chunk comments", () => {
     comments.save("0:0", "one", "first line\n" + "word ".repeat(20).trim())
     const lines = open(["one"], comments).render(30).map(strip)
     const rows = lines.filter((l) => l.includes("┃")).map((l) => l.slice(3, -3).trimEnd())
-    expect(rows[0]).toBe("┃ first line")
-    expect(rows.length).toBeGreaterThan(2)
+    expect(rows[0]).toBe("┃ comment")
+    expect(rows[1]).toBe("┃ first line")
+    expect(rows.length).toBeGreaterThan(3)
     expect(lines.every((l) => l.length === 30)).toBe(true)
   })
 
@@ -413,8 +416,8 @@ describe("TurnReader chunk comments", () => {
     reader.composeInput("\r")
     expect(comments.entries().map(([k, c]) => [k, c.quote])).toEqual([["0:0", "a1"], ["1:0", "b1"]])
     const all = reader.render(60).map(strip)
-    expect(all.findIndex((l) => l.includes("on a1"))).toBe(all.findIndex((l) => l.includes("a1")) + 1)
-    expect(all.findIndex((l) => l.includes("on b1"))).toBe(all.findIndex((l) => l.includes("│  b1")) + 1)
+    expect(all.findIndex((l) => l.includes("on a1"))).toBe(all.findIndex((l) => l.includes("a1")) + 3)
+    expect(all.findIndex((l) => l.includes("on b1"))).toBe(all.findIndex((l) => l.includes("│  b1")) + 3)
     reader.toggle()
     const last = reader.render(80).map(strip)
     expect(last[0]).toContain("last of 2 messages · chunk 1/1 · 2 comments")
@@ -435,6 +438,82 @@ describe("TurnReader chunk comments", () => {
     const editorTop = lines.findIndex((l, i) => i > 0 && l.includes("────"))
     expect(at).toBeGreaterThan(0)
     expect(at).toBeLessThan(editorTop)
+  })
+
+  const codes: Record<string, number> = { accent: 31, muted: 90, borderMuted: 37, dim: 35 }
+  const colored = { fg: (c: string, s: string) => `\x1b[${codes[c] ?? 36}m${s}\x1b[39m`, bold: (s: string) => s }
+  const ACCENT = "\x1b[31m"
+  const MUTED = "\x1b[90m"
+  const END = "\x1b[39m"
+  const inner = (l: string) => l.slice(`\x1b[37m│${END}  `.length).replace(/ *\x1b\[37m│\x1b\[39m$/, "")
+
+  test("the comment is set off by a blank line, a label and an accent gutter, its text muted", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "note")
+    const reader = new TurnReader(colored, md, ["one\n\ntwo"], () => 40, false, false, comments)
+    expect(reader.render(60).slice(2, 8).map(inner)).toEqual([
+      "one",
+      "",
+      `${ACCENT}┃ ${END}${ACCENT}comment${END}`,
+      `${ACCENT}┃ ${END}${MUTED}note${END}`,
+      "",
+      "two",
+    ])
+  })
+
+  test("focus dimming keeps the comment label and gutter visible and dims the text", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "note")
+    const reader = new TurnReader(colored, md, ["one\n\ntwo"], () => 40, false, false, comments)
+    reader.render(60)
+    reader.toggleFocus()
+    reader.move(1)
+    const body = reader.render(60).slice(2, 8).map(inner)
+    expect(body[0]).toStartWith("\x1b[2m")
+    expect(body[2]).toBe(`${ACCENT}┃ ${END}${ACCENT}comment${END}`)
+    expect(body[3]).toStartWith(`${ACCENT}┃ ${END}\x1b[2m${MUTED}\x1b[2mnote`)
+    expect(body[5]).toBe("two")
+  })
+
+  test("comment text stays plain: no markdown, no escape sequences or control characters", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "**bold** `code`\n# not a heading\n\x1b[31mred\x1b[0m\ttab\x07")
+    const lines = open(["one"], comments).render(60).map(strip)
+    const rows = lines.filter((l) => l.includes("┃")).map((l) => l.slice(3, -3).trimEnd())
+    expect(rows).toEqual(["┃ comment", "┃ **bold** `code`", "┃ # not a heading", "┃ red  tab"])
+  })
+
+  test("narrow widths keep the gutter on every comment row and the frame intact", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "a comment with several words and averyveryverylongunbrokenword")
+    for (const width of [16, 10, 8]) {
+      const lines = new TurnReader(plain, md, ["one"], () => 200, false, false, comments).render(width).map(strip)
+      expect(lines.every((l) => l.length === width)).toBe(true)
+      const rows = lines.slice(1, -1).map((l) => l.slice(3, -3))
+      const at = rows.findIndex((l) => l.startsWith("┃"))
+      const gutter = rows.slice(at).filter((l) => l.trim() !== "")
+      expect(gutter.length).toBeGreaterThan(2)
+      expect(gutter.every((l) => l.startsWith(width > 10 ? "┃ " : "┃"))).toBe(true)
+      expect(rows.slice(at + 1).join("").replace(/[┃ ]/g, "")).toBe(
+        "acommentwithseveralwordsandaveryveryverylongunbrokenword",
+      )
+    }
+  })
+
+  test("a comment taller than the viewport scrolls with its chunk, label first", () => {
+    const comments = new TurnComments()
+    comments.save("0:1", "two", Array.from({ length: 30 }, (_, i) => `note ${i + 1}`).join("\n"))
+    const reader = open(["one\n\ntwo\n\nthree"], comments, 20)
+    reader.toggleFocus()
+    reader.move(1)
+    const lines = reader.render(60).map(strip)
+    expect(lines).toHaveLength(15)
+    expect(lines[2]).toContain("two")
+    expect(lines[4]).toContain("┃ comment")
+    reader.move(1)
+    const next = reader.render(60).map(strip)
+    expect(next.some((l) => l.includes("three"))).toBe(true)
+    expect(next.some((l) => l.includes("note 30"))).toBe(true)
   })
 
   test("the footer drops low priority hints to fit", () => {
