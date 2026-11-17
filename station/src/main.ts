@@ -12,6 +12,7 @@ import {
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
+import { checkoutPr } from "./checkout.js";
 import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkthrough } from "./launch.js";
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
@@ -351,6 +352,19 @@ function showPrs(repo: string): void {
       busy = false;
     }
   };
+  const checkout = async (pr: PrSummary): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    const title = `checkout #${pr.number}`;
+    router.showPopup({ title, text: `checking out ${pr.headRef} in ${repo}…`, footer: "ctrl+c quit" });
+    try {
+      router.showPopup({ title, text: await checkoutPr(repo, pr.number), footer: "any key" }, true);
+    } catch (e) {
+      router.showPopup({ title, text: errText(e), error: true, footer: "any key" }, true);
+    } finally {
+      busy = false;
+    }
+  };
   const launch = async (pr: PrSummary, kind: LaunchKind): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -373,6 +387,12 @@ function showPrs(repo: string): void {
       void source.client.close().finally(() => router.quit());
     },
     onOpen: (pr) => void open(pr),
+    onCheckout: (pr) =>
+      router.showPopup(
+        { title: `checkout #${pr.number}`, text: `check out ${pr.headRef} in ${repo}?`, footer: "y confirm · any other key cancel" },
+        true,
+        { y: () => void checkout(pr) },
+      ),
     onLaunch: (pr) =>
       router.showPopup(
         { title: `launch #${pr.number}`, text: launchPickerText(), footer: "any other key cancel" },
