@@ -16,7 +16,7 @@ import type { SpeakResult, Speech } from "../speech"
 
 /** Open the latest turn reader. */
 export const READER_SHORTCUT = "ctrl+u"
-/** Reader key that speaks the displayed text. */
+/** Reader key that speaks the focused chunk in focus mode, else the displayed text. */
 export const READER_SPEAK_KEY = "s"
 
 export type TurnSpeaker = Pick<Speech, "request">
@@ -34,6 +34,7 @@ export function speakNotes(subject: string): SpeakNotes {
 }
 
 const SPEAK_NOTES = speakNotes("the latest turn")
+const SPEAK_CHUNK_NOTES = speakNotes("the focused chunk")
 
 let live: ReaderMessage | undefined
 
@@ -118,7 +119,8 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
           else if (data === MODE_KEY) reader.toggle()
           else if (data === FOCUS_KEY) reader.toggleFocus()
           else if (speaker && data === READER_SPEAK_KEY) {
-            const [note, level] = SPEAK_NOTES[speaker.request(reader.shown(), ctx)]
+            const notes = reader.focused() ? SPEAK_CHUNK_NOTES : SPEAK_NOTES
+            const [note, level] = notes[speaker.request(reader.spoken(), ctx)]
             ctx.ui.notify(note, level)
           }
           else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, READER_SHORTCUT) || data === "q") {

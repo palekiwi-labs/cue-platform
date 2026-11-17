@@ -117,6 +117,29 @@ describe("speaking from the reader", () => {
     expect(notes).toEqual(["Speech request refused while the agent is running"])
   })
 
+  const chunked = [turn[0], { type: "message", message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }]
+
+  test("in focus mode s speaks only the focused chunk, not its comment", async () => {
+    const { ctx, notes, keys, frames } = fakeCtx(chunked)
+    const s = speaker("sent")
+    keys.push("f", DOWN, "c", ..."note", "\r", READER_SPEAK_KEY, "f", READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx, s)
+    expect(s.requests).toEqual([["two"], ["one\n\ntwo\n\nthree"]])
+    expect(notes).toEqual(["Speaking the focused chunk", "Speaking the latest turn"])
+    expect(frames[0]!.at(-1)).toContain("s speak chunk")
+    expect(frames.at(-2)!.at(-1)).not.toContain("s speak chunk")
+  })
+
+  test("a refused chunk request is reported, as in a running snapshot", async () => {
+    const { ctx, notes, keys, rendered } = fakeCtx(chunked, false)
+    const s = speaker("busy")
+    keys.push("f", READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx, s)
+    expect(rendered()[0]).toContain("snapshot")
+    expect(s.requests).toEqual([["one"]])
+    expect(notes).toEqual(["Speech request refused while the agent is running"])
+  })
+
   test("without speech, s does nothing and no hint shows", async () => {
     const { ctx, notes, keys, rendered } = fakeCtx(turn)
     keys.push(READER_SPEAK_KEY, "q")
