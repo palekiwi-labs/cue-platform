@@ -523,14 +523,14 @@ describe("TurnReader chunk comments", () => {
     expect(at).toBeLessThan(editorTop)
   })
 
-  const codes: Record<string, number> = { accent: 31, muted: 90, borderMuted: 37, dim: 35 }
+  const codes: Record<string, number> = { accent: 31, border: 34, muted: 90, borderMuted: 37, dim: 35 }
   const colored = { fg: (c: string, s: string) => `\x1b[${codes[c] ?? 36}m${s}\x1b[39m`, bold: (s: string) => s }
-  const ACCENT = "\x1b[31m"
+  const BORDER = "\x1b[34m"
   const MUTED = "\x1b[90m"
   const END = "\x1b[39m"
   const inner = (l: string) => l.slice(`\x1b[37m│${END}  `.length).replace(/ *\x1b\[37m│\x1b\[39m$/, "")
 
-  test("the comment is set off by a blank line, a label and an accent gutter, its text muted", () => {
+  test("the comment is set off by a blank line, a label and a border-colored gutter, its text muted", () => {
     const comments = new TurnComments()
     comments.save("0:0", "one", "note")
     const reader = new TurnReader(colored, md, ["one\n\ntwo"], () => 40, false, false, comments)
@@ -538,8 +538,8 @@ describe("TurnReader chunk comments", () => {
     expect(reader.render(60).slice(2, 8).map(inner)).toEqual([
       "one",
       "",
-      `${ACCENT}┃ ${END}${ACCENT}comment${END}`,
-      `${ACCENT}┃ ${END}${MUTED}note${END}`,
+      `${BORDER}┃ ${END}${BORDER}comment${END}`,
+      `${BORDER}┃ ${END}${MUTED}note${END}`,
       "",
       "two",
     ])
@@ -553,8 +553,8 @@ describe("TurnReader chunk comments", () => {
     reader.move(1)
     const body = reader.render(60).slice(2, 8).map(inner)
     expect(body[0]).toStartWith("\x1b[2m")
-    expect(body[2]).toBe(`${ACCENT}┃ ${END}${ACCENT}comment${END}`)
-    expect(body[3]).toStartWith(`${ACCENT}┃ ${END}\x1b[2m${MUTED}\x1b[2mnote`)
+    expect(body[2]).toBe(`${BORDER}┃ ${END}${BORDER}comment${END}`)
+    expect(body[3]).toStartWith(`${BORDER}┃ ${END}\x1b[2m${MUTED}\x1b[2mnote`)
     expect(body[5]).toBe("two")
   })
 
