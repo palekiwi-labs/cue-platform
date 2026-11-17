@@ -651,7 +651,7 @@ export class WalkthroughView implements Component {
       const marked = focus !== undefined && n >= focus[0] && n < focus[1];
       const lead = marked ? `${C.accent}▎ ${RESET}` : " ".repeat(pad);
       const main = fit(lead + truncateToWidth(row, mainW - pad, ""), mainW);
-      out.push(this.sidebar ? `${side[i] ?? ""}${C.faint}│${RESET}${main}${RESET}` : `${main}${RESET}`);
+      out.push(this.sidebar ? `${main}${RESET}${C.faint}│${RESET}${side[i] ?? ""}` : `${main}${RESET}`);
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;

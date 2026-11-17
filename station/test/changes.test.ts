@@ -107,6 +107,24 @@ test("render fills the terminal at exact width", () => {
   assert.match(text, /function bar\(\)/);
 });
 
+test("the diff starts at the left edge with the file list on the right", () => {
+  const { v } = view();
+  for (const [width, sideWidth] of [[100, 28], [80, 26], [180, 48], [100, 28]] as const) {
+    const body = v.render(width).map(stripTerminalSequences).slice(2, -1);
+    const divider = width - sideWidth - 1;
+    for (const l of body) {
+      assert.equal(l[divider], "│", l);
+      assert.equal(visibleWidth(l), width);
+    }
+    assert.ok(body.some((l) => l.slice(0, divider).includes("function foo()")));
+    assert.ok(body.some((l) => l.slice(divider + 1).includes("b.txt")));
+    assert.ok(body.every((l) => !l.slice(0, divider).includes("│")));
+  }
+  assert.ok(v.render(79).map(stripTerminalSequences).slice(2, -1).every((l) => !l.includes("│")));
+  v.handleInput("t");
+  assert.ok(v.render(100).map(stripTerminalSequences).slice(2, -1).every((l) => !l.includes("│")));
+});
+
 test("fold chunk persists and hides its lines", () => {
   const { v, saved } = view();
   v.handleInput(" ");
@@ -258,7 +276,7 @@ test("comments navigator lists drafts in diff order with outdated last", () => {
   keys(w, "C");
   const text = screen(w);
   assert.match(text, /Comments 3/);
-  const side = text.split("\n").filter((l) => l.includes("│")).map((l) => l.split("│")[0]).join("\n");
+  const side = text.split("\n").filter((l) => l.includes("│")).map((l) => l.split("│").at(-1)).join("\n");
   const order = ["line 2", "whole chunk", "outdated"].map((s) => side.indexOf(s));
   assert.ok(order.every((i) => i !== -1), text);
   assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, text);
