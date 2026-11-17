@@ -49,6 +49,18 @@ function renderChunk(chunk: SourceChunk, inner: number, markdown: MarkdownTheme)
   return trimBlank(new Markdown(chunk.text, 0, 0, markdown).render(inner - indent)).map((l) => pad + l)
 }
 
+/** Label above a comment in the reader. */
+export const COMMENT_LABEL = "comment"
+/** Gutter that marks comment rows. */
+export const COMMENT_GUTTER = "┃ "
+
+function plainText(text: string): string {
+  return text
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g, "")
+    .replace(/\t/g, "  ")
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "")
+}
+
 const FAINT = "\x1b[2m"
 const NORMAL = "\x1b[22m"
 
@@ -96,6 +108,7 @@ interface Body {
   version: number
   lines: string[]
   owner: number[]
+  lead: string[]
   chunks: Chunk[]
 }
 
@@ -163,12 +176,16 @@ export class TurnReader implements Component {
     const version = this.comments.version
     if (this.cache?.width === inner && this.cache.all === this.all && this.cache.version === version) return this.cache
     const rule = this.theme.fg("dim", "---")
-    const body: Body = { width: inner, all: this.all, version, lines: [], owner: [], chunks: [] }
+    const body: Body = { width: inner, all: this.all, version, lines: [], owner: [], lead: [], chunks: [] }
     const base = this.messages.length - this.shown().length
-    const mark = this.theme.fg("accent", "┃ ")
-    const push = (line: string, chunk = -1) => {
+    const mark = inner >= 6 ? COMMENT_GUTTER : COMMENT_GUTTER.trimEnd()
+    const gutter = this.theme.fg("accent", mark)
+    const label = gutter + this.theme.fg("accent", COMMENT_LABEL)
+    const textWidth = Math.max(1, inner - visibleWidth(mark))
+    const push = (line: string, chunk = -1, lead = "") => {
       body.lines.push(line)
       body.owner.push(chunk)
+      body.lead.push(lead)
     }
     this.shown().forEach((text, i) => {
       if (i > 0) {
@@ -187,8 +204,12 @@ export class TurnReader implements Component {
         for (const line of lines) push(line, index)
         const comment = this.comments.get(key)
         if (comment) {
-          for (const line of comment.text.split("\n")) {
-            for (const part of wrapTextWithAnsi(line, Math.max(1, inner - 2))) push(mark + part, index)
+          push("", index)
+          push(label, index, label)
+          for (const line of plainText(comment.text).split("\n")) {
+            for (const part of wrapTextWithAnsi(line, textWidth)) {
+              push(gutter + (part === "" ? "" : this.theme.fg("muted", part)), index, gutter)
+            }
           }
         }
         body.chunks.push({ start, end: body.lines.length - 1, key, quote: sourceText(chunk) })
@@ -309,7 +330,7 @@ export class TurnReader implements Component {
   render(width: number): string[] {
     const t = this.theme
     const inner = Math.max(1, width - CHROME_X)
-    const { lines: body, owner, chunks } = this.body(inner)
+    const { lines: body, owner, lead, chunks } = this.body(inner)
     const editor = this.composer?.editor.render(inner) ?? []
     this.composeRows = editor.length
     if (this.composer || this.revealNext) this.reveal()
@@ -333,13 +354,16 @@ export class TurnReader implements Component {
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
       t.fg("dim", foot) + border("─╯")
     const pad = " ".repeat(PAD_X)
-    const row = (s: string, dim = false) => {
+    const row = (s: string, dim = false, keep = "") => {
       const cut = truncateToWidth(s, inner, "…")
       const fill = " ".repeat(Math.max(0, inner - visibleWidth(cut)))
-      return border("│") + pad + (dim ? faint(cut) : cut) + fill + pad + border("│")
+      const kept = keep !== "" && cut.startsWith(keep)
+      const text = !dim ? cut : kept ? keep + (cut.length > keep.length ? faint(cut.slice(keep.length)) : "") : faint(cut)
+      return border("│") + pad + text + fill + pad + border("│")
     }
-    const dimmed = (i: number) => this.focus && owner[i] !== this.current && body[i]!.trim() !== ""
-    const rows = shown.map((line, i) => row(line, dimmed(this.offset + i)))
+    const dimmed = (i: number) =>
+      this.focus && owner[i] !== this.current && body[i]!.trim() !== "" && body[i] !== lead[i]
+    const rows = shown.map((line, i) => row(line, dimmed(this.offset + i), lead[this.offset + i]))
     const composed = editor.map((line) => border("│") + pad + line + pad + border("│"))
     const blank = Array(this.padY()).fill(row(""))
     return [top, ...blank, ...rows, ...composed, ...blank, bottom].map((l) => truncateToWidth(l, width))
