@@ -92,11 +92,7 @@ test("view navigates findings and renders code from the head source", () => {
     onQuit: () => (quit = true),
     onOpen: (file, line) => opened.push([file, line]),
   });
-  view.handleInput("e");
-  assert.deepEqual(opened, []);
   const text = (): string => view.render(120).map(stripTerminalSequences).join("\n");
-  assert.match(text(), /Run 123-abc/);
-  view.handleInput("j");
   const shown = text();
   assert.match(shown, /Msg/);
   assert.match(shown, /2 ▎y = 2/);

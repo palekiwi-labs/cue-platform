@@ -43,6 +43,7 @@ export interface CodeExcerpt {
 
 const SEVERITY = ["critical", "high", "medium", "low", "info"];
 const CONTEXT_LINES = 3;
+const PROSE_WIDTH = 80;
 
 export function severityRank(s: string): number {
   const i = SEVERITY.indexOf(s.toLowerCase());
@@ -162,8 +163,6 @@ export interface FindingsOptions {
   onOpen: (file: string, line: number) => void;
 }
 
-type Selection = { kind: "run" } | { kind: "finding"; index: number };
-
 function severityColor(s: string): string {
   switch (s.toLowerCase()) {
     case "critical":
@@ -193,7 +192,6 @@ export class FindingsView implements Component {
   private cursor = 0;
   private offset = 0;
   private listOffset = 0;
-  private showVerification = false;
   private lastHeight = 20;
   private readonly highlighted = new Map<string, string[] | null>();
 
@@ -201,16 +199,17 @@ export class FindingsView implements Component {
 
   invalidate(): void {}
 
-  private selection(): Selection {
-    return this.cursor === 0 ? { kind: "run" } : { kind: "finding", index: this.cursor - 1 };
+  private current(): Finding | undefined {
+    return this.opts.run.findings[this.cursor];
   }
 
   private count(): number {
-    return this.opts.run.findings.length + 1;
+    return this.opts.run.findings.length;
   }
 
   private move(delta: number): void {
     const n = this.count();
+    if (n === 0) return;
     this.cursor = (this.cursor + delta + n) % n;
     this.offset = 0;
   }
@@ -235,25 +234,28 @@ export class FindingsView implements Component {
         this.offset = 0;
         return;
       case "G":
-        this.cursor = this.count() - 1;
+        this.cursor = Math.max(0, this.count() - 1);
         this.offset = 0;
+        return;
+      case "\x1b[1;2B":
+      case "J":
+        this.offset += 3;
+        return;
+      case "\x1b[1;2A":
+      case "K":
+        this.offset -= 3;
         return;
       case "\x04":
       case "\x1b[6~":
-      case "J":
+      case " ":
         this.offset += Math.floor(h / 2);
         return;
       case "\x15":
       case "\x1b[5~":
-      case "K":
         this.offset -= Math.floor(h / 2);
         return;
-      case "v":
-        this.showVerification = !this.showVerification;
-        return;
       case "e": {
-        const sel = this.selection();
-        const f = sel.kind === "finding" ? this.opts.run.findings[sel.index] : undefined;
+        const f = this.current();
         if (f?.file != null) this.opts.onOpen(f.file, f.line_start ?? 1);
         return;
       }
@@ -271,17 +273,18 @@ export class FindingsView implements Component {
   }
 
   private section(title: string, body: string, w: number): string[] {
-    const out = ["", `${C.accent}${BOLD}${title}${RESET}`];
-    for (const para of body.split("\n")) out.push(...wrapTextWithAnsi(`${C.text}${para}`, w));
+    const out = ["", `${C.accent}${BOLD}${title}${RESET}`, ""];
+    const pw = Math.min(w, PROSE_WIDTH);
+    for (const para of body.split("\n")) out.push(...wrapTextWithAnsi(`${C.text}${para}`, pw));
     return out;
   }
 
   private codeRows(f: Finding, w: number): string[] {
     const head = `${C.accent}${BOLD}Code${RESET} ${C.dim}at ${this.opts.run.head.slice(0, 10)}`;
-    if (f.file === null || f.line_start === null) return ["", head, `${C.faint}no file or line range`];
+    if (f.file === null || f.line_start === null) return ["", head, "", `${C.faint}no file or line range`];
     const src = this.opts.sources.get(f.file) ?? null;
     if (src === null) {
-      const out = ["", head, `${C.del}${f.file} not found at head`];
+      const out = ["", head, "", `${C.del}${f.file} not found at head`];
       if (f.snippet !== null) out.push(...f.snippet.split("\n").map((l) => `${C.dim}  ${l}`));
       return out;
     }
@@ -289,7 +292,7 @@ export class FindingsView implements Component {
     const end = f.line_end ?? start;
     const ex = excerpt(src, start, end);
     const hl = this.highlightedSource(f.file);
-    const out = ["", head];
+    const out = ["", head, ""];
     ex.lines.forEach((text, i) => {
       const n = ex.start + i;
       const inRange = n >= Math.min(start, end) && n <= Math.max(start, end);
@@ -302,7 +305,7 @@ export class FindingsView implements Component {
 
   private findingRows(f: Finding, w: number): string[] {
     const out: string[] = [];
-    out.push(...wrapTextWithAnsi(`${C.text}${BOLD}${f.title}`, w));
+    out.push(...wrapTextWithAnsi(`${C.text}${BOLD}${f.title}`, Math.min(w, PROSE_WIDTH)));
     const tag = (label: string, value: string | null, color = C.text): string =>
       value === null ? "" : `${C.dim}${label} ${color}${value}${RESET}   `;
     out.push(
@@ -318,25 +321,9 @@ export class FindingsView implements Component {
     out.push(...this.codeRows(f, w));
     if (f.suggested_fix !== null) out.push(...this.section("Suggested fix", f.suggested_fix, w));
     if (f.verification !== null) {
-      if (this.showVerification) {
-        out.push(...this.section(`Verification: ${f.verification.verdict}  (v hide)`, f.verification.reasoning, w));
-      } else {
-        out.push("", `${C.accent}${BOLD}▸ Verification${RESET}  ${C.dim}${f.verification.verdict}  (v show)`);
-      }
+      out.push(...this.section(`Verification: ${f.verification.verdict}`, f.verification.reasoning, w));
     }
-    return out;
-  }
-
-  private runRows(w: number): string[] {
-    const r = this.opts.run;
-    const out: string[] = [];
-    out.push(`${C.text}${BOLD}Run ${r.runId}`);
-    out.push(`${C.dim}context ${C.text}${r.context}`);
-    out.push(`${C.dim}target  ${C.text}${r.subject}`);
-    out.push(`${C.dim}base    ${C.text}${r.base.slice(0, 10)}   ${C.dim}head ${C.text}${r.head.slice(0, 10)}`);
-    out.push(`${C.dim}source  ${C.text}${r.source}`);
-    out.push(...this.section("Summary", JSON.stringify(r.summary, null, 2), w));
-    out.push(...this.section("Analysis", JSON.stringify(r.analysis, null, 2), w));
+    out.push("");
     return out;
   }
 
@@ -344,15 +331,12 @@ export class FindingsView implements Component {
     const r = this.opts.run;
     const out: string[] = [];
     out.push(C.barBg + fit(` ${C.text}${BOLD}Findings${RESET}${C.barBg} ${C.dim}${r.findings.length}`, w) + RESET);
-    const entries: { label: string; sub: string; color: string }[] = [
-      { label: "run summary", sub: r.subject, color: C.accent },
-      ...r.findings.map((f) => ({
-        label: f.title,
-        sub: `${f.severity.toUpperCase()}  ${location(f)}`,
-        color: severityColor(f.severity),
-      })),
-    ];
-    const per = 2;
+    const entries = r.findings.map((f) => ({
+      label: f.title,
+      sub: `${severityColor(f.severity)}${f.severity.toUpperCase()}  ${C.dim}${location(f)}`,
+    }));
+    if (entries.length === 0) out.push(` ${C.faint}no findings`);
+    const per = 3;
     const listH = Math.max(1, Math.floor((height - 1) / per));
     if (this.cursor < this.listOffset) this.listOffset = this.cursor;
     if (this.cursor >= this.listOffset + listH) this.listOffset = this.cursor - listH + 1;
@@ -362,7 +346,8 @@ export class FindingsView implements Component {
       const base = on ? C.selBg : "";
       const marker = on ? `${C.accent}▎` : " ";
       out.push(base + fit(`${marker}${on ? `${C.text}${BOLD}` : C.text}${e.label}`, w) + RESET);
-      out.push(base + fit(`${marker}${e.color}${e.sub}`, w) + RESET);
+      out.push(base + fit(`${marker}${e.sub}`, w) + RESET);
+      out.push(" ".repeat(w));
     }
     while (out.length < height) out.push(" ".repeat(w));
     return out;
@@ -384,9 +369,8 @@ export class FindingsView implements Component {
     const sideW = Math.min(56, Math.max(28, Math.floor(width * 0.34)));
     const mainW = width - sideW - 1;
     const pad = 2;
-    const sel = this.selection();
-    const finding = sel.kind === "finding" ? r.findings[sel.index] : undefined;
-    const rows = finding !== undefined ? this.findingRows(finding, mainW - pad) : this.runRows(mainW - pad);
+    const finding = this.current();
+    const rows = finding !== undefined ? this.findingRows(finding, mainW - pad) : [];
     this.offset = Math.max(0, Math.min(this.offset, Math.max(0, rows.length - bodyH)));
     const side = this.renderList(bodyH, sideW);
     for (let i = 0; i < bodyH; i++) {
@@ -395,10 +379,12 @@ export class FindingsView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${k("j/k", "finding")}${k("J/K", "scroll")}${k("v", "verification")}${k("e", "open")}${k("q", "quit")}`;
-    const pos = sel.kind === "run" ? "run " : `finding ${sel.index + 1}/${r.findings.length} `;
-    const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
-    out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
+    const keys = ` ${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
+    const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
+    const pos = r.findings.length === 0 ? "" : `finding ${this.cursor + 1}/${r.findings.length} `;
+    const right = `${more}${C.dim}${pos}`;
+    const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
+    out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${right}`, width) + RESET);
     return out;
   }
 }
