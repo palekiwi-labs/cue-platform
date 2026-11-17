@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
-import { Editor } from "@earendil-works/pi-tui"
+import { Editor, setKittyProtocolActive } from "@earendil-works/pi-tui"
 import { TurnComments } from "./comments"
 import { COPY_KEY, faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
@@ -369,6 +369,32 @@ describe("TurnReader chunk comments", () => {
     reader.render(60)
     return reader
   }
+
+  describe("alt+enter inserts a newline in every terminal encoding", () => {
+    afterEach(() => setKittyProtocolActive(false))
+    const variants: [string, string, boolean][] = [
+      ["legacy ESC CR", "\x1b\r", false],
+      ["legacy ESC CR under the kitty protocol", "\x1b\r", true],
+      ["kitty / tmux csi-u", "\x1b[13;3u", false],
+      ["kitty / tmux csi-u under the kitty protocol", "\x1b[13;3u", true],
+      ["kitty csi-u with press event type", "\x1b[13;3:1u", true],
+      ["xterm modifyOtherKeys", "\x1b[27;3;13~", false],
+    ]
+    for (const [name, data, kitty] of variants) {
+      test(name, () => {
+        setKittyProtocolActive(kitty)
+        const comments = new TurnComments()
+        const reader = open(["one"], comments)
+        reader.comment(editor())
+        type(reader, "ab")
+        reader.composeInput(data)
+        type(reader, "cd")
+        expect(reader.composing()).toBe(true)
+        reader.composeInput("\r")
+        expect(comments.entries()).toEqual([["0:0", { quote: "one", text: "ab\ncd" }]])
+      })
+    }
+  })
 
   test("c composes on the focused chunk and enter saves it inline under the chunk", () => {
     const comments = new TurnComments()
