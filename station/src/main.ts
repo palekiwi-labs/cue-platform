@@ -20,10 +20,10 @@ import type { PacketFile } from "./packet.js";
 import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
 import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
-import { FindingsTab } from "./pr-tabs.js";
+import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
-import { loadWalkthrough, walkthroughView } from "./walkthrough.js";
+import { loadWalkthrough, sectionFiles, WalkthroughView } from "./walkthrough.js";
 
 let contextOverride: string | null = null;
 
@@ -205,31 +205,28 @@ class Router {
 function prTabs(
   router: Router,
   review: Review,
-  chosen: Map<number, string>,
+  chosen: Map<string, string>,
   onQuit: () => void,
   quitLabel?: string,
 ): TabsScreen {
   const pr = review.pr;
   const repo = review.cueDir;
   if (pr === null || repo === null) throw new Error("not a pull request review");
+  const host: PrTabHost = {
+    repo,
+    repoSlug: review.repo,
+    pr,
+    prHead: review.packet.head_sha,
+    prWorktree: review.repoPath,
+    chosen,
+    onQuit,
+    openPath: (cwd, path, line) => openPath(router.tui, cwd, path, line),
+    showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+  };
   return new TabsScreen([
     { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },
-    {
-      label: "findings",
-      screen: () =>
-        new FindingsTab({
-          repo,
-          repoSlug: review.repo,
-          pr,
-          prHead: review.packet.head_sha,
-          prWorktree: review.repoPath,
-          chosen,
-          onQuit,
-          openPath: (cwd, path, line) => openPath(router.tui, cwd, path, line),
-          showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
-        }),
-    },
-    { label: "walkthrough", screen: () => walkthroughView(null, prContext(review.repo, pr), onQuit) },
+    { label: "findings", screen: () => findingsTab(host) },
+    { label: "walkthrough", screen: () => walkthroughTab(host) },
   ]);
 }
 
@@ -242,8 +239,18 @@ function showReview(review: Review): void {
 
 function showWalkthrough(address: string): void {
   const walkthrough = loadWalkthrough(address);
+  const repoPath = process.cwd();
+  if (!headInRepo(repoPath, walkthrough.head)) {
+    throw new Error(`head ${walkthrough.head.slice(0, 10)} is not in this repository; run from a checkout of the reviewed repo (git fetch may help)`);
+  }
   const router = new Router();
-  router.show(walkthroughView(walkthrough, address, () => router.quit()));
+  router.show(new WalkthroughView({
+    walkthrough,
+    sources: loadSources(repoPath, walkthrough.head, sectionFiles(walkthrough)),
+    subtitle: address,
+    onQuit: () => router.quit(),
+    onOpen: (file, line) => openPath(router.tui, repoPath, file, line),
+  }));
   router.tui.start();
 }
 
@@ -304,7 +311,7 @@ function showPrs(repo: string): void {
     });
   });
   const toList = (): void => router.show(list);
-  const chosen = new Map<number, string>();
+  const chosen = new Map<string, string>();
   const open = async (pr: PrSummary): Promise<void> => {
     if (busy) return;
     busy = true;
