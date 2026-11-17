@@ -95,6 +95,7 @@ interface Chunk {
   end: number
   key: string
   quote: string
+  text: string
 }
 
 interface Composer {
@@ -158,6 +159,13 @@ export class TurnReader implements Component {
     this.current = 0
   }
 
+  /** The texts to speak: the focused chunk's source in focus mode, else the messages displayed. */
+  spoken(): readonly string[] {
+    if (!this.focus) return this.shown()
+    const chunk = this.cache && this.body(this.cache.width).chunks[this.current]
+    return chunk ? [chunk.text] : []
+  }
+
   /** Whether chunk focus is on. */
   focused(): boolean {
     return this.focus
@@ -212,7 +220,7 @@ export class TurnReader implements Component {
             }
           }
         }
-        body.chunks.push({ start, end: body.lines.length - 1, key, quote: sourceText(chunk) })
+        body.chunks.push({ start, end: body.lines.length - 1, key, quote: sourceText(chunk), text: chunk.text })
       }
     })
     this.current = Math.min(this.current, Math.max(0, body.chunks.length - 1))
@@ -377,7 +385,7 @@ export class TurnReader implements Component {
       : [
           [position, 2],
           [n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"}` : "", 4],
-          [this.speakable ? "s speak" : "", 3],
+          [this.speakable ? (this.focus ? "s speak chunk" : "s speak") : "", 3],
           [`${FOCUS_KEY} ${this.focus ? "unfocus" : "focus"}`, 9],
           [this.focus ? `${COMMENT_KEY} comment` : "", 9],
           [this.focusedComment() ? `${DELETE_KEY} delete` : "", 9],

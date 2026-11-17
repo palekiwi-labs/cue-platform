@@ -532,3 +532,56 @@ describe("TurnReader chunk comments", () => {
     expect(narrow).not.toContain("s speak")
   })
 })
+
+describe("TurnReader speech", () => {
+  test("outside focus mode speaks the displayed messages", () => {
+    const reader = new TurnReader(plain, md, ["first", "one\n\ntwo"], () => 40, false, true)
+    reader.render(60)
+    expect(reader.spoken()).toEqual(["one\n\ntwo"])
+    reader.toggle()
+    expect(reader.spoken()).toEqual(["first", "one\n\ntwo"])
+  })
+
+  test("in focus mode speaks only the focused chunk, following navigation", () => {
+    const reader = new TurnReader(plain, md, ["# Title\nintro\n\nsecond\n\nthird"], () => 40, false, true)
+    reader.render(60)
+    reader.toggleFocus()
+    reader.render(60)
+    expect(reader.spoken()).toEqual(["# Title\nintro"])
+    reader.move(1)
+    expect(reader.spoken()).toEqual(["second"])
+    reader.move(1)
+    reader.move(1)
+    expect(reader.spoken()).toEqual(["third"])
+    reader.toggleFocus()
+    expect(reader.spoken()).toEqual(["# Title\nintro\n\nsecond\n\nthird"])
+  })
+
+  test("a focused chunk is spoken without its comment, a list continuation dedented", () => {
+    const comments = new TurnComments()
+    comments.save("0:1", "  more", "my note")
+    const reader = new TurnReader(plain, md, ["- item\n\n  more"], () => 40, false, true, comments)
+    reader.render(60)
+    reader.toggleFocus()
+    reader.move(1)
+    expect(reader.render(60).some((l) => l.includes("my note"))).toBe(true)
+    expect(reader.spoken()).toEqual(["more"])
+  })
+
+  test("after toggling messages in focus mode speaks a chunk of the new view before a render", () => {
+    const reader = new TurnReader(plain, md, ["first\n\nalpha", "second"], () => 40, false, true)
+    reader.render(60)
+    reader.toggleFocus()
+    reader.toggle()
+    expect(reader.spoken()).toEqual(["first"])
+  })
+
+  test("hints that s speaks the chunk while focused", () => {
+    const reader = new TurnReader(plain, md, ["one\n\ntwo"], () => 40, false, true)
+    expect(reader.render(80).at(-1)).toContain("s speak · f focus")
+    reader.toggleFocus()
+    expect(reader.render(80).at(-1)).toContain("s speak chunk · f unfocus")
+    reader.toggleFocus()
+    expect(reader.render(80).at(-1)).not.toContain("s speak chunk")
+  })
+})
