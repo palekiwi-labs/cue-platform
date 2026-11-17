@@ -42,7 +42,7 @@ test("parseWalkthroughComments tolerates garbage and drops invalid entries", () 
   const parsed = parseWalkthroughComments(
     JSON.stringify({
       schema: "station/walkthrough-comments@1",
-      comments: [draft, { ...draft, step: -1 }, { ...draft, section: "0" }, { id: "x" }],
+      comments: [draft, { ...draft, walkthrough: 7 }, { ...draft, walkthrough: null }, { ...draft, step: -1 }, { ...draft, section: "0" }, { id: "x" }],
     }),
   );
   assert.deepEqual(parsed.comments, [draft]);
@@ -91,14 +91,14 @@ interface Harness {
   hub: Drafts;
 }
 
-function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness {
+function harness(w: Walkthrough, initial = emptyWalkthroughComments(), load?: (address: string) => Walkthrough): Harness {
   const saved: WalkthroughCommentState[] = [];
   const composed: ComposeRequest[] = [];
   const reply = { text: "why per person?" as string | null };
   const drafts = new WalkthroughDrafts(initial, (s) => saved.push(s), () => w, (req, done) => {
     composed.push(req);
     done(reply.text);
-  });
+  }, load);
   const diff: PaneEntry[] = [];
   const edited: string[] = [];
   const submitted: RoundComment[][] = [];
@@ -149,6 +149,7 @@ test("c comments on the focused step and shows it above the step", () => {
     { chunk: "r", section: 0, title: "Room list price", step: 1, text: "why per person?" },
   );
   assert.equal(d?.fingerprint, stepFingerprint("Now it is per person."));
+  assert.equal(d?.walkthrough, ADDR);
   const out = screen(v);
   assert.match(out, /┃ comment  step 2\/3.*\n.*┃ why per person\?.*\n.*Now it is per person\./);
   assert.ok(out.indexOf("Before, rounding") < out.indexOf("┃ comment"));
@@ -277,6 +278,7 @@ test("S submits diff and walkthrough drafts in one round@2", () => {
   assert.deepEqual(round.map((c) => c.target), ["diff", "walkthrough", "walkthrough"]);
   assert.deepEqual(round[1], {
     target: "walkthrough",
+    walkthrough: ADDR,
     chunk: "r",
     section: "Room list price",
     step: 0,
@@ -289,6 +291,7 @@ test("S submits diff and walkthrough drafts in one round@2", () => {
   });
   assert.deepEqual(round[2], {
     target: "walkthrough",
+    walkthrough: ADDR,
     chunk: "gone",
     section: "Room list price",
     step: 2,
@@ -303,4 +306,110 @@ test("S submits diff and walkthrough drafts in one round@2", () => {
   assert.equal(saved.at(-1)?.comments.length, 0);
   const target = { repo: "org/repo", key: "k", title: "t", branch: "b", pr: 7 };
   assert.equal(buildRound(target, "b", "h", round, 9).schema, "station/round@2");
+});
+
+const OTHER = "org/repo/review-pr-7/review/walkthrough/other.json";
+
+function owned(walkthrough: string, overrides: Partial<WalkthroughDraft> = {}): WalkthroughDraft {
+  return { ...draft, walkthrough, step: 1, ...overrides };
+}
+
+test("addressed and legacy drafts parse together without a schema bump", () => {
+  const comments = [draft, owned(OTHER)];
+  const state: WalkthroughCommentState = { schema: "station/walkthrough-comments@1", comments };
+  assert.deepEqual(parseWalkthroughComments(JSON.stringify(state)), state);
+});
+
+test("legacy drafts bind once and persist their resolved walkthrough", () => {
+  const { drafts, saved } = harness(walk(STEPS), { schema: "station/walkthrough-comments@1", comments: [draft] });
+  assert.equal(saved.length, 0);
+  drafts.current();
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]?.comments[0]?.walkthrough, ADDR);
+  drafts.use({ ...walk(STEPS), address: OTHER });
+  assert.equal(drafts.all()[0]?.walkthrough, ADDR);
+  assert.equal(saved.length, 1);
+});
+
+test("other walkthroughs load lazily once and supply their own step metadata", () => {
+  const original = walk(STEPS);
+  original.chunks[1]!.sections[0]!.steps[1]!.code = { path: "original.ts", lines: [8, 9], rev: original.head, revKind: "head" };
+  const shown = { ...walk(["different"]), address: OTHER };
+  const loads: string[] = [];
+  const { drafts } = harness(shown, {
+    schema: "station/walkthrough-comments@1",
+    comments: [owned(ADDR), owned(ADDR, { id: "d2" })],
+  }, (address) => {
+    loads.push(address);
+    return original;
+  });
+  assert.deepEqual(loads, []);
+  assert.deepEqual(drafts.entries().map((e) => [e.outdated, e.where]), [[false, "step 2/3"], [false, "step 2/3"]]);
+  const comment = drafts.round()[0]!.comment;
+  assert.equal(comment.target, "walkthrough");
+  if (comment.target !== "walkthrough") return;
+  assert.equal(comment.walkthrough, ADDR);
+  assert.equal(comment.first_line, STEPS[1]);
+  assert.equal(comment.path, "original.ts");
+  assert.deepEqual(comment.lines, [8, 9]);
+  assert.deepEqual(loads, [ADDR]);
+  drafts.use(original);
+  assert.equal(drafts.at({ chunk: 1, section: 0, step: 1 })?.id, "d1");
+});
+
+test("missing and changed owning walkthroughs are outdated even when the shown step matches", () => {
+  for (const missing of [true, false]) {
+    const loads: string[] = [];
+    const { drafts } = harness(walk(STEPS), {
+      schema: "station/walkthrough-comments@1",
+      comments: [owned(OTHER)],
+    }, (address) => {
+      loads.push(address);
+      if (missing) throw new Error("missing walkthrough");
+      return { ...walk(["changed", "changed", "changed"]), address: OTHER };
+    });
+    assert.equal(drafts.entries()[0]?.outdated, true);
+    assert.equal(drafts.round()[0]?.comment.outdated, true);
+    assert.equal(drafts.at({ chunk: 1, section: 0, step: 1 }), undefined);
+    assert.deepEqual(loads, [OTHER]);
+  }
+});
+
+test("only shown walkthrough drafts render; enter on another walkthrough gives a picker hint", () => {
+  const state: WalkthroughCommentState = {
+    schema: "station/walkthrough-comments@1",
+    comments: [owned(OTHER)],
+  };
+  const { v, drafts, saved, reply } = harness(walk(STEPS), state, () => ({ ...walk(STEPS), address: OTHER }));
+  press(v, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, DOWN);
+  assert.doesNotMatch(screen(v), /┃/);
+  press(v, "C", "\r");
+  assert.match(screen(v), /written on another walkthrough, select it with P/);
+  assert.equal(v.focusedSidebar, true);
+  assert.equal(v.position, 4);
+  assert.equal(v.focusedStep, 1);
+  press(v, "E");
+  assert.equal(saved.at(-1)?.comments[0]?.walkthrough, OTHER);
+  assert.equal(v.handleEscape(), true);
+  reply.text = "on this walkthrough";
+  press(v, "c");
+  assert.equal(drafts.all().length, 2);
+  assert.equal(drafts.at({ chunk: 1, section: 0, step: 1 })?.walkthrough, ADDR);
+  assert.match(screen(v), /┃ on this walkthrough/);
+  assert.doesNotMatch(screen(v), /┃ why per person/);
+});
+
+test("unresolved legacy drafts remain accepted and outdated without inventing an address", () => {
+  const drafts = new WalkthroughDrafts(
+    { schema: "station/walkthrough-comments@1", comments: [draft] },
+    () => {},
+    () => null,
+    () => {},
+  );
+  assert.equal(drafts.round()[0]?.comment.outdated, true);
+  const comment = drafts.round()[0]!.comment;
+  if (comment.target !== "walkthrough") assert.fail("expected walkthrough comment");
+  assert.equal(comment.walkthrough, null);
+  drafts.use(walk(STEPS));
+  assert.equal(drafts.all()[0]?.walkthrough, ADDR);
 });

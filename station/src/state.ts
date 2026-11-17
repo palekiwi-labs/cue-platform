@@ -109,9 +109,10 @@ export function saveComments(key: string, comments: CommentState): void {
   writeCache("comments", key, comments);
 }
 
-/** A draft comment on one step of a walkthrough section. */
+/** A draft on a walkthrough step; legacy entries omit the walkthrough address. */
 export interface WalkthroughDraft {
   id: string;
+  walkthrough?: string;
   chunk: string;
   section: number;
   section_title: string;
@@ -140,6 +141,7 @@ function validWalkthroughDraft(c: unknown): c is WalkthroughDraft {
   const index = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v >= 0;
   return (
     ["id", "chunk", "section_title", "fingerprint", "text"].every((k) => typeof d[k] === "string") &&
+    (d.walkthrough === undefined || typeof d.walkthrough === "string") &&
     index(d.section) &&
     index(d.step) &&
     typeof d.created_at === "number"

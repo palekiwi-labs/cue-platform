@@ -393,7 +393,12 @@ export class WalkthroughView implements Component {
 
   private jumpTo(id: string): void {
     const drafts = this.opts.drafts;
+    drafts?.current();
     const draft = drafts?.all().find((d) => d.id === id);
+    if (draft?.walkthrough !== undefined && draft.walkthrough !== this.opts.walkthrough.address) {
+      this.notice = "written on another walkthrough, select it with P";
+      return;
+    }
     const ref = draft === undefined ? null : (drafts?.locate(draft) ?? null);
     if (ref === null) return;
     const index = this.rows.findIndex((r) => r.kind === "section" && r.chunk === ref.chunk && r.section === ref.section);

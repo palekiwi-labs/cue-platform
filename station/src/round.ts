@@ -19,13 +19,16 @@ export interface DiffRoundComment {
 }
 
 /**
- * A comment on one walkthrough step: `chunk` is the walkthrough chunk id,
- * `section` the section title and `step` the zero-based step index in it.
- * `first_line`, `path` and `lines` describe the step and are null when it is
- * outdated (the walkthrough was regenerated) or has no code snippet.
+ * A comment on one walkthrough step: `walkthrough` is its canonical address
+ * (null only for a legacy draft with no resolved walkthrough), `chunk` is the
+ * walkthrough chunk id, `section` the title and `step` its zero-based index.
+ * `first_line` describes the step; `path` and `lines` describe its code snippet
+ * when present. All three are null when the draft is outdated because its own
+ * walkthrough is missing or its step fingerprint no longer matches.
  */
 export interface WalkthroughRoundComment {
   target: "walkthrough";
+  walkthrough: string | null;
   chunk: string;
   section: string;
   step: number;
