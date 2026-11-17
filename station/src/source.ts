@@ -73,7 +73,7 @@ export function prRepo(cwd: string): string | null {
   }
 }
 
-async function ensureWorktree(repo: string, path: string, sha: string): Promise<void> {
+export async function ensureWorktree(repo: string, path: string, sha: string): Promise<void> {
   if (existsSync(path)) {
     await runAsync(path, ["checkout", "-q", "--detach", sha]);
     return;

@@ -20,6 +20,10 @@ import type { PacketFile } from "./packet.js";
 import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
 import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
+import { FindingsTab } from "./pr-tabs.js";
+import { prContext } from "./pr-review.js";
+import { TabsScreen } from "./tabs.js";
+import { loadWalkthrough, walkthroughView } from "./walkthrough.js";
 
 let contextOverride: string | null = null;
 
@@ -32,6 +36,7 @@ function usage(code: number): never {
   out("       station <base>..<head>   changes in a commit range");
   out("       station clean            remove review worktrees of closed PRs");
   out("       station findings <run>   verified findings of a review run (<ctx address>/review/runs/<run_id>)");
+  out("       station walkthrough <w>  guided walkthrough (<ctx address>/review/walkthrough/<id>.json)");
   out("       station demo             built-in demo diff");
   out("");
   out("  --context <slug>   cue context for submitted comment rounds (default review-<branch-slug>)");
@@ -197,9 +202,48 @@ class Router {
   }
 }
 
+function prTabs(
+  router: Router,
+  review: Review,
+  chosen: Map<number, string>,
+  onQuit: () => void,
+  quitLabel?: string,
+): TabsScreen {
+  const pr = review.pr;
+  const repo = review.cueDir;
+  if (pr === null || repo === null) throw new Error("not a pull request review");
+  return new TabsScreen([
+    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },
+    {
+      label: "findings",
+      screen: () =>
+        new FindingsTab({
+          repo,
+          repoSlug: review.repo,
+          pr,
+          prHead: review.packet.head_sha,
+          prWorktree: review.repoPath,
+          chosen,
+          onQuit,
+          openPath: (cwd, path, line) => openPath(router.tui, cwd, path, line),
+          showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+        }),
+    },
+    { label: "walkthrough", screen: () => walkthroughView(null, prContext(review.repo, pr), onQuit) },
+  ]);
+}
+
 function showReview(review: Review): void {
   const router = new Router();
-  router.show(changesView(router, review, () => router.quit()));
+  const quit = (): void => router.quit();
+  router.show(review.pr !== null ? prTabs(router, review, new Map(), quit) : changesView(router, review, quit));
+  router.tui.start();
+}
+
+function showWalkthrough(address: string): void {
+  const walkthrough = loadWalkthrough(address);
+  const router = new Router();
+  router.show(walkthroughView(walkthrough, address, () => router.quit()));
   router.tui.start();
 }
 
@@ -260,6 +304,7 @@ function showPrs(repo: string): void {
     });
   });
   const toList = (): void => router.show(list);
+  const chosen = new Map<number, string>();
   const open = async (pr: PrSummary): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -267,7 +312,7 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(changesView(router, review, toList, "back"), toList);
+      router.show(prTabs(router, review, chosen, toList, "back"), toList);
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
@@ -310,7 +355,9 @@ function showFindings(address: string): void {
   router.tui.start();
 }
 
-async function resolve(args: string[]): Promise<Review | { prs: string } | { findings: string }> {
+type Target = Review | { prs: string } | { findings: string } | { walkthrough: string };
+
+async function resolve(args: string[]): Promise<Target> {
   const [cmd, arg, extra] = args;
   if (extra !== undefined) usage(2);
   if (cmd === undefined) {
@@ -329,6 +376,7 @@ async function resolve(args: string[]): Promise<Review | { prs: string } | { fin
   }
   if (cmd === "demo" && arg === undefined) return fromDemo();
   if (cmd === "findings" && arg !== undefined) return { findings: arg };
+  if (cmd === "walkthrough" && arg !== undefined) return { walkthrough: arg };
   if (cmd === "pr" && arg !== undefined && /^\d+$/.test(arg)) return fromPr(process.cwd(), arg);
   if (cmd.includes("..") && arg === undefined) return fromRange(process.cwd(), cmd);
   usage(2);
@@ -344,11 +392,15 @@ export async function main(): Promise<void> {
     args.splice(flag, 2);
   }
   if (args[0] === "--help" || args[0] === "-h") usage(0);
-  let target: Review | { prs: string } | { findings: string };
+  let target: Target;
   try {
     target = await resolve(args);
     if ("findings" in target) {
       showFindings(target.findings);
+      return;
+    }
+    if ("walkthrough" in target) {
+      showWalkthrough(target.walkthrough);
       return;
     }
   } catch (e) {
