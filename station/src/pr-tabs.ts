@@ -14,7 +14,7 @@ export interface PrTabHost {
   prWorktree: string;
   chosen: Map<string, string>;
   onQuit: () => void;
-  openPath: (cwd: string, path: string, line: number) => void;
+  openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
 }
 
@@ -39,7 +39,7 @@ interface Producer<E extends { address: string }> {
   folder: string;
   list(): E[];
   pickerText(entries: E[]): string;
-  view(address: string, open: (head: string, file: string, line: number) => void): TabScreen;
+  view(address: string, open: (head: string, file: string, line: number, base?: string) => void): TabScreen;
 }
 
 /**
@@ -91,7 +91,7 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
 
   private load(address: string): void {
     try {
-      this.inner = this.producer.view(address, (head, file, line) => void this.open(head, file, line));
+      this.inner = this.producer.view(address, (head, file, line, base) => void this.open(head, file, line, base));
       this.loaded = true;
       this.host.chosen.set(this.key, address);
     } catch (e) {
@@ -99,10 +99,10 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
     }
   }
 
-  private async open(head: string, file: string, line: number): Promise<void> {
+  private async open(head: string, file: string, line: number, base?: string): Promise<void> {
     try {
       const cwd = head === this.host.prHead ? this.host.prWorktree : await findingsWorktree(this.host.repo, this.host.pr, head);
-      this.host.openPath(cwd, file, line);
+      this.host.openPath(cwd, file, line, base);
     } catch (e) {
       this.host.showPopup({ title: "open", text: e instanceof Error ? e.message : String(e), error: true, footer: "any key" }, true);
     }
@@ -144,7 +144,7 @@ export function findingsTab(host: PrTabHost): TabScreen {
         run,
         sources: loadSources(host.repo, run.head, files),
         onQuit: host.onQuit,
-        onOpen: (file, line) => open(run.head, file, line),
+        onOpen: (file, line) => open(run.head, file, line, run.base),
       });
     },
   });
@@ -164,7 +164,7 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
         sources: loadWalkthroughSources(host.repo, walkthrough),
         subtitle: prContext(host.repoSlug, host.pr),
         onQuit: host.onQuit,
-        onOpen: (rev, file, line) => open(rev, file, line),
+        onOpen: (rev, file, line) => open(rev, file, line, walkthrough.base),
       });
     },
   });

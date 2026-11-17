@@ -51,14 +51,23 @@ function currentHead(repoPath: string): string | null {
   }
 }
 
-function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line: number): void {
-  openPath(tui, repoPath, file.status === "deleted" ? (file.old_path ?? file.path) : file.path, line);
+function openEditor(
+  tui: TuiAltScreen,
+  repoPath: string,
+  file: PacketFile,
+  line: number,
+  base?: string,
+): void {
+  openPath(tui, repoPath, file.status === "deleted" ? (file.old_path ?? file.path) : file.path, line, base);
 }
 
-function openPath(tui: TuiAltScreen, repoPath: string, path: string, line: number): void {
+function openPath(tui: TuiAltScreen, repoPath: string, path: string, line: number, base?: string): void {
   const editor = process.env.EDITOR ?? "nvim";
+  const env = { ...process.env };
+  if (base !== undefined && base !== "" && headInRepo(repoPath, base)) env.STATION_BASE = base;
+  else delete env.STATION_BASE;
   tui.stop({ preserveScreen: true });
-  spawnSync(editor, [`+${line}`, path], { cwd: repoPath, stdio: "inherit" });
+  spawnSync(editor, [`+${line}`, path], { cwd: repoPath, stdio: "inherit", env });
   tui.start();
   tui.requestRender(true);
 }
@@ -83,7 +92,7 @@ function changesView(
     onCopy: (text) => process.stdout.write(osc52(text)),
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
-    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line),
+    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line, review.packet.base_sha),
     onSubmit: (comments, done) => void submit(router, review, comments, done),
   });
 }
@@ -226,7 +235,7 @@ function prTabs(
     prWorktree: review.repoPath,
     chosen,
     onQuit,
-    openPath: (cwd, path, line) => openPath(router.tui, cwd, path, line),
+    openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
   };
   return new TabsScreen([
@@ -256,7 +265,7 @@ function showWalkthrough(address: string): void {
     subtitle: address,
     onQuit: () => router.quit(),
     onOpen: (rev, file, line) => {
-      if (rev === walkthrough.head) openPath(router.tui, repoPath, file, line);
+      if (rev === walkthrough.head) openPath(router.tui, repoPath, file, line, walkthrough.base);
       else router.showPopup({ title: "open", text: `${file} is at ${rev.slice(0, 10)}, not the head; open it from station pr`, error: true, footer: "any key" }, true);
     },
   }));
@@ -366,7 +375,7 @@ function showFindings(address: string): void {
   const router = new Router();
   router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files),
     onQuit: () => router.quit(),
-    onOpen: (file, line) => openPath(router.tui, repoPath, file, line),
+    onOpen: (file, line) => openPath(router.tui, repoPath, file, line, findingsRun.base),
   }));
   router.tui.start();
 }
