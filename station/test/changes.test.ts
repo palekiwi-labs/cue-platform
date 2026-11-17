@@ -4,7 +4,7 @@ import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "../src/changes.js";
 import { Drafts } from "../src/drafts.js";
 import { buildPacketFromDiff } from "../src/gen.js";
-import { reviewContext, type RoundComment, slugify } from "../src/round.js";
+import { type DiffRoundComment, reviewContext, type RoundComment, slugify } from "../src/round.js";
 import {
   type CommentState,
   emptyComments,
@@ -329,7 +329,8 @@ test("S in the navigator submits every listed draft and clears them", () => {
     comments: [{ id: "x", path: "src/a.ts", chunk: "gone", from: null, to: null, text: "old", created_at: 0 }],
   });
   keys(v, "\r", "j", "V", "j", "c", "C", "S");
-  const round = submitted[0] ?? [];
+  const round = (submitted[0] ?? []) as DiffRoundComment[];
+  assert.deepEqual(round.map((c) => c.target), ["diff", "diff"]);
   assert.equal(round.length, 2);
   const lines = round[0];
   assert.equal(lines?.anchor, "lines");
@@ -357,7 +358,7 @@ test("failed submit keeps the drafts", () => {
 test("whole-chunk comment carries both line spans and the full body", () => {
   const { v, submitted } = view();
   keys(v, "c", "C", "S");
-  const c = submitted[0]?.[0];
+  const c = submitted[0]?.[0] as DiffRoundComment | undefined;
   assert.deepEqual([c?.old_lines, c?.new_lines], [[1, 2], [1, 3]]);
   assert.equal(c?.snippet, " context\n-old\n+new\n+added");
 });

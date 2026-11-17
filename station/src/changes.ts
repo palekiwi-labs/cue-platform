@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import type { Highlights } from "./highlight.js";
-import type { RoundComment } from "./round.js";
+import type { DiffRoundComment } from "./round.js";
 import { CommentsPane, type Drafts } from "./drafts.js";
 import { chunkFingerprint, type CommentState, type DraftComment, type FoldState } from "./state.js";
 
@@ -574,9 +574,9 @@ export class ChangesView implements Component {
     this.sideFocus = false;
   }
 
-  private roundComment(e: CommentEntry): RoundComment {
+  private roundComment(e: CommentEntry): DiffRoundComment {
     const c = e.comment;
-    const base = { path: c.path, chunk: c.chunk, text: c.text, created_at: c.created_at };
+    const base = { target: "diff" as const, path: c.path, chunk: c.chunk, text: c.text, created_at: c.created_at };
     const ci = e.chunk;
     if (ci === null) {
       const anchor = c.from === null ? "chunk" : "lines";

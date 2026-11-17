@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnAsync } from "./git.js";
 
-export interface RoundComment {
+/** A comment on diff lines or a whole diff chunk; `chunk` is the chunk fingerprint. */
+export interface DiffRoundComment {
+  target: "diff";
   path: string;
   chunk: string;
   outdated: boolean;
@@ -16,6 +18,27 @@ export interface RoundComment {
   created_at: number;
 }
 
+/**
+ * A comment on one walkthrough step: `chunk` is the walkthrough chunk id,
+ * `section` the section title and `step` the zero-based step index in it.
+ * `first_line`, `path` and `lines` describe the step and are null when it is
+ * outdated (the walkthrough was regenerated) or has no code snippet.
+ */
+export interface WalkthroughRoundComment {
+  target: "walkthrough";
+  chunk: string;
+  section: string;
+  step: number;
+  first_line: string | null;
+  path: string | null;
+  lines: [number, number] | null;
+  outdated: boolean;
+  text: string;
+  created_at: number;
+}
+
+export type RoundComment = DiffRoundComment | WalkthroughRoundComment;
+
 export interface RoundTarget {
   repo: string;
   key: string;
@@ -24,8 +47,9 @@ export interface RoundTarget {
   pr: number | null;
 }
 
+/** One submitted review round: every draft comment of the review, diff and walkthrough. */
 export interface Round {
-  schema: "station/round@1";
+  schema: "station/round@2";
   repo: string;
   review_key: string;
   title: string;
@@ -39,7 +63,7 @@ export interface Round {
 
 export function buildRound(target: RoundTarget, baseSha: string, headSha: string, comments: RoundComment[], now: number): Round {
   return {
-    schema: "station/round@1",
+    schema: "station/round@2",
     repo: target.repo,
     review_key: target.key,
     title: target.title,

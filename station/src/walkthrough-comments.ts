@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ComposeRequest } from "./changes.js";
 import type { DraftGroup, PaneEntry } from "./drafts.js";
-import type { RoundComment } from "./round.js";
+import type { RoundComment, WalkthroughRoundComment } from "./round.js";
 import { stepFingerprint, type WalkthroughCommentState, type WalkthroughDraft } from "./state.js";
 import type { Walkthrough, WalkthroughStep } from "./walkthrough.js";
 
@@ -103,7 +103,23 @@ export class WalkthroughDrafts implements DraftGroup {
   }
 
   round(): { id: string; comment: RoundComment }[] {
-    return [];
+    return this.ordered().map(({ draft, ref }) => {
+      const step = ref === null ? null : (this.step(ref)?.step ?? null);
+      const first = step?.markdown.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
+      const comment: WalkthroughRoundComment = {
+        target: "walkthrough",
+        chunk: draft.chunk,
+        section: draft.section_title,
+        step: draft.step,
+        first_line: first,
+        path: step?.code?.path ?? null,
+        lines: step?.code?.lines ?? null,
+        outdated: ref === null,
+        text: draft.text,
+        created_at: draft.created_at,
+      };
+      return { id: draft.id, comment };
+    });
   }
 
   private set(comments: WalkthroughDraft[]): void {

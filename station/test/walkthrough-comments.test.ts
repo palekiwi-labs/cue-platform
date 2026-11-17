@@ -16,7 +16,7 @@ import {
 import { parseWalkthrough, type Walkthrough, WalkthroughView } from "../src/walkthrough.js";
 import { WalkthroughDrafts } from "../src/walkthrough-comments.js";
 import { Drafts, type PaneEntry } from "../src/drafts.js";
-import type { RoundComment } from "../src/round.js";
+import { buildRound, type RoundComment } from "../src/round.js";
 
 const draft: WalkthroughDraft = {
   id: "d1",
@@ -88,6 +88,7 @@ interface Harness {
   diff: PaneEntry[];
   edited: string[];
   submitted: RoundComment[][];
+  hub: Drafts;
 }
 
 function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness {
@@ -121,7 +122,7 @@ function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness 
     drafts,
     comments: hub,
   });
-  return { v, drafts, saved, composed, reply, diff, edited, submitted };
+  return { v, drafts, saved, composed, reply, diff, edited, submitted, hub };
 }
 
 function screen(v: WalkthroughView): string {
@@ -241,4 +242,65 @@ test("C toggles the pane back to the outline and esc returns to the steps", () =
   assert.match(side(v), /Walkthrough 2 chunks/);
   assert.equal(v.handleEscape(), true);
   assert.equal(v.focusedSidebar, false);
+});
+
+test("S submits diff and walkthrough drafts in one round@2", () => {
+  const w = parseWalkthrough(ADDR, {
+    version: 2,
+    base: "b".repeat(40),
+    head: "a".repeat(40),
+    title: "Rounding",
+    chunks: [
+      {
+        id: "r",
+        title: "The rounding rule",
+        sections: [
+          {
+            title: "Room list price",
+            steps: [{ markdown: "\n**Now** it is per person.\nMore.", code: { path: "p.rb", lines: [4, 5] } }, { markdown: "Closing." }],
+          },
+        ],
+      },
+    ],
+  });
+  const stale: WalkthroughDraft = { ...draft, id: "old", chunk: "gone", created_at: 1 };
+  const { v, hub, submitted, saved } = harness(w, { schema: "station/walkthrough-comments@1", comments: [stale] });
+  const removed: string[][] = [];
+  hub.register("changes", {
+    entries: () => [],
+    edit: () => {},
+    remove: (ids) => removed.push(ids),
+    round: () => [{ id: "x", comment: { target: "diff", path: "a.ts", chunk: "f", outdated: false, anchor: "chunk", sides: [], old_lines: null, new_lines: null, snippet: null, text: "d", created_at: 0 } }],
+  });
+  press(v, CTRL_DOWN, CTRL_DOWN, "c", "C", "S");
+  const round = submitted[0] ?? [];
+  assert.deepEqual(round.map((c) => c.target), ["diff", "walkthrough", "walkthrough"]);
+  assert.deepEqual(round[1], {
+    target: "walkthrough",
+    chunk: "r",
+    section: "Room list price",
+    step: 0,
+    first_line: "**Now** it is per person.",
+    path: "p.rb",
+    lines: [4, 5],
+    outdated: false,
+    text: "why per person?",
+    created_at: round[1]?.created_at,
+  });
+  assert.deepEqual(round[2], {
+    target: "walkthrough",
+    chunk: "gone",
+    section: "Room list price",
+    step: 2,
+    first_line: null,
+    path: null,
+    lines: null,
+    outdated: true,
+    text: "why per person?",
+    created_at: 1,
+  });
+  assert.deepEqual(removed, [["x"]]);
+  assert.equal(saved.at(-1)?.comments.length, 0);
+  const target = { repo: "org/repo", key: "k", title: "t", branch: "b", pr: 7 };
+  assert.equal(buildRound(target, "b", "h", round, 9).schema, "station/round@2");
 });
