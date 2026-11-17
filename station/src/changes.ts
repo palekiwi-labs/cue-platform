@@ -952,8 +952,8 @@ export class ChangesView implements Component {
     const known = new Set(this.fingerprints);
     const detached = all.filter((c) => !known.has(c.chunk)).length;
     const extra = detached > 0 ? ` (${detached} on outdated code)` : "";
-    const others = walk > 0 ? `, ${walk} on the walkthrough` : "";
-    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}${others}${C.dim} (C list)`;
+    const total = all.length + walk;
+    return `   ${C.mod}${total} draft comment${total === 1 ? "" : "s"}${extra}${C.dim} (C list)`;
   }
 
   private lineSelection(row: LineRow): "cursor" | "range" | null {

@@ -386,7 +386,8 @@ test("the navigator lists walkthrough drafts under their own group", () => {
     round: () => [],
   });
   keys(v, "c");
-  assert.match(screen(v), /1 draft comment, 1 on the walkthrough/);
+  assert.match(screen(v), /2 draft comments \(C list\)/);
+  assert.doesNotMatch(screen(v), /on the walkthrough/);
   keys(v, "C");
   const text = screen(v);
   assert.match(text, /Comments 2/);
