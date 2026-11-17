@@ -9,7 +9,8 @@ const UP = "\x1b[A"
 const DOWN = "\x1b[B"
 const KEYS: Record<string, string> = { "tui.select.cancel": ESC, "tui.select.up": UP, "tui.select.down": DOWN }
 
-function fakeCtx(branch: unknown[], idle = true) {
+function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = false) {
+  const editor = { text: editorText }
   const notes: string[] = []
   const events: string[] = []
   const keys: string[] = []
@@ -28,6 +29,11 @@ function fakeCtx(branch: unknown[], idle = true) {
     sessionManager: { getBranch: () => branch },
     ui: {
       notify: (msg: string) => notes.push(msg),
+      getEditorText: () => editor.text,
+      setEditorText: (text: string) => {
+        if (failSet) throw new Error("no editor")
+        editor.text = text
+      },
       custom: async (factory: Function) => {
         await new Promise<void>((resolve) => {
           const component = factory(tui, theme, kb, () => {
@@ -43,7 +49,7 @@ function fakeCtx(branch: unknown[], idle = true) {
       },
     },
   } as unknown as ExtensionContext
-  return { ctx, notes, events, keys, frames, rendered: () => rendered }
+  return { ctx, notes, events, keys, frames, editor, rendered: () => rendered }
 }
 
 const turn = [
@@ -133,6 +139,129 @@ describe("chunk focus in the reader", () => {
     expect(frames[5]!.some((l) => l.includes("\x1b[2m"))).toBe(false)
   })
 })
+describe("chunk comments in the reader", () => {
+  const ENTER = "\r"
+  const chars = (s: string) => [...s]
+  let turns = 0
+  const commentTurn = (text = "one\n\ntwo") => {
+    const id = `turn-${++turns}`
+    return [
+      { type: "message", id, message: { role: "user", content: "q" } },
+      { type: "message", id: `${id}-a`, message: { role: "assistant", content: [{ type: "text", text }] } },
+    ]
+  }
+  const hasLine = (frame: string[] | undefined, s: string) => frame?.some((l) => l.includes(s)) ?? false
+
+  test("r appends the quoted chunks and comments after the editor text, then closes", async () => {
+    const { ctx, keys, editor, notes, events } = fakeCtx(commentTurn(), true, "my draft")
+    keys.push("c", ...chars("first"), ENTER, "j", "c", ...chars("second"), ENTER, "r")
+    await openTurnReader(ctx)
+    expect(editor.text).toBe("my draft\n\n> one\n\nfirst\n\n> two\n\nsecond")
+    expect(notes).toEqual(["Inserted 2 comments into the editor"])
+    expect(events.at(-1)).toBe("done")
+  })
+
+  test("comments are visible inline and inserting never sends", async () => {
+    const { ctx, keys, frames, editor } = fakeCtx(commentTurn(), true)
+    keys.push("c", ...chars("hi"), ENTER, "r")
+    await openTurnReader(ctx)
+    const saved = frames.at(-2)!
+    expect(hasLine(saved, "┃ hi")).toBe(true)
+    expect(saved[0]).toContain("1 comment")
+    expect(editor.text).toBe("> one\n\nhi")
+  })
+
+  test("a failed insert keeps the drafts, the editor text and the reader open", async () => {
+    const branch = commentTurn()
+    const first = fakeCtx(branch, true, "keep", true)
+    first.keys.push("c", ...chars("note"), ENTER, "r", "q")
+    await openTurnReader(first.ctx)
+    expect(first.editor.text).toBe("keep")
+    expect(first.notes).toEqual(["Could not insert comments (no editor); drafts kept"])
+    expect(first.events.filter((e) => e === "done")).toHaveLength(1)
+    expect(hasLine(first.frames.at(-2), "┃ note")).toBe(true)
+
+    const retry = fakeCtx(branch, true, "keep")
+    retry.keys.push("r")
+    await openTurnReader(retry.ctx)
+    expect(retry.editor.text).toBe("keep\n\n> one\n\nnote")
+  })
+
+  test("r without comments notifies and stays open", async () => {
+    const { ctx, keys, notes, editor, events } = fakeCtx(commentTurn(), true, "x")
+    keys.push("r", "q")
+    await openTurnReader(ctx)
+    expect(notes).toEqual(["No comments to insert"])
+    expect(editor.text).toBe("x")
+    expect(events).toEqual(["render", "backdrop hidden", "done"])
+  })
+
+  test("drafts survive closing and reopening the same turn, not a new turn", async () => {
+    const branch = commentTurn()
+    const first = fakeCtx(branch)
+    first.keys.push("c", ...chars("kept"), ENTER, "q")
+    await openTurnReader(first.ctx)
+    const again = fakeCtx(branch)
+    again.keys.push("q")
+    await openTurnReader(again.ctx)
+    expect(hasLine(again.rendered(), "┃ kept")).toBe(true)
+    const other = fakeCtx(commentTurn())
+    other.keys.push("q")
+    await openTurnReader(other.ctx)
+    expect(hasLine(other.rendered(), "┃ kept")).toBe(false)
+  })
+
+  test("esc cancels composing without closing; c resumes the unsaved text", async () => {
+    const { ctx, keys, frames, events } = fakeCtx(commentTurn())
+    keys.push("c", ...chars("half"), ESC, "c", ENTER, ESC)
+    await openTurnReader(ctx)
+    const afterCancel = frames[5]!
+    expect(afterCancel.at(-1)).not.toContain("esc cancel")
+    expect(hasLine(afterCancel, "half")).toBe(false)
+    expect(hasLine(frames[6], "half")).toBe(true)
+    expect(hasLine(frames[7], "┃ half")).toBe(true)
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("keys go to the comment editor while composing", async () => {
+    const { ctx, keys, frames, events } = fakeCtx(commentTurn())
+    keys.push("c", "q", "a", "r", "d", ENTER, "q")
+    await openTurnReader(ctx)
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+    expect(frames.at(-2)!.at(-1)).toContain("d delete")
+    expect(hasLine(frames.at(-2), "┃ qard")).toBe(true)
+  })
+
+  test("d deletes the focused comment", async () => {
+    const { ctx, keys, frames } = fakeCtx(commentTurn())
+    keys.push("c", ...chars("gone"), ENTER, "d", "q")
+    await openTurnReader(ctx)
+    expect(hasLine(frames.at(-3), "┃ gone")).toBe(true)
+    expect(hasLine(frames.at(-2), "┃ gone")).toBe(false)
+  })
+
+  test("a snapshot comment stays on its chunk when the turn has grown, quoting what was read", async () => {
+    const [userEntry] = commentTurn()
+    const partial = { role: "assistant", content: [{ type: "text", text: "one\n\ntw" }], timestamp: 7 }
+    const pi = { on: (name: string, h: Function) => (handlers[name] = h), registerCommand() {}, registerShortcut() {} }
+    const handlers: Record<string, Function> = {}
+    registerTurnReader(pi as unknown as ExtensionAPI)
+    handlers.message_start!({ message: partial })
+    const running = fakeCtx([userEntry], false)
+    running.keys.push("f", "j", "c", ...chars("early"), ENTER, "q")
+    await openTurnReader(running.ctx)
+    expect(running.rendered()[0]).toContain("snapshot")
+    handlers.agent_end!()
+
+    const done = { type: "message", id: "done", message: { ...partial, content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }
+    const later = fakeCtx([userEntry, done], true, "")
+    later.keys.push("r")
+    await openTurnReader(later.ctx)
+    expect(hasLine(later.rendered(), "┃ early")).toBe(true)
+    expect(later.editor.text).toBe("> tw\n\nearly")
+  })
+})
+
 describe("registerTurnReader", () => {
   test("registers the read command and the shortcut", () => {
     const commands: string[] = []
