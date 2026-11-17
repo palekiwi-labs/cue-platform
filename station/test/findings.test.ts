@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import { excerpt, FindingsView, isDismissed, loadRun, parseFinding, runDir, sortFindings } from "../src/findings.js";
+import {
+  excerpt,
+  FindingsView,
+  isDismissed,
+  loadRun,
+  parseFinding,
+  runDir,
+  severityCounts,
+  sortFindings,
+} from "../src/findings.js";
 
 const ADDRESS = "org/repo/review-pr-1/review/runs/123-abc";
 
@@ -61,6 +70,24 @@ test("loadRun reads run.json and the verifier file", () => {
   assert.equal(r.subject, "PR #1");
   assert.equal(r.source, "verifiers-opus.json");
   assert.deepEqual(r.findings.map((f) => f.id), ["finding-2", "finding-1"]);
+});
+
+test("severityCounts labels verified counts and adds unconfirmable and dismissed", () => {
+  const root = store({
+    "run.json": RUN,
+    "verifiers-opus.json": {
+      summary: { by_severity: { medium: 1, low: 1 } },
+      analysis: {},
+      findings: [
+        { severity: "medium", title: "m", message: "m", verification: { verdict: "verified" } },
+        { severity: "low", title: "l", message: "m", verification: { verdict: "verified" } },
+        { severity: "low", title: "u", message: "m", verification: { verdict: "unconfirmable" } },
+        { severity: "low", title: "d", message: "m", status: "dismissed", verification: { verdict: "refuted" } },
+      ],
+    },
+  });
+  const plain = stripTerminalSequences(severityCounts(loadRun(ADDRESS, root)));
+  assert.equal(plain, "1 medium  1 low verified  · 1 unconfirmable  1 dismissed");
 });
 
 test("loadRun reports runs without verified findings", () => {
