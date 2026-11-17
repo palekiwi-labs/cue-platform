@@ -1,4 +1,12 @@
-import { type Component, Markdown, type MarkdownTheme, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
+import {
+  type Component,
+  Markdown,
+  type MarkdownTheme,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui"
 import { type SourceChunk, sourceChunks } from "./chunks"
 import { chunkKey, TurnComments } from "./comments"
 
@@ -88,6 +96,7 @@ export interface CommentEditor {
   onSubmit?: (text: string) => void
   setText(text: string): void
   getExpandedText(): string
+  insertTextAtCursor(text: string): void
   handleInput(data: string): void
   render(width: number): string[]
 }
@@ -307,9 +316,10 @@ export class TurnReader implements Component {
     return true
   }
 
-  /** Forward input to the comment editor. */
+  /** Forward input to the comment editor; alt+enter inserts a newline in any key encoding. */
   composeInput(data: string): void {
-    this.composer?.editor.handleInput(data)
+    if (matchesKey(data, "alt+enter")) this.composer?.editor.insertTextAtCursor("\n")
+    else this.composer?.editor.handleInput(data)
   }
 
   /** Stop composing without saving, keeping the unsaved text for the next compose. */
