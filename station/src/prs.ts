@@ -1,5 +1,6 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
+import { stackPrs } from "../../src/prs/stack.js";
 import type { PrSummary } from "./source.js";
 
 export interface PrsOptions {
@@ -36,7 +37,7 @@ function text(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function sortPrs(prs: readonly PrSummary[], sort: PrSort): PrSummary[] {
+export function comparePrs(sort: PrSort): (a: PrSummary, b: PrSummary) => number {
   const updated = (a: PrSummary, b: PrSummary): number => time(b.updatedAt) - time(a.updatedAt);
   const compare = (a: PrSummary, b: PrSummary): number => {
     switch (sort) {
@@ -48,7 +49,42 @@ export function sortPrs(prs: readonly PrSummary[], sort: PrSort): PrSummary[] {
         return updated(a, b);
     }
   };
-  return [...prs].sort((a, b) => compare(a, b) || b.number - a.number);
+  return (a, b) => compare(a, b) || b.number - a.number;
+}
+
+export function sortPrs(prs: readonly PrSummary[], sort: PrSort): PrSummary[] {
+  return [...prs].sort(comparePrs(sort));
+}
+
+export type PrLayout = "flat" | "tree";
+
+export interface PrRow {
+  pr: PrSummary;
+  depth: number;
+  guide: string;
+}
+
+export function treeRows(prs: readonly PrSummary[], sort: PrSort): PrRow[] {
+  const entries = stackPrs(prs, comparePrs(sort));
+  const hasNext = entries.map((e, i) => {
+    for (const later of entries.slice(i + 1)) {
+      if (later.depth <= e.depth) return later.depth === e.depth;
+    }
+    return false;
+  });
+  const open: boolean[] = [];
+  return entries.map((e, i) => {
+    open.length = e.depth;
+    const last = !hasNext[i];
+    const guide = e.depth === 0 ? "" : open.slice(1).map((o) => (o ? "│ " : "  ")).join("") + (last ? "└ " : "├ ");
+    open.push(!last);
+    return { pr: e.pr, depth: e.depth, guide };
+  });
+}
+
+export function layoutRows(prs: readonly PrSummary[], sort: PrSort, layout: PrLayout): PrRow[] {
+  if (layout === "tree") return treeRows(prs, sort);
+  return sortPrs(prs, sort).map((pr) => ({ pr, depth: 0, guide: "" }));
 }
 
 export function age(iso: string, now: number): string {
@@ -75,6 +111,8 @@ function decision(d: string): string {
 export class PrsView implements Component {
   private readonly opts: PrsOptions;
   private prs: PrSummary[] = [];
+  private rows: PrRow[] = [];
+  private layout: PrLayout = "flat";
   private me = "";
   private loaded = false;
   private note = "";
@@ -109,23 +147,33 @@ export class PrsView implements Component {
     this.reorder(this.prs);
   }
 
+  layoutMode(): PrLayout {
+    return this.layout;
+  }
+
+  setLayout(layout: PrLayout): void {
+    this.layout = layout;
+    this.reorder(this.prs);
+  }
+
   private reorder(prs: PrSummary[]): void {
     const selected = this.selected()?.number;
-    this.prs = sortPrs(prs, this.sort);
-    const index = this.prs.findIndex((pr) => pr.number === selected);
-    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, this.prs.length - 1));
+    this.prs = prs;
+    this.rows = layoutRows(prs, this.sort, this.layout);
+    const index = this.rows.findIndex((row) => row.pr.number === selected);
+    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, this.rows.length - 1));
   }
 
   selected(): PrSummary | undefined {
-    return this.prs[this.cursor];
+    return this.rows[this.cursor]?.pr;
   }
 
   private move(to: number): void {
-    this.cursor = Math.max(0, Math.min(to, this.prs.length - 1));
+    this.cursor = Math.max(0, Math.min(to, this.rows.length - 1));
   }
 
   private step(delta: 1 | -1): void {
-    const n = this.prs.length;
+    const n = this.rows.length;
     if (n === 0) return;
     this.cursor = (this.cursor + delta + n) % n;
   }
@@ -174,7 +222,10 @@ export class PrsView implements Component {
         this.move(0);
         return;
       case "G":
-        this.move(this.prs.length - 1);
+        this.move(this.rows.length - 1);
+        return;
+      case "t":
+        this.setLayout(this.layout === "flat" ? "tree" : "flat");
         return;
       case "\x04":
       case "\x1b[6~":
@@ -201,7 +252,8 @@ export class PrsView implements Component {
     }
   }
 
-  private renderPr(pr: PrSummary, selected: boolean, width: number, now: number): string {
+  private renderPr(row: PrRow, selected: boolean, width: number, now: number): string {
+    const pr = row.pr;
     const mine = this.me !== "" && pr.requested.includes(this.me);
     const marker = selected ? `${C.accent}▌` : " ";
     const base = selected ? C.selBg : "";
@@ -209,7 +261,7 @@ export class PrsView implements Component {
     const req = mine ? `${C.mod}● ` : "  ";
     const right = `${decision(pr.reviewDecision)}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
     const rightW = visibleWidth(right);
-    const left = `${marker}${base}${req}${num}${pr.isDraft ? C.dim : C.text}${pr.title}`;
+    const left = `${marker}${base}${req}${num}${C.dim}${row.guide}${pr.isDraft ? C.dim : C.text}${pr.title}`;
     const leftCell = fit(left, Math.max(0, width - rightW - 1));
     return `${base}${leftCell}${base} ${right}${RESET}`;
   }
@@ -230,15 +282,16 @@ export class PrsView implements Component {
     if (this.cursor < this.offset) this.offset = this.cursor;
     if (this.cursor >= this.offset + bodyH) this.offset = this.cursor - bodyH + 1;
     const body: string[] = [];
-    for (let i = this.offset; i < this.prs.length && body.length < bodyH; i++) {
-      body.push(this.renderPr(this.prs[i] as PrSummary, i === this.cursor, width, now));
+    for (let i = this.offset; i < this.rows.length && body.length < bodyH; i++) {
+      body.push(this.renderPr(this.rows[i] as PrRow, i === this.cursor, width, now));
     }
     if (this.loaded && this.prs.length === 0) body.push(fit(`  ${C.dim}no open pull requests${RESET}`, width));
     while (body.length < bodyH) body.push("");
     out.push(...body);
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}s${C.dim} sort  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
-    const pos = `sort: ${sortLabel(this.sort)}  ` + (this.prs.length > 0 ? `${this.cursor + 1}/${this.prs.length} ` : "");
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const pos = `${this.layout === "tree" ? "tree  " : ""}sort: ${sortLabel(this.sort)}  ` +
+      (this.rows.length > 0 ? `${this.cursor + 1}/${this.rows.length} ` : "");
     const room = Math.max(1, width - pos.length - 2);
     const left = this.notice === null
       ? keys

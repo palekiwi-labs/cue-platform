@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { age, type PrSort, PrsView, sortPickerText, sortPrs } from "../src/prs.js";
+import { age, layoutRows, type PrSort, PrsView, sortPickerText, sortPrs, treeRows } from "../src/prs.js";
 import type { PrSummary } from "../src/source.js";
 
 const hoursAgo = (h: number): string => new Date(Date.now() - h * 3600_000).toISOString();
@@ -11,7 +11,9 @@ const pr = (n: number, requested: string[] = []): PrSummary => ({
   title: `title ${n}`,
   url: `https://github.com/o/r/pull/${n}`,
   author: "alice",
-  headRefName: `b${n}`,
+  baseRef: "main",
+  headRef: `b${n}`,
+  defaultBranch: "main",
   isDraft: n === 2,
   createdAt: hoursAgo(100 + n),
   updatedAt: hoursAgo(n),
@@ -169,4 +171,72 @@ test("list defaults to recently updated and s picks a sort keeping the selection
 test("sort picker marks the active sort and lists its keys", () => {
   const lines = stripTerminalSequences(sortPickerText("created")).split("\n");
   assert.deepEqual(lines, ["  u  recently updated", "● c  newest created", "  a  author"]);
+});
+
+const stacked = (n: number, base: string, updated: number, created = updated): PrSummary => ({
+  ...pr(n),
+  baseRef: base,
+  headRef: `b${n}`,
+  createdAt: `2026-01-0${created}T00:00:00Z`,
+  updatedAt: `2026-02-0${updated}T00:00:00Z`,
+});
+
+const shape = (rows: { pr: PrSummary; depth: number; guide: string }[]): string[] =>
+  rows.map((r) => `${r.guide}${r.pr.number}`);
+
+test("treeRows nests stacks under their parent and orders roots and siblings by the sort", () => {
+  const prs = [
+    stacked(1, "main", 1, 9),
+    stacked(2, "b1", 5, 1),
+    stacked(3, "b1", 3, 2),
+    stacked(4, "b2", 2),
+    stacked(5, "main", 4, 1),
+    stacked(6, "gone", 9, 1),
+  ];
+  assert.deepEqual(shape(treeRows(prs, "updated")), ["6", "5", "1", "├ 2", "│ └ 4", "└ 3"]);
+  assert.deepEqual(shape(treeRows(prs, "created")), ["1", "├ 3", "└ 2", "  └ 4", "6", "5"]);
+  assert.deepEqual(treeRows(prs, "updated").map((r) => r.depth), [0, 0, 0, 1, 2, 1]);
+});
+
+test("treeRows lists every PR once, cycles included", () => {
+  const a = { ...stacked(1, "b2", 1), headRef: "b1" };
+  const b = { ...stacked(2, "b1", 2), headRef: "b2" };
+  const rows = treeRows([a, b, stacked(3, "main", 3)], "updated");
+  assert.deepEqual(rows.map((r) => r.pr.number).sort(), [1, 2, 3]);
+  assert.equal(new Set(rows.map((r) => r.pr.number)).size, 3);
+});
+
+test("flat layout keeps the global sort", () => {
+  const prs = [stacked(1, "main", 1), stacked(2, "b1", 5), stacked(3, "main", 3)];
+  assert.deepEqual(shape(layoutRows(prs, "updated", "flat")), ["2", "3", "1"]);
+  assert.deepEqual(shape(layoutRows(prs, "updated", "tree")), ["3", "1", "└ 2"]);
+});
+
+test("t toggles the tree keeping the selection across toggles and refreshes", () => {
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  const prs = [stacked(1, "main", 1), stacked(2, "b1", 5), stacked(3, "main", 3)];
+  v.setPrs(prs, "me");
+  assert.equal(v.layoutMode(), "flat");
+  v.handleInput("G");
+  assert.equal(v.selected()?.number, 1);
+  v.handleInput("t");
+  assert.equal(v.layoutMode(), "tree");
+  assert.equal(v.selected()?.number, 1);
+  v.handleInput("j");
+  assert.equal(v.selected()?.number, 2);
+  v.handleInput("j");
+  assert.equal(v.selected()?.number, 3);
+  v.handleInput("k");
+  assert.equal(v.selected()?.number, 2);
+  v.setPrs([...prs, stacked(4, "b2", 9)], "me");
+  assert.equal(v.layoutMode(), "tree");
+  assert.equal(v.selected()?.number, 2);
+  const lines = v.render(200).map(stripTerminalSequences);
+  assert.ok(lines.some((l) => l.includes("#2     └ title 2")));
+  assert.ok(lines.some((l) => l.includes("#4       └ title 4")));
+  assert.match(lines.at(-1) ?? "", /t tree/);
+  assert.match(lines.at(-1) ?? "", /tree {2}sort: recently updated/);
+  v.handleInput("t");
+  assert.equal(v.layoutMode(), "flat");
+  assert.equal(v.selected()?.number, 2);
 });
