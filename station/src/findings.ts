@@ -159,6 +159,7 @@ export interface FindingsOptions {
   run: FindingsRun;
   sources: Map<string, string | null>;
   onQuit: () => void;
+  onOpen: (file: string, line: number) => void;
 }
 
 type Selection = { kind: "run" } | { kind: "finding"; index: number };
@@ -250,6 +251,12 @@ export class FindingsView implements Component {
       case "v":
         this.showVerification = !this.showVerification;
         return;
+      case "e": {
+        const sel = this.selection();
+        const f = sel.kind === "finding" ? this.opts.run.findings[sel.index] : undefined;
+        if (f?.file != null) this.opts.onOpen(f.file, f.line_start ?? 1);
+        return;
+      }
       default:
         return;
     }
@@ -388,7 +395,7 @@ export class FindingsView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${k("j/k", "finding")}${k("J/K", "scroll")}${k("v", "verification")}${k("q", "quit")}`;
+    const keys = ` ${k("j/k", "finding")}${k("J/K", "scroll")}${k("v", "verification")}${k("e", "open")}${k("q", "quit")}`;
     const pos = sel.kind === "run" ? "run " : `finding ${sel.index + 1}/${r.findings.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);

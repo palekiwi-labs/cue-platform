@@ -85,7 +85,15 @@ test("view navigates findings and renders code from the head source", () => {
   });
   const run = loadRun(ADDRESS, root);
   let quit = false;
-  const view = new FindingsView({ run, sources: new Map([["a.rb", "x = 1\ny = 2\n"]]), onQuit: () => (quit = true) });
+  const opened: [string, number][] = [];
+  const view = new FindingsView({
+    run,
+    sources: new Map([["a.rb", "x = 1\ny = 2\n"]]),
+    onQuit: () => (quit = true),
+    onOpen: (file, line) => opened.push([file, line]),
+  });
+  view.handleInput("e");
+  assert.deepEqual(opened, []);
   const text = (): string => view.render(120).map(stripTerminalSequences).join("\n");
   assert.match(text(), /Run 123-abc/);
   view.handleInput("j");
@@ -93,6 +101,8 @@ test("view navigates findings and renders code from the head source", () => {
   assert.match(shown, /Msg/);
   assert.match(shown, /2 ▎y = 2/);
   assert.match(shown, /finding 1\/1/);
+  view.handleInput("e");
+  assert.deepEqual(opened, [["a.rb", 2]]);
   view.handleInput("q");
   assert.equal(quit, true);
 });
