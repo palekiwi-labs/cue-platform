@@ -178,6 +178,10 @@ function severityColor(s: string): string {
   }
 }
 
+export function isDismissed(f: Finding): boolean {
+  return f.dismiss_reason !== null || f.status?.toLowerCase() === "dismissed";
+}
+
 function lines(f: Finding): string {
   if (f.line_start === null) return "";
   return f.line_end === null || f.line_end === f.line_start ? `${f.line_start}` : `${f.line_start}-${f.line_end}`;
@@ -341,10 +345,13 @@ export class FindingsView implements Component {
     const r = this.opts.run;
     const out: string[] = [];
     out.push(C.barBg + fit(` ${C.text}${BOLD}Findings${RESET}${C.barBg} ${C.dim}${r.findings.length}`, w) + RESET);
-    const entries = r.findings.map((f) => ({
-      label: f.title,
-      sub: `${severityColor(f.severity)}${f.severity.toUpperCase()}  ${C.dim}${location(f)}`,
-    }));
+    const entries = r.findings.map((f) => {
+      const dismissed = isDismissed(f);
+      const sub = dismissed
+        ? `${C.faint}${f.severity.toUpperCase()}  dismissed  ${location(f)}`
+        : `${severityColor(f.severity)}${f.severity.toUpperCase()}  ${C.dim}${location(f)}`;
+      return { dismissed, label: f.title, sub };
+    });
     if (entries.length === 0) out.push(` ${C.faint}no findings`);
     const per = 3;
     const listH = Math.max(1, Math.floor((height - 1) / per));
@@ -355,7 +362,7 @@ export class FindingsView implements Component {
       const on = i === this.cursor;
       const base = on ? C.selBg : "";
       const marker = on ? `${C.accent}▎` : " ";
-      out.push(base + fit(`${marker}${on ? `${C.text}${BOLD}` : C.text}${e.label}`, w) + RESET);
+      out.push(base + fit(`${marker}${e.dismissed ? C.faint : on ? `${C.text}${BOLD}` : C.text}${e.label}`, w) + RESET);
       out.push(base + fit(`${marker}${e.sub}`, w) + RESET);
       out.push(" ".repeat(w));
     }
