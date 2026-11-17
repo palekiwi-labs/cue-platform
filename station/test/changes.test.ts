@@ -121,7 +121,7 @@ test("open jumps to first changed line of the chunk", () => {
   v.handleInput("e");
   v.handleInput("j");
   v.handleInput("e");
-  v.handleInput("n");
+  v.handleInput("\x1b[1;5B");
   v.handleInput("e");
   assert.deepEqual(opened, [
     ["src/a.ts", 2],

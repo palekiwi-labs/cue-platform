@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import type { Highlights } from "./highlight.js";
 import type { RoundComment } from "./round.js";
@@ -778,6 +778,14 @@ export class ChangesView implements Component {
       return;
     }
     const h = this.lastHeight;
+    if (matchesKey(data, "ctrl+down")) {
+      this.moveFile(1);
+      return;
+    }
+    if (matchesKey(data, "ctrl+up")) {
+      this.moveFile(-1);
+      return;
+    }
     switch (data) {
       case "q":
       case "\x03":
@@ -790,14 +798,6 @@ export class ChangesView implements Component {
       case "k":
       case "\x1b[A":
         this.moveTo(this.cursor - 1);
-        return;
-      case "n":
-      case "]":
-        this.moveFile(1);
-        return;
-      case "p":
-      case "[":
-        this.moveFile(-1);
         return;
       case "g":
         this.moveTo(0);
@@ -1026,7 +1026,7 @@ export class ChangesView implements Component {
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
       ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
-      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}n/p${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;
