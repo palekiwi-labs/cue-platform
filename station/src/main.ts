@@ -23,8 +23,10 @@ import { preparerRun, submitToSupervisor } from "./prepare.js";
 import { walkthroughSaveCommand } from "./walkthrough-save.js";
 import { fromDemo, fromPr, fromRange, resolvePr, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
-import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
-import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
+import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
+import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
+import { WalkthroughDrafts } from "./walkthrough-comments.js";
+import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
 import { loadWalkthrough, loadWalkthroughSources, WalkthroughView } from "./walkthrough.js";
@@ -85,6 +87,7 @@ function changesView(
   review: Review,
   onQuit: () => void,
   quitLabel?: string,
+  drafts = reviewDrafts(router, review),
 ): ChangesView {
   return new ChangesView({
     title: review.title,
@@ -101,8 +104,12 @@ function changesView(
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
     onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line, review.packet.base_sha),
-    onSubmit: (comments, done) => void submit(router, review, comments, done),
+    drafts,
   });
+}
+
+function reviewDrafts(router: Router, review: Review): Drafts {
+  return new Drafts((comments, done) => void submit(router, review, comments, done));
 }
 
 async function submit(router: Router, review: Review, comments: RoundComment[], done: (ok: boolean) => void): Promise<void> {
@@ -144,7 +151,6 @@ interface Screen extends Component {
 class Router {
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
-  private back: (() => void) | null = null;
   private popup: { handles: OverlayHandle[]; dismissable: boolean; keys: Record<string, () => void> } | null = null;
   private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
@@ -166,7 +172,7 @@ class Router {
           action?.();
         } else if (data === "\x03") this.quit();
       } else if (data === "\x1b") {
-        if (this.screen?.handleEscape?.() !== true) this.back?.();
+        this.screen?.handleEscape?.();
       } else this.screen?.handleInput(data);
       this.tui.requestRender();
       return { consume: true };
@@ -174,10 +180,9 @@ class Router {
     process.stdout.on("resize", () => this.tui.requestRender(true));
   }
 
-  show(screen: Screen, back: (() => void) | null = null): void {
+  show(screen: Screen): void {
     if (this.screen !== null) this.tui.removeChild(this.screen);
     this.screen = screen;
-    this.back = back;
     this.tui.addChild(screen);
     this.tui.requestRender(true);
   }
@@ -235,6 +240,14 @@ function prTabs(
   const pr = review.pr;
   const repo = review.cueDir;
   if (pr === null || repo === null) throw new Error("not a pull request review");
+  const drafts = reviewDrafts(router, review);
+  const walkthroughDrafts = new WalkthroughDrafts(
+    loadWalkthroughComments(review.key),
+    (state) => saveWalkthroughComments(review.key, state),
+    () => currentWalkthrough(review.repo, pr, chosen),
+    (request, done) => router.compose(request, done),
+  );
+  drafts.register("walkthrough", walkthroughDrafts);
   const host: PrTabHost = {
     repo,
     repoSlug: review.repo,
@@ -245,9 +258,11 @@ function prTabs(
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+    walkthroughDrafts,
+    drafts,
   };
   return new TabsScreen([
-    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },
+    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, drafts) },
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
   ]);
@@ -345,7 +360,7 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(prTabs(router, review, chosen, toList, "back"), toList);
+      router.show(prTabs(router, review, chosen, toList, "back"));
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {

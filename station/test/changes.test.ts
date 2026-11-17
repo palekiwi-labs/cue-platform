@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "../src/changes.js";
+import { Drafts } from "../src/drafts.js";
 import { buildPacketFromDiff } from "../src/gen.js";
-import { reviewContext, type RoundComment, slugify } from "../src/round.js";
+import { type DiffRoundComment, reviewContext, type RoundComment, slugify } from "../src/round.js";
 import {
   type CommentState,
   emptyComments,
@@ -46,6 +47,7 @@ interface Harness {
   submitted: RoundComment[][];
   submitOk: { ok: boolean };
   copied: string[];
+  hub: Drafts;
 }
 
 function view(initial: CommentState = emptyComments()): Harness {
@@ -65,6 +67,10 @@ function view(initial: CommentState = emptyComments()): Harness {
   const submitted: RoundComment[][] = [];
   const submitOk = { ok: true };
   const copied: string[] = [];
+  const hub = new Drafts((rc, done) => {
+    submitted.push(rc);
+    done(submitOk.ok);
+  });
   const v = new ChangesView({
     title: "t",
     subtitle: "sub",
@@ -80,13 +86,10 @@ function view(initial: CommentState = emptyComments()): Harness {
       done(reply.text);
     },
     onOpen: (f, line) => opened.push([f.path, line]),
-    onSubmit: (rc, done) => {
-      submitted.push(rc);
-      done(submitOk.ok);
-    },
+    drafts: hub,
     onCopy: (text) => copied.push(text),
   });
-  return { v, saved, opened, comments, composed, reply, submitted, submitOk, copied };
+  return { v, saved, opened, comments, composed, reply, submitted, submitOk, copied, hub };
 }
 
 function screen(v: ChangesView): string {
@@ -326,7 +329,8 @@ test("S in the navigator submits every listed draft and clears them", () => {
     comments: [{ id: "x", path: "src/a.ts", chunk: "gone", from: null, to: null, text: "old", created_at: 0 }],
   });
   keys(v, "\r", "j", "V", "j", "c", "C", "S");
-  const round = submitted[0] ?? [];
+  const round = (submitted[0] ?? []) as DiffRoundComment[];
+  assert.deepEqual(round.map((c) => c.target), ["diff", "diff"]);
   assert.equal(round.length, 2);
   const lines = round[0];
   assert.equal(lines?.anchor, "lines");
@@ -354,7 +358,7 @@ test("failed submit keeps the drafts", () => {
 test("whole-chunk comment carries both line spans and the full body", () => {
   const { v, submitted } = view();
   keys(v, "c", "C", "S");
-  const c = submitted[0]?.[0];
+  const c = submitted[0]?.[0] as DiffRoundComment | undefined;
   assert.deepEqual([c?.old_lines, c?.new_lines], [[1, 2], [1, 3]]);
   assert.equal(c?.snippet, " context\n-old\n+new\n+added");
 });
@@ -369,4 +373,31 @@ test("review context follows cue-review naming", () => {
 test("PR review rounds go to review-pr-N and reject --context", () => {
   assert.equal(reviewContext("feat/x", 42, null), "review-pr-42");
   assert.throws(() => reviewContext("feat/x", 42, "mine"), /--context/);
+});
+
+test("the navigator lists walkthrough drafts under their own group", () => {
+  const { v, hub } = view();
+  const walk = [{ tab: "walkthrough" as const, id: "w", title: "Room list price", where: "step 2/3", text: "why?", outdated: false }];
+  const edited: string[] = [];
+  hub.register("walkthrough", {
+    entries: () => walk,
+    edit: (id) => edited.push(id),
+    remove: (ids) => walk.splice(0, walk.length, ...walk.filter((e) => !ids.includes(e.id))),
+    round: () => [],
+  });
+  keys(v, "c");
+  assert.match(screen(v), /2 draft comments \(C list\)/);
+  assert.doesNotMatch(screen(v), /on the walkthrough/);
+  keys(v, "C");
+  const text = screen(v);
+  assert.match(text, /Comments 2/);
+  assert.ok(text.indexOf("Changes 1") < text.indexOf("Walkthrough 1"), text);
+  assert.match(text, /Room list price step 2\/3/);
+  keys(v, "j", "\r");
+  assert.match(screen(v), /open the walkthrough tab to jump to this comment/);
+  keys(v, "E");
+  assert.deepEqual(edited, ["w"]);
+  keys(v, "d");
+  assert.match(screen(v), /Comments 1/);
+  assert.doesNotMatch(screen(v), /Walkthrough 1/);
 });
