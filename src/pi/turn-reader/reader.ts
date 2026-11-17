@@ -133,7 +133,7 @@ export class TurnReader implements Component {
     const keys = toggle + speak + (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
     const foot = ` ${position}${keys} `
 
-    const border = (s: string) => t.fg("border", s)
+    const border = (s: string) => t.fg("borderMuted", s)
     const top = border("╭─") + t.fg("accent", t.bold(head)) +
       border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮")
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +

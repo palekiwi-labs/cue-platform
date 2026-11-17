@@ -76,6 +76,14 @@ describe("TurnReader", () => {
     expect(reader.render(40)[0]).toContain("last of 2 messages")
   })
 
+  test("draws the frame in the muted border color", () => {
+    const tagged = { fg: (c: string, s: string) => `<${c}>${s}`, bold: (s: string) => s }
+    const lines = new TurnReader(tagged, md, ["text"], () => 40).render(40)
+    expect(lines[0]).toStartWith("<borderMuted>╭─")
+    expect(lines[1]).toStartWith("<borderMuted>│")
+    expect(lines.join("")).not.toContain("<border>")
+  })
+
   test("a single message has no mode toggle", () => {
     const reader = new TurnReader(plain, md, ["only"], () => 40)
     reader.toggle()
