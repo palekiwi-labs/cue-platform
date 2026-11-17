@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import type { Highlights } from "./highlight.js";
-import type { DiffRoundComment } from "./round.js";
+import type { RoundComment } from "./round.js";
 import { chunkFingerprint, type CommentState, type DraftComment, type FoldState } from "./state.js";
 
 export const RESET = "\x1b[0m";
@@ -69,17 +69,6 @@ interface CommentEntry {
   chunk: number | null;
 }
 
-/** A draft comment kept outside the diff (on a finding or walkthrough step), listed in the navigator. */
-export interface ExtraComment {
-  id: string;
-  label: string;
-  where: string;
-  text: string;
-  outdated: boolean;
-}
-
-type NavEntry = { diff: CommentEntry } | { extra: ExtraComment };
-
 export interface ComposeRequest {
   title: string;
   text: string;
@@ -99,11 +88,8 @@ export interface ChangesOptions {
   onComments: (comments: CommentState) => void;
   onCompose: (request: ComposeRequest, done: (text: string | null) => void) => void;
   onOpen: (file: PacketFile, line: number) => void;
-  onSubmit: (comments: DiffRoundComment[], done: (ok: boolean) => void) => void;
+  onSubmit: (comments: RoundComment[], done: (ok: boolean) => void) => void;
   onCopy: (text: string) => void;
-  extraComments?: () => ExtraComment[];
-  onEditExtra?: (id: string) => void;
-  onDeleteExtra?: (id: string) => void;
 }
 
 function statusLetter(f: PacketFile): string {
@@ -550,14 +536,6 @@ export class ChangesView implements Component {
     return [...live, ...outdated];
   }
 
-  private extras(): ExtraComment[] {
-    return this.opts.extraComments?.() ?? [];
-  }
-
-  private navEntries(): NavEntry[] {
-    return [...this.commentEntries().map((diff) => ({ diff })), ...this.extras().map((extra) => ({ extra }))];
-  }
-
   private jumpToComment(e: CommentEntry): void {
     const ci = e.chunk;
     if (ci === null) return;
@@ -577,9 +555,9 @@ export class ChangesView implements Component {
     this.sideFocus = false;
   }
 
-  private roundComment(e: CommentEntry): DiffRoundComment {
+  private roundComment(e: CommentEntry): RoundComment {
     const c = e.comment;
-    const base = { target: "diff" as const, path: c.path, chunk: c.chunk, text: c.text, created_at: c.created_at };
+    const base = { path: c.path, chunk: c.chunk, text: c.text, created_at: c.created_at };
     const ci = e.chunk;
     if (ci === null) {
       const anchor = c.from === null ? "chunk" : "lines";
@@ -611,7 +589,7 @@ export class ChangesView implements Component {
 
   private submit(): void {
     const entries = this.commentEntries();
-    if (entries.length === 0 && this.extras().length === 0) return;
+    if (entries.length === 0) return;
     const ids = new Set(entries.map((e) => e.comment.id));
     this.opts.onSubmit(entries.map((e) => this.roundComment(e)), (ok) => {
       if (!ok) return;
@@ -626,9 +604,8 @@ export class ChangesView implements Component {
     if (this.sideMode !== "comments") this.sidebarOffset = 0;
     this.sideMode = "comments";
     const it = this.item;
-    const entries = this.navEntries();
-    const at =
-      it !== null && "comment" in it ? entries.findIndex((e) => "diff" in e && e.diff.comment.id === it.comment) : -1;
+    const entries = this.commentEntries();
+    const at = it !== null && "comment" in it ? entries.findIndex((e) => e.comment.id === it.comment) : -1;
     if (at !== -1) this.commentCursor = at;
     this.commentCursor = Math.max(0, Math.min(this.commentCursor, entries.length - 1));
   }
@@ -781,11 +758,9 @@ export class ChangesView implements Component {
   }
 
   private handleCommentsInput(data: string): void {
-    const entries = this.navEntries();
+    const entries = this.commentEntries();
     const n = entries.length;
-    const entry = entries[this.commentCursor];
-    const e = entry !== undefined && "diff" in entry ? entry.diff : undefined;
-    const x = entry !== undefined && "extra" in entry ? entry.extra : undefined;
+    const e = entries[this.commentCursor];
     switch (data) {
       case "j":
       case "\x1b[B":
@@ -807,12 +782,10 @@ export class ChangesView implements Component {
         return;
       case "E":
         if (e !== undefined) this.edit(e);
-        else if (x !== undefined) this.opts.onEditExtra?.(x.id);
         return;
       case "d":
-        if (x !== undefined) this.opts.onDeleteExtra?.(x.id);
-        else if (e !== undefined) this.setComments(this.comments.comments.filter((c) => c.id !== e.comment.id));
-        else return;
+        if (e === undefined) return;
+        this.setComments(this.comments.comments.filter((x) => x.id !== e.comment.id));
         this.commentCursor = Math.max(0, Math.min(this.commentCursor, n - 2));
         return;
       case "C":
@@ -994,16 +967,11 @@ export class ChangesView implements Component {
 
   private draftSummary(): string {
     const all = this.comments.comments;
-    const others = this.extras().length;
-    if (all.length === 0 && others === 0) return "";
+    if (all.length === 0) return "";
     const known = new Set(this.fingerprints);
     const detached = all.filter((c) => !known.has(c.chunk)).length;
     const extra = detached > 0 ? ` (${detached} on outdated code)` : "";
-    const total = all.length + others;
-    const head = `${total} draft comment${total === 1 ? "" : "s"}`;
-    if (others === 0) return `   ${C.mod}${head}${extra}${C.dim} (C list)`;
-    const parts = [all.length > 0 ? `${all.length} on the diff${extra}` : "", `${others} on findings/walkthrough`];
-    return `   ${C.mod}${head}: ${parts.filter((p) => p !== "").join(" + ")}${C.dim} (C list)`;
+    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}${C.dim} (C list)`;
   }
 
   private lineSelection(row: LineRow): "cursor" | "range" | null {
@@ -1017,7 +985,7 @@ export class ChangesView implements Component {
   }
 
   private renderCommentsSidebar(height: number, w: number): string[] {
-    const entries = this.navEntries();
+    const entries = this.commentEntries();
     const out: string[] = [];
     const label = this.sideFocus ? C.accent : C.text;
     out.push(C.barBg + fit(` ${label}${BOLD}Comments${RESET}${C.barBg} ${C.dim}${entries.length}`, w) + RESET);
@@ -1027,22 +995,17 @@ export class ChangesView implements Component {
     if (cur < this.sidebarOffset) this.sidebarOffset = cur;
     if (cur >= this.sidebarOffset + listH) this.sidebarOffset = cur - listH + 1;
     for (let i = this.sidebarOffset; i < entries.length && out.length + 2 <= height; i++) {
-      const entry = entries[i] as NavEntry;
-      const row =
-        "diff" in entry
-          ? { path: entry.diff.comment.path, where: this.entryLabel(entry.diff), text: entry.diff.comment.text, outdated: entry.diff.chunk === null }
-          : { path: entry.extra.label, where: entry.extra.outdated ? "outdated" : entry.extra.where, text: entry.extra.text, outdated: entry.extra.outdated };
-      const outdated = row.outdated;
+      const e = entries[i] as CommentEntry;
+      const outdated = e.chunk === null;
       const on = i === cur;
       const base = on ? C.selBg : "";
       const marker = on ? `${this.sideFocus ? C.accent : C.dim}▎` : " ";
-      const where = row.where;
-      const room = Math.max(4, w - 3 - visibleWidth(where));
-      const path = "diff" in entry ? tailPath(row.path, room) : truncateToWidth(row.path, room, "…");
+      const where = this.entryLabel(e);
+      const path = tailPath(e.comment.path, Math.max(4, w - 3 - visibleWidth(where)));
       const pathStyle = outdated ? C.faint : on ? `${C.text}${BOLD}` : C.text;
       const whereStyle = outdated ? C.del : C.dim;
       out.push(base + fit(`${marker}${pathStyle}${path}${RESET}${base} ${whereStyle}${where}`, w) + RESET);
-      const first = row.text.split("\n")[0] ?? "";
+      const first = e.comment.text.split("\n")[0] ?? "";
       out.push(base + fit(`${marker} ${outdated ? C.faint : C.mod}${first}`, w) + RESET);
     }
     while (out.length < height) out.push(" ".repeat(w));
