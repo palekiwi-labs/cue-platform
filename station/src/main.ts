@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { type Component, matchesKey, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import {
+  type Component,
+  KeybindingsManager,
+  matchesKey,
+  type OverlayHandle,
+  ProcessTerminal,
+  setKeybindings,
+  TUI_KEYBINDINGS,
+  TuiAltScreen,
+} from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
@@ -117,6 +126,7 @@ class Router {
   private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
   constructor() {
+    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.altScreen.pageUp": [], "tui.altScreen.pageDown": [] }));
     this.tui.addInputListener((data) => {
       if (this.composing !== null) {
         if (data === "\x1b") this.endCompose(null);
