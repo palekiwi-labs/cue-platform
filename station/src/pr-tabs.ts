@@ -1,4 +1,7 @@
+import type { ComposeRequest } from "./changes.js";
 import type { PopupContent } from "./popup.js";
+import { ReaderView } from "./reader.js";
+import { findingDoc, type ReaderComments, type ReaderDoc, walkthroughDoc, walkthroughItem } from "./reader-comments.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { findingsWorktree, listRuns, prContext, type RunEntry } from "./pr-review.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
@@ -16,6 +19,9 @@ export interface PrTabHost {
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
+  readerComments: ReaderComments;
+  compose: (request: ComposeRequest, done: (text: string | null) => void) => void;
+  copy: (text: string) => void;
 }
 
 export type FindingsTabHost = PrTabHost;
@@ -39,7 +45,11 @@ interface Producer<E extends { address: string }> {
   folder: string;
   list(): E[];
   pickerText(entries: E[]): string;
-  view(address: string, open: (head: string, file: string, line: number, base?: string) => void): TabScreen;
+  view(
+    address: string,
+    open: (head: string, file: string, line: number, base?: string) => void,
+    read: (doc: ReaderDoc) => void,
+  ): TabScreen;
 }
 
 /**
@@ -49,6 +59,7 @@ interface Producer<E extends { address: string }> {
  */
 class ProducerTab<E extends { address: string }> implements TabScreen {
   private inner: TabScreen;
+  private reader: ReaderView | null = null;
   private loaded = false;
 
   constructor(
@@ -91,7 +102,11 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
 
   private load(address: string): void {
     try {
-      this.inner = this.producer.view(address, (head, file, line, base) => void this.open(head, file, line, base));
+      this.inner = this.producer.view(
+        address,
+        (head, file, line, base) => void this.open(head, file, line, base),
+        (doc) => this.read(doc),
+      );
       this.loaded = true;
       this.host.chosen.set(this.key, address);
     } catch (e) {
@@ -108,21 +123,35 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
     }
   }
 
+  private read(doc: ReaderDoc): void {
+    this.reader = new ReaderView({
+      doc,
+      comments: this.host.readerComments,
+      onClose: () => {
+        this.reader = null;
+      },
+      onCompose: this.host.compose,
+      onCopy: this.host.copy,
+    });
+  }
+
   invalidate(): void {
     this.inner.invalidate?.();
   }
 
   handleInput(data: string): void {
-    if (data === "P") this.pick();
+    if (this.reader !== null) this.reader.handleInput(data);
+    else if (data === "P") this.pick();
     else this.inner.handleInput(data);
   }
 
   handleEscape(): boolean {
+    if (this.reader !== null) return this.reader.handleEscape();
     return this.inner.handleEscape?.() === true;
   }
 
   render(width: number): string[] {
-    return this.inner.render(width);
+    return (this.reader ?? this.inner).render(width);
   }
 }
 
@@ -136,8 +165,9 @@ export function findingsTab(host: PrTabHost): TabScreen {
     folder: "runs",
     list: () => listRuns(host.repoSlug, host.pr),
     pickerText: runPickerText,
-    view: (address, open) => {
+    view: (address, open, read) => {
       const run = loadRun(address);
+      const store = host.readerComments;
       requireHead(host.repo, run.head);
       const files = run.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
       return new FindingsView({
@@ -145,6 +175,8 @@ export function findingsTab(host: PrTabHost): TabScreen {
         sources: loadSources(host.repo, run.head, files),
         onQuit: host.onQuit,
         onOpen: (file, line) => open(run.head, file, line, run.base),
+        onRead: (f) => read(findingDoc(run, f)),
+        commentCount: (f) => store.forTarget({ kind: "finding", source: run.address, item: f.id, item_title: f.title }).length,
       });
     },
   });
@@ -156,8 +188,9 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
     folder: "walkthrough",
     list: () => listWalkthroughs(host.repoSlug, host.pr),
     pickerText: walkthroughPickerText,
-    view: (address, open) => {
+    view: (address, open, read) => {
       const walkthrough = loadWalkthrough(address);
+      const store = host.readerComments;
       requireHead(host.repo, walkthrough.head);
       return new WalkthroughView({
         walkthrough,
@@ -165,6 +198,16 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
         subtitle: prContext(host.repoSlug, host.pr),
         onQuit: host.onQuit,
         onOpen: (rev, file, line) => open(rev, file, line, walkthrough.base),
+        onRead: (chunk, section, step) => {
+          const doc = walkthroughDoc(walkthrough, chunk, section, step);
+          if (doc !== null) read(doc);
+        },
+        commentCount: (chunk, section, step) => {
+          const id = walkthrough.chunks[chunk]?.id;
+          if (id === undefined) return 0;
+          const item = walkthroughItem(id, section, step);
+          return store.all().filter((c) => c.kind === "walkthrough" && c.source === walkthrough.address && c.item === item).length;
+        },
       });
     },
   });

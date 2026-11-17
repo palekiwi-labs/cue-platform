@@ -162,6 +162,8 @@ export interface FindingsOptions {
   sources: Map<string, string | null>;
   onQuit: () => void;
   onOpen: (file: string, line: number) => void;
+  onRead?: (finding: Finding) => void;
+  commentCount?: (finding: Finding) => number;
 }
 
 function severityColor(s: string): string {
@@ -268,6 +270,11 @@ export class FindingsView implements Component {
         if (f?.file != null) this.opts.onOpen(f.file, f.line_start ?? 1);
         return;
       }
+      case "\r": {
+        const f = this.current();
+        if (f !== undefined) this.opts.onRead?.(f);
+        return;
+      }
       default:
         return;
     }
@@ -341,10 +348,11 @@ export class FindingsView implements Component {
     const r = this.opts.run;
     const out: string[] = [];
     out.push(C.barBg + fit(` ${C.text}${BOLD}Findings${RESET}${C.barBg} ${C.dim}${r.findings.length}`, w) + RESET);
-    const entries = r.findings.map((f) => ({
-      label: f.title,
-      sub: `${severityColor(f.severity)}${f.severity.toUpperCase()}  ${C.dim}${location(f)}`,
-    }));
+    const entries = r.findings.map((f) => {
+      const n = this.opts.commentCount?.(f) ?? 0;
+      const notes = n > 0 ? `${C.mod}${n}✎ ` : "";
+      return { label: f.title, sub: `${notes}${severityColor(f.severity)}${f.severity.toUpperCase()}  ${C.dim}${location(f)}` };
+    });
     if (entries.length === 0) out.push(` ${C.faint}no findings`);
     const per = 3;
     const listH = Math.max(1, Math.floor((height - 1) / per));
@@ -389,7 +397,7 @@ export class FindingsView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
+    const keys = ` ${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${this.opts.onRead === undefined ? "" : k("enter", "read")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const pos = r.findings.length === 0 ? "" : `finding ${this.cursor + 1}/${r.findings.length} `;
     const right = `${more}${C.dim}${pos}`;
