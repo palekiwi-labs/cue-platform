@@ -56,7 +56,9 @@ export interface PrSummary {
   title: string;
   url: string;
   author: string;
-  headRefName: string;
+  baseRef: string;
+  headRef: string;
+  defaultBranch: string;
   isDraft: boolean;
   createdAt: string;
   updatedAt: string;
