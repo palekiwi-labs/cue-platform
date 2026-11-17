@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { type Component, matchesKey, type OverlayHandle, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
+import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
@@ -21,6 +22,7 @@ function usage(code: number): never {
   out("       station pr <number>      changes of a GitHub pull request");
   out("       station <base>..<head>   changes in a commit range");
   out("       station clean            remove review worktrees of closed PRs");
+  out("       station findings <run>   verified findings of a review run (<ctx address>/review/runs/<run_id>)");
   out("       station demo             built-in demo diff");
   out("");
   out("  --context <slug>   cue context for submitted comment rounds (default review-<branch-slug>)");
@@ -280,7 +282,19 @@ function showPrs(repo: string): void {
   void refresh(false);
 }
 
-async function resolve(args: string[]): Promise<Review | { prs: string }> {
+function showFindings(address: string): void {
+  const findingsRun = loadRun(address);
+  const repoPath = process.cwd();
+  if (!headInRepo(repoPath, findingsRun.head)) {
+    throw new Error(`head ${findingsRun.head.slice(0, 10)} is not in this repository; run from a checkout of the reviewed repo (git fetch may help)`);
+  }
+  const files = findingsRun.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
+  const router = new Router();
+  router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files), onQuit: () => router.quit() }));
+  router.tui.start();
+}
+
+async function resolve(args: string[]): Promise<Review | { prs: string } | { findings: string }> {
   const [cmd, arg, extra] = args;
   if (extra !== undefined) usage(2);
   if (cmd === undefined) {
@@ -298,6 +312,7 @@ async function resolve(args: string[]): Promise<Review | { prs: string }> {
     process.exit(0);
   }
   if (cmd === "demo" && arg === undefined) return fromDemo();
+  if (cmd === "findings" && arg !== undefined) return { findings: arg };
   if (cmd === "pr" && arg !== undefined && /^\d+$/.test(arg)) return fromPr(process.cwd(), arg);
   if (cmd.includes("..") && arg === undefined) return fromRange(process.cwd(), cmd);
   usage(2);
@@ -313,9 +328,13 @@ export async function main(): Promise<void> {
     args.splice(flag, 2);
   }
   if (args[0] === "--help" || args[0] === "-h") usage(0);
-  let target: Review | { prs: string };
+  let target: Review | { prs: string } | { findings: string };
   try {
     target = await resolve(args);
+    if ("findings" in target) {
+      showFindings(target.findings);
+      return;
+    }
   } catch (e) {
     console.error(`station: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
