@@ -45,6 +45,7 @@ interface Harness {
   reply: { text: string | null };
   submitted: RoundComment[][];
   submitOk: { ok: boolean };
+  copied: string[];
 }
 
 function view(initial: CommentState = emptyComments()): Harness {
@@ -63,6 +64,7 @@ function view(initial: CommentState = emptyComments()): Harness {
   const reply = { text: "looks odd" as string | null };
   const submitted: RoundComment[][] = [];
   const submitOk = { ok: true };
+  const copied: string[] = [];
   const v = new ChangesView({
     title: "t",
     subtitle: "sub",
@@ -82,8 +84,9 @@ function view(initial: CommentState = emptyComments()): Harness {
       submitted.push(rc);
       done(submitOk.ok);
     },
+    onCopy: (text) => copied.push(text),
   });
-  return { v, saved, opened, comments, composed, reply, submitted, submitOk };
+  return { v, saved, opened, comments, composed, reply, submitted, submitOk, copied };
 }
 
 function screen(v: ChangesView): string {
@@ -130,6 +133,12 @@ test("fold chunk persists and hides its lines", () => {
   const text = v.render(100).map(stripTerminalSequences).join("\n");
   assert.match(text, /lines folded/);
   assert.doesNotMatch(text, /\+ added/);
+});
+
+test("y copies the chunk, line or range location", () => {
+  const { v, copied } = view();
+  keys(v, "y", "\r", "y", "j", "y", "V", "j", "y", "j", "y");
+  assert.deepEqual(copied, ["src/a.ts:1-3", "src/a.ts:1", "src/a.ts:2 (base)", "src/a.ts:2", "src/a.ts:2-3"]);
 });
 
 test("open jumps to first changed line of the chunk", () => {

@@ -89,6 +89,7 @@ export interface ChangesOptions {
   onCompose: (request: ComposeRequest, done: (text: string | null) => void) => void;
   onOpen: (file: PacketFile, line: number) => void;
   onSubmit: (comments: RoundComment[], done: (ok: boolean) => void) => void;
+  onCopy: (text: string) => void;
 }
 
 function statusLetter(f: PacketFile): string {
@@ -459,6 +460,39 @@ export class ChangesView implements Component {
     this.addComment(it.chunk, Math.min(a, it.line), Math.max(a, it.line));
   }
 
+  private location(ci: number, from: number | null, to: number | null): string {
+    const path = this.file(this.chunkFile[ci] ?? 0).path;
+    const nums = this.lineNumbers(ci);
+    const picked = nums.slice(from ?? 0, (to ?? nums.length - 1) + 1);
+    const span = (xs: (number | null)[]): string | null => {
+      const ns = xs.filter((n): n is number => n !== null);
+      if (ns.length === 0) return null;
+      const lo = Math.min(...ns);
+      const hi = Math.max(...ns);
+      return lo === hi ? `${lo}` : `${lo}-${hi}`;
+    };
+    const head = span(picked.map((n) => n.newNo));
+    if (head !== null) return `${path}:${head}`;
+    const base = span(picked.map((n) => n.oldNo));
+    return base === null ? path : `${path}:${base} (base)`;
+  }
+
+  private copyChunk(): void {
+    const ci = this.current().chunk;
+    if (ci !== null) this.opts.onCopy(this.location(ci, null, null));
+  }
+
+  private copyLines(): void {
+    const it = this.item;
+    if (it === null) return;
+    if (!("line" in it)) {
+      this.opts.onCopy(this.location(it.chunk, null, null));
+      return;
+    }
+    const a = this.anchor ?? it.line;
+    this.opts.onCopy(this.location(it.chunk, Math.min(a, it.line), Math.max(a, it.line)));
+  }
+
   private editComment(): void {
     const it = this.item;
     if (it === null || !("comment" in it)) return;
@@ -644,6 +678,9 @@ export class ChangesView implements Component {
         return;
       case "c":
         this.commentLines();
+        return;
+      case "y":
+        this.copyLines();
         return;
       case "E":
         this.editComment();
@@ -841,6 +878,9 @@ export class ChangesView implements Component {
       case "c":
         this.commentChunk();
         return;
+      case "y":
+        this.copyChunk();
+        return;
       default:
         return;
     }
@@ -1025,8 +1065,8 @@ export class ChangesView implements Component {
       : this.sideFocus
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
-      ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
-      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
+      ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("y", "copy loc")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}y${C.dim} copy loc  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
     out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;
