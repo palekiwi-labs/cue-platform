@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
+import { Editor } from "@earendil-works/pi-tui"
+import { TurnComments } from "./comments"
 import { faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
 const user = (text: string) => ({ type: "message", message: { role: "user", content: text } })
@@ -180,7 +182,7 @@ describe("TurnReader chunk focus", () => {
     expect(lines[0]).toContain("latest turn · 1 message · chunk 1/3")
     expect(focusedText(lines)).toEqual(["Title", "intro"])
     expect(body(lines).filter(isFaint).map(text)).toEqual(["second", "third"])
-    expect(lines.at(-1)).toContain(`${FOCUS_KEY} unfocus · ↑↓ chunk · esc`)
+    expect(lines.at(-1)).toContain(`${FOCUS_KEY} unfocus · c comment · ↑↓ chunk · esc`)
     reader.toggleFocus()
     expect(reader.render(60).some(isFaint)).toBe(false)
   })
@@ -290,5 +292,164 @@ describe("TurnReader chunk focus", () => {
     expect(body(lines).filter(isFaint).map(text)).toEqual(["a1", "a2", "---"])
     reader.toggle()
     expect(reader.render(60)[0]).toContain("chunk 1/1")
+  })
+})
+
+describe("TurnReader chunk comments", () => {
+  const SGR = /\x1b\[[0-9;]*m|\x1b_pi:c\x07/g
+  const strip = (l: string) => l.replace(SGR, "")
+  const fakeTui = { terminal: { rows: 40 }, requestRender: () => {} }
+  const editor = () => new Editor(fakeTui as never, { borderColor: id, selectList: {} as never })
+  const type = (reader: TurnReader, s: string) => {
+    for (const ch of s) reader.composeInput(ch)
+  }
+  const open = (messages: string[], comments = new TurnComments(), rows = 40) => {
+    const reader = new TurnReader(plain, md, messages, () => rows, false, false, comments)
+    reader.render(60)
+    return reader
+  }
+
+  test("c composes on the focused chunk and enter saves it inline under the chunk", () => {
+    const comments = new TurnComments()
+    const reader = open(["one\n\ntwo"], comments)
+    reader.toggleFocus()
+    reader.move(1)
+    reader.render(60)
+    expect(reader.comment(editor())).toBe(true)
+    type(reader, "why two?")
+    const composing = reader.render(60).map(strip)
+    expect(reader.composing()).toBe(true)
+    expect(composing.at(-1)).toContain("enter save · shift+enter newline · esc cancel")
+    expect(composing.some((l) => l.includes("why two?"))).toBe(true)
+    reader.composeInput("\r")
+    expect(reader.composing()).toBe(false)
+    expect(comments.entries()).toEqual([["0:1", { quote: "two", text: "why two?" }]])
+    expect(reader.render(60).map(strip)).toEqual([
+      "╭─ latest turn · 1 message · chunk 2/2 · 1 comment ────────╮",
+      "│" + " ".repeat(58) + "│",
+      "│  one" + " ".repeat(53) + "│",
+      "│" + " ".repeat(58) + "│",
+      "│  two" + " ".repeat(53) + "│",
+      "│  ┃ why two?" + " ".repeat(46) + "│",
+      "│" + " ".repeat(58) + "│",
+      "╰─────── f unfocus · c comment · d delete · r reply · esc ─╯",
+    ])
+  })
+
+  test("the comment is dimmed with its chunk and shown below it in the frame", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "note on one")
+    const reader = open(["one\n\ntwo"], comments)
+    reader.toggleFocus()
+    reader.move(1)
+    const lines = reader.render(60)
+    const row = lines.find((l) => strip(l).includes("note on one"))!
+    expect(row).toContain("\x1b[2m")
+    expect(lines.at(-1)).toContain("f unfocus · c comment · r reply · ↑↓ chunk · esc")
+    expect(lines.at(-1)).not.toContain("d delete")
+  })
+
+  test("c turns focus on first, and esc keeps the unsaved text for the next compose", () => {
+    const comments = new TurnComments()
+    const reader = open(["one\n\ntwo"], comments)
+    reader.comment(editor())
+    expect(reader.focused()).toBe(true)
+    type(reader, "draft")
+    reader.cancelComment()
+    expect(reader.composing()).toBe(false)
+    expect(comments.size).toBe(0)
+    const again = editor()
+    reader.comment(again)
+    expect(again.getText()).toBe("draft")
+  })
+
+  test("editing starts from the saved comment; empty text deletes it; d deletes and c restores", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "saved")
+    const reader = open(["one\n\ntwo"], comments)
+    reader.toggleFocus()
+    const e = editor()
+    reader.comment(e)
+    expect(e.getText()).toBe("saved")
+    for (let i = 0; i < 5; i++) reader.composeInput("\x7f")
+    reader.composeInput("\r")
+    expect(comments.size).toBe(0)
+    comments.save("0:0", "one", "back")
+    reader.render(60)
+    reader.deleteComment()
+    expect(comments.size).toBe(0)
+    expect(reader.render(60).some((l) => l.includes("back"))).toBe(false)
+    const restore = editor()
+    reader.comment(restore)
+    expect(restore.getText()).toBe("back")
+  })
+
+  test("multi-line comments wrap and keep their line breaks", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "one", "first line\n" + "word ".repeat(20).trim())
+    const lines = open(["one"], comments).render(30).map(strip)
+    const rows = lines.filter((l) => l.includes("┃")).map((l) => l.slice(3, -3).trimEnd())
+    expect(rows[0]).toBe("┃ first line")
+    expect(rows.length).toBeGreaterThan(2)
+    expect(lines.every((l) => l.length === 30)).toBe(true)
+  })
+
+  test("comments follow their message across the all/last toggle", () => {
+    const comments = new TurnComments()
+    const reader = open(["a1\n\na2", "b1"], comments)
+    reader.toggleFocus()
+    reader.render(60)
+    reader.comment(editor())
+    type(reader, "on b1")
+    reader.composeInput("\r")
+    expect(comments.get("1:0")?.quote).toBe("b1")
+    reader.toggle()
+    reader.render(60)
+    reader.toggleFocus()
+    reader.toggleFocus()
+    reader.render(60)
+    reader.comment(editor())
+    type(reader, "on a1")
+    reader.composeInput("\r")
+    expect(comments.entries().map(([k, c]) => [k, c.quote])).toEqual([["0:0", "a1"], ["1:0", "b1"]])
+    const all = reader.render(60).map(strip)
+    expect(all.findIndex((l) => l.includes("on a1"))).toBe(all.findIndex((l) => l.includes("a1")) + 1)
+    expect(all.findIndex((l) => l.includes("on b1"))).toBe(all.findIndex((l) => l.includes("│  b1")) + 1)
+    reader.toggle()
+    const last = reader.render(80).map(strip)
+    expect(last[0]).toContain("last of 2 messages · chunk 1/1 · 2 comments")
+    expect(last.some((l) => l.includes("on a1"))).toBe(false)
+    expect(last.some((l) => l.includes("on b1"))).toBe(true)
+  })
+
+  test("the composed chunk stays in view above the editor", () => {
+    const paragraphs = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n\n")
+    const reader = open([paragraphs], new TurnComments(), 20)
+    reader.toggleFocus()
+    for (let i = 0; i < 6; i++) reader.move(1)
+    reader.render(60)
+    reader.comment(editor())
+    const lines = reader.render(60).map(strip)
+    expect(lines).toHaveLength(15)
+    const at = lines.findIndex((l) => l.includes("line 7"))
+    const editorTop = lines.findIndex((l, i) => i > 0 && l.includes("────"))
+    expect(at).toBeGreaterThan(0)
+    expect(at).toBeLessThan(editorTop)
+  })
+
+  test("the footer drops low priority hints to fit", () => {
+    const comments = new TurnComments()
+    comments.save("1:0", "b", "x")
+    const paragraphs = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n\n")
+    const reader = new TurnReader(plain, md, ["a", paragraphs], () => 16, false, true, comments)
+    reader.render(86)
+    reader.toggleFocus()
+    const wide = reader.render(86).at(-1)!
+    expect(wide).toContain("r reply")
+    expect(wide).toContain("c comment")
+    const narrow = reader.render(50).at(-1)!
+    expect(narrow).toHaveLength(50)
+    expect(narrow).toContain(" f unfocus · c comment · d delete · r reply ")
+    expect(narrow).not.toContain("s speak")
   })
 })

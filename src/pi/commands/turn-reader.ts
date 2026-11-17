@@ -1,7 +1,17 @@
-import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@earendil-works/pi-coding-agent"
-import { matchesKey } from "@earendil-works/pi-tui"
-import { latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
-import { FOCUS_KEY, MARGIN_Y, MODE_KEY, readerWidth, TurnReader } from "../turn-reader/reader"
+import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getSelectListTheme } from "@earendil-works/pi-coding-agent"
+import { Editor, matchesKey } from "@earendil-works/pi-tui"
+import { appendReply, replyText, TurnComments } from "../turn-reader/comments"
+import { latestTurnKey, latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
+import {
+  COMMENT_KEY,
+  DELETE_KEY,
+  FOCUS_KEY,
+  MARGIN_Y,
+  MODE_KEY,
+  readerWidth,
+  REPLY_KEY,
+  TurnReader,
+} from "../turn-reader/reader"
 import type { SpeakResult, Speech } from "../speech"
 
 /** Open the latest turn reader. */
@@ -27,6 +37,40 @@ const SPEAK_NOTES = speakNotes("the latest turn")
 
 let live: ReaderMessage | undefined
 
+const drafts = new Map<string, TurnComments>()
+
+function turnComments(key: string | undefined): TurnComments {
+  if (key === undefined) return new TurnComments()
+  let comments = drafts.get(key)
+  if (!comments) drafts.set(key, (comments = new TurnComments()))
+  return comments
+}
+
+/**
+ * Append the reply built from `comments` to the editor text. On success the
+ * comments are cleared; on failure they are kept and false is returned.
+ */
+export function insertReply(ctx: ExtensionContext, comments: TurnComments): boolean {
+  const reply = replyText(comments)
+  if (reply === "") {
+    ctx.ui.notify("No comments to insert", "info")
+    return false
+  }
+  const n = comments.size
+  try {
+    const text = appendReply(ctx.ui.getEditorText(), reply)
+    ctx.ui.setEditorText(text)
+    if (ctx.ui.getEditorText() !== text) throw new Error("the editor did not take the text")
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    ctx.ui.notify(`Could not insert comments (${reason}); drafts kept`, "error")
+    return false
+  }
+  comments.clear()
+  ctx.ui.notify(`Inserted ${n} comment${n === 1 ? "" : "s"} into the editor`, "info")
+  return true
+}
+
 export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeaker): Promise<void> {
   if (!ctx.hasUI) return
   const branch = ctx.sessionManager.getBranch() as Parameters<typeof latestTurnTexts>[0]
@@ -36,13 +80,17 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
     return
   }
   const running = !ctx.isIdle()
+  const comments = turnComments(latestTurnKey(branch))
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const backdrop = tui.showOverlay(
         { render: (width) => Array(tui.terminal.rows).fill(" ".repeat(width)), invalidate: () => {} },
         { anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
       )
-      const reader = new TurnReader(theme, getMarkdownTheme(), messages, () => tui.terminal.rows, running, !!speaker)
+      const reader = new TurnReader(
+        theme, getMarkdownTheme(), messages, () => tui.terminal.rows, running, !!speaker, comments,
+      )
+      const editorTheme = { borderColor: (s: string) => theme.fg("accent", s), selectList: getSelectListTheme() }
       const close = () => {
         backdrop.hide()
         done()
@@ -50,8 +98,18 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
       return {
         render: (width) => reader.render(width),
         invalidate: () => reader.invalidate(),
+        dispose: () => reader.cancelComment(),
         handleInput(data: string) {
-          if (kb.matches(data, "tui.select.up") || data === "k") reader.move(-1)
+          if (reader.composing()) {
+            if (kb.matches(data, "tui.select.cancel")) reader.cancelComment()
+            else reader.composeInput(data)
+          }
+          else if (data === COMMENT_KEY) reader.comment(new Editor(tui, editorTheme))
+          else if (data === DELETE_KEY) reader.deleteComment()
+          else if (data === REPLY_KEY) {
+            if (insertReply(ctx, comments)) return close()
+          }
+          else if (kb.matches(data, "tui.select.up") || data === "k") reader.move(-1)
           else if (kb.matches(data, "tui.select.down") || data === "j") reader.move(1)
           else if (kb.matches(data, "tui.select.pageUp") || data === "b") reader.page(-1)
           else if (kb.matches(data, "tui.select.pageDown") || data === " ") reader.page(1)

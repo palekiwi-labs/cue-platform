@@ -12,7 +12,19 @@ export interface ReaderMessage {
 
 interface BranchEntry {
   type: string
+  id?: string
   message?: ReaderMessage
+}
+
+/**
+ * Identity of the latest turn: the entry id of its user message, else that
+ * message's timestamp or position. Undefined when there is no user message.
+ */
+export function latestTurnKey(branch: readonly BranchEntry[]): string | undefined {
+  const at = branch.findLastIndex((e) => e.type === "message" && e.message?.role === "user")
+  if (at < 0) return undefined
+  const entry = branch[at]!
+  return entry.id ?? (entry.message?.timestamp !== undefined ? `t${entry.message.timestamp}` : `#${at}`)
 }
 
 function assistantText(message: ReaderMessage): string {
