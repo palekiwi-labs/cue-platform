@@ -217,8 +217,8 @@ export class TurnReader implements Component {
     const body: Body = { width: inner, all: this.all, version, lines: [], owner: [], lead: [], chunks: [] }
     const base = this.messages.length - this.shown().length
     const mark = inner >= 6 ? COMMENT_GUTTER : COMMENT_GUTTER.trimEnd()
-    const gutter = this.theme.fg("accent", mark)
-    const label = gutter + this.theme.fg("accent", COMMENT_LABEL)
+    const gutter = this.theme.fg("border", mark)
+    const label = gutter + this.theme.fg("border", COMMENT_LABEL)
     const textWidth = Math.max(1, inner - visibleWidth(mark))
     const push = (line: string, chunk = -1, lead = "") => {
       body.lines.push(line)
