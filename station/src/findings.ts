@@ -186,7 +186,7 @@ export function severityCounts(r: FindingsRun): string {
   const bySeverity = obj(r.summary.by_severity);
   const counts = SEVERITY.filter((s) => typeof bySeverity[s] === "number" && (bySeverity[s] as number) > 0)
     .map((s) => `${severityColor(s)}${String(bySeverity[s])} ${s}`);
-  const verified = counts.length === 0 ? "" : `${counts.join(`${C.dim}  `)} ${C.dim}verified`;
+  const verified = counts.length === 0 ? "" : counts.join(`${C.dim}  `);
   const dismissed = r.findings.filter(isDismissed).length;
   const unconfirmable = r.findings.filter(
     (f) => !isDismissed(f) && f.verification?.verdict.toLowerCase() === "unconfirmable",

@@ -72,7 +72,7 @@ test("loadRun reads run.json and the verifier file", () => {
   assert.deepEqual(r.findings.map((f) => f.id), ["finding-2", "finding-1"]);
 });
 
-test("severityCounts labels verified counts and adds unconfirmable and dismissed", () => {
+test("severityCounts lists verified counts, then unconfirmable and dismissed", () => {
   const root = store({
     "run.json": RUN,
     "verifiers-opus.json": {
@@ -87,7 +87,7 @@ test("severityCounts labels verified counts and adds unconfirmable and dismissed
     },
   });
   const plain = stripTerminalSequences(severityCounts(loadRun(ADDRESS, root)));
-  assert.equal(plain, "1 medium  1 low verified  · 1 unconfirmable  1 dismissed");
+  assert.equal(plain, "1 medium  1 low  · 1 unconfirmable  1 dismissed");
 });
 
 test("loadRun reports runs without verified findings", () => {
