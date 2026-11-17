@@ -75,7 +75,10 @@ test("preparerRun pins the head worktree and the review-pr context", () => {
   assert.equal(run.model, "anthropic/claude-opus-5-5");
   assert.equal(run.agent.isolated, true);
   assert.ok(run.prompt.includes(saveCommand(["/nix/node", "/st/bin/station.js"], pr)));
-  assert.equal(preparerRun(["s"], pr, "m/x").model, "m/x");
+  assert.deepEqual(run.agent.extensions, ["npm:@gotgenes/pi-anthropic-auth"]);
+  const other = preparerRun(["s"], pr, "m/x");
+  assert.equal(other.model, "m/x");
+  assert.equal(other.agent.extensions, undefined);
 });
 
 test("saveCommand quotes paths with spaces", () => {
