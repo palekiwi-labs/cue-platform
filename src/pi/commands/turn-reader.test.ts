@@ -90,10 +90,10 @@ describe("speaking from the reader", () => {
     return { requests, request: (texts: readonly string[]) => (requests.push(texts), result) }
   }
 
-  test("s requests speech of the displayed text and reports it", async () => {
+  test("with focus off s requests speech of the displayed text and reports it", async () => {
     const { ctx, notes, keys, rendered } = fakeCtx(turn)
     const s = speaker("sent")
-    keys.push(READER_SPEAK_KEY, "q")
+    keys.push("f", READER_SPEAK_KEY, "q")
     await openTurnReader(ctx, s)
     expect(s.requests).toEqual([["answer"]])
     expect(notes).toEqual(["Speaking the latest turn"])
@@ -104,13 +104,13 @@ describe("speaking from the reader", () => {
     const two = [...turn, { type: "message", message: { role: "assistant", content: [{ type: "text", text: "more" }] } }]
     const last = fakeCtx(two)
     const s1 = speaker("sent")
-    last.keys.push(READER_SPEAK_KEY, "q")
+    last.keys.push("f", READER_SPEAK_KEY, "q")
     await openTurnReader(last.ctx, s1)
     expect(s1.requests).toEqual([["more"]])
 
     const all = fakeCtx(two)
     const s2 = speaker("sent")
-    all.keys.push("a", READER_SPEAK_KEY, "q")
+    all.keys.push("f", "a", READER_SPEAK_KEY, "q")
     await openTurnReader(all.ctx, s2)
     expect(s2.requests).toEqual([["answer", "more"]])
   })
@@ -127,7 +127,7 @@ describe("speaking from the reader", () => {
   test("in focus mode s speaks only the focused chunk, not its comment", async () => {
     const { ctx, notes, keys, frames } = fakeCtx(chunked)
     const s = speaker("sent")
-    keys.push("f", DOWN, "c", ..."note", "\r", READER_SPEAK_KEY, "f", READER_SPEAK_KEY, "q")
+    keys.push(DOWN, "c", ..."note", "\r", READER_SPEAK_KEY, "f", READER_SPEAK_KEY, "q")
     await openTurnReader(ctx, s)
     expect(s.requests).toEqual([["two"], ["one\n\ntwo\n\nthree"]])
     expect(notes).toEqual(["Speaking the focused chunk", "Speaking the latest turn"])
@@ -136,9 +136,9 @@ describe("speaking from the reader", () => {
   })
 
   test("a refused chunk request is reported, as in a running snapshot", async () => {
-    const { ctx, notes, keys, rendered } = fakeCtx(chunked, false)
+    const { ctx, notes, keys, rendered } = fakeCtx([{ ...turn[0]!, id: "refused" }, chunked[1]], false)
     const s = speaker("busy")
-    keys.push("f", READER_SPEAK_KEY, "q")
+    keys.push(READER_SPEAK_KEY, "q")
     await openTurnReader(ctx, s)
     expect(rendered()[0]).toContain("snapshot")
     expect(s.requests).toEqual([["one"]])
@@ -156,14 +156,21 @@ describe("speaking from the reader", () => {
 
 
 describe("chunk focus in the reader", () => {
-  test("f toggles focus and the arrows step chunks only while focused", async () => {
-    const chunked = [turn[0], { type: "message", message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }]
-    const { ctx, keys, frames } = fakeCtx(chunked)
-    keys.push(DOWN, "f", DOWN, DOWN, UP, "f", "q")
+  test("opens focused on the first chunk; the arrows step and wrap; f toggles focus", async () => {
+    const chunked = [
+      { type: "message", id: "focus", message: { role: "user", content: "q" } },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } },
+    ]
+    const { ctx, keys, frames, rendered } = fakeCtx(chunked)
+    keys.push(DOWN, UP, UP, DOWN, "f", DOWN, "f", "q")
     await openTurnReader(ctx)
-    const heads = frames.slice(0, 6).map((f) => /chunk \d\/\d/.exec(f[0]!)?.[0])
-    expect(heads).toEqual([undefined, "chunk 1/3", "chunk 2/3", "chunk 3/3", "chunk 2/3", undefined])
-    expect(frames[2]!.filter((l) => l.includes("\x1b[2m"))).toHaveLength(2)
+    const head = (f: string[]) => /chunk \d\/\d/.exec(f[0]!)?.[0]
+    expect(head(rendered())).toBe("chunk 1/3")
+    expect(rendered().filter((l) => l.includes("\x1b[2m"))).toHaveLength(2)
+    expect(frames.slice(0, 7).map(head)).toEqual([
+      "chunk 2/3", "chunk 1/3", "chunk 3/3", "chunk 1/3", undefined, undefined, "chunk 1/3",
+    ])
+    expect(frames[0]!.filter((l) => l.includes("\x1b[2m"))).toHaveLength(2)
     expect(frames[5]!.some((l) => l.includes("\x1b[2m"))).toBe(false)
   })
 })
@@ -276,7 +283,7 @@ describe("chunk comments in the reader", () => {
     registerTurnReader(pi as unknown as ExtensionAPI)
     handlers.message_start!({ message: partial })
     const running = fakeCtx([userEntry], false)
-    running.keys.push("f", "j", "c", ...chars("early"), ENTER, "q")
+    running.keys.push("j", "c", ...chars("early"), ENTER, "q")
     await openTurnReader(running.ctx)
     expect(running.rendered()[0]).toContain("snapshot")
     handlers.agent_end!()
@@ -285,7 +292,7 @@ describe("chunk comments in the reader", () => {
     const later = fakeCtx([userEntry, done], true, "")
     later.keys.push("r")
     await openTurnReader(later.ctx)
-    expect(hasLine(later.rendered(), "┃ early")).toBe(true)
+    expect(hasLine(later.rendered().map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")), "┃ early")).toBe(true)
     expect(later.editor.text).toBe("> tw\n\nearly")
   })
 })
@@ -304,7 +311,7 @@ describe("copying from the reader", () => {
   test("y copies the focused chunk's source, not its comment, and keeps the reader open", async () => {
     const { ctx, keys, notes, events } = fakeCtx(chunked)
     const c = clipboard()
-    keys.push("f", "j", "c", ..."note", "\r", COPY_KEY, "j", COPY_KEY, "q")
+    keys.push("j", "c", ..."note", "\r", COPY_KEY, "j", COPY_KEY, "q")
     await openTurnReader(ctx, undefined, c.copy)
     expect(c.copied).toEqual(["two", "three"])
     expect(notes).toEqual(["Copied the focused chunk", "Copied the focused chunk"])
@@ -314,16 +321,16 @@ describe("copying from the reader", () => {
   test("y does nothing with focus off", async () => {
     const { ctx, keys, notes, frames } = fakeCtx(chunked)
     const c = clipboard()
-    keys.push(COPY_KEY, "q")
+    keys.push("f", COPY_KEY, "q")
     await openTurnReader(ctx, undefined, c.copy)
     expect(c.copied).toEqual([])
     expect(notes).toEqual([])
-    expect(frames[0]!.at(-1)).not.toContain(`${COPY_KEY} copy`)
+    expect(frames[1]!.at(-1)).not.toContain(`${COPY_KEY} copy`)
   })
 
   test("a failed copy is reported as an error with its reason; the reader stays open", async () => {
     const { ctx, keys, notes, levels, events } = fakeCtx(chunked)
-    keys.push("f", COPY_KEY, "q")
+    keys.push(COPY_KEY, "q")
     await openTurnReader(ctx, undefined, clipboard(new Error("Clipboard unavailable")).copy)
     expect(notes).toEqual(["Could not copy the focused chunk: Clipboard unavailable"])
     expect(levels).toEqual(["error"])
