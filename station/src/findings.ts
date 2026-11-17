@@ -5,6 +5,7 @@ import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWith
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { catFiles, run } from "./git.js";
 import { highlightFile } from "./highlight.js";
+import { markdownRows } from "./markdown.js";
 
 export interface Finding {
   id: string;
@@ -283,7 +284,7 @@ export class FindingsView implements Component {
   private section(title: string, body: string, w: number): string[] {
     const out = ["", `${C.accent}${BOLD}${title}${RESET}`, ""];
     const pw = Math.min(w, PROSE_WIDTH);
-    for (const para of body.split("\n")) out.push(...wrapTextWithAnsi(`${C.text}${para}`, pw));
+    out.push(...markdownRows(body, pw));
     return out;
   }
 
