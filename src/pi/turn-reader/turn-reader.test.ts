@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
-import { Editor, setKittyProtocolActive } from "@earendil-works/pi-tui"
+import { Editor, setKittyProtocolActive, visibleWidth } from "@earendil-works/pi-tui"
 import { TurnComments } from "./comments"
 import { COPY_KEY, faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
@@ -679,6 +679,24 @@ describe("TurnReader copy", () => {
     const reader = new TurnReader(plain, md, ["**bold** `code`"], () => 40, false, false, comments)
     expect(reader.render(60).some((l) => l.includes("my note"))).toBe(true)
     expect(reader.focusedSource()).toBe("**bold** `code`")
+  })
+
+  test("a flash replaces the hints until cleared, fits narrow widths and yields to the composer", () => {
+    const reader = new TurnReader(plain, md, ["one\n\ntwo"], () => 40)
+    reader.render(80)
+    reader.showFlash("copied")
+    expect(reader.render(80).at(-1)).toContain(" copied ")
+    expect(reader.render(80).at(-1)).not.toContain("f unfocus")
+    reader.showFlash("copy failed: " + "x".repeat(100))
+    const narrow = reader.render(30).at(-1)!
+    expect(visibleWidth(narrow)).toBe(30)
+    expect(narrow).toContain("copy failed")
+    reader.comment(new Editor({ terminal: { rows: 40 }, requestRender: () => {} } as never, { borderColor: id, selectList: {} as never }))
+    expect(reader.render(80).at(-1)).toContain("enter save")
+    reader.cancelComment()
+    expect(reader.render(80).at(-1)).toContain("copy failed")
+    reader.clearFlash()
+    expect(reader.render(80).at(-1)).toContain(`f unfocus · ${COPY_KEY} copy`)
   })
 
   test("hints the copy key only while focused, dropping it first when narrow", () => {

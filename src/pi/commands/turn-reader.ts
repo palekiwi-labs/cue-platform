@@ -82,16 +82,20 @@ export function insertReply(ctx: ExtensionContext, comments: TurnComments): bool
 /** Writes text to the system clipboard; rejects when no clipboard route works. */
 export type ClipboardWriter = (text: string) => Promise<void>
 
-/** Copy the focused chunk's source to the clipboard and report the outcome. */
-export async function copyChunk(ctx: ExtensionContext, text: string, copy: ClipboardWriter): Promise<void> {
+/**
+ * Copy the focused chunk's source to the clipboard and report the outcome.
+ * Resolves to the short outcome the reader shows in its footer.
+ */
+export async function copyChunk(ctx: ExtensionContext, text: string, copy: ClipboardWriter): Promise<string> {
   try {
     await copy(text)
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     ctx.ui.notify(`Could not copy the focused chunk: ${reason}`, "error")
-    return
+    return `copy failed: ${reason}`
   }
   ctx.ui.notify("Copied the focused chunk", "info")
+  return "copied"
 }
 
 export async function openTurnReader(
@@ -127,6 +131,7 @@ export async function openTurnReader(
         invalidate: () => reader.invalidate(),
         dispose: () => reader.cancelComment(),
         handleInput(data: string) {
+          reader.clearFlash()
           if (reader.composing()) {
             if (kb.matches(data, "tui.select.cancel")) reader.cancelComment()
             else reader.composeInput(data)
@@ -146,7 +151,12 @@ export async function openTurnReader(
           else if (data === FOCUS_KEY) reader.toggleFocus()
           else if (data === COPY_KEY) {
             const text = reader.focusedSource()
-            if (text !== undefined) void copyChunk(ctx, text, copy)
+            if (text !== undefined) {
+              void copyChunk(ctx, text, copy).then((flash) => {
+                reader.showFlash(flash)
+                tui.requestRender()
+              })
+            }
           }
           else if (speaker && data === READER_SPEAK_KEY) {
             const notes = reader.focused() ? SPEAK_CHUNK_NOTES : SPEAK_NOTES

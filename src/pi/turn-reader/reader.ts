@@ -143,6 +143,7 @@ export class TurnReader implements Component {
   private composer?: Composer
   private composeRows = 0
   private revealNext = false
+  private flash = ""
 
   constructor(
     private theme: ReaderTheme,
@@ -183,6 +184,16 @@ export class TurnReader implements Component {
     if (!this.focus) return undefined
     const chunk = this.cache && this.body(this.cache.width).chunks[this.current]
     return chunk?.text
+  }
+
+  /** Show `text` in the footer in place of the key hints until cleared. */
+  showFlash(text: string): void {
+    this.flash = text
+  }
+
+  /** Restore the key hints in the footer. */
+  clearFlash(): void {
+    this.flash = ""
   }
 
   /** Whether chunk focus is on. */
@@ -400,6 +411,7 @@ export class TurnReader implements Component {
   private footer(width: number, position: string): string {
     const n = this.messages.length
     const scrolls = position !== ""
+    if (this.flash !== "" && !this.composer) return ` ${truncateToWidth(this.flash, Math.max(1, width - 6), "…")} `
     const chunk = this.focus && (this.cache?.chunks.length ?? 0) > 0
     const hints: [string, number][] = this.composer
       ? [["enter save", 9], ["alt+enter newline", 1], ["esc cancel", 9]]
