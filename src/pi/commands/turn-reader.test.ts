@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { SpeakResult } from "../speech"
 import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader } from "./turn-reader"
 
-const ALT_U = "\x1bu"
+const CTRL_U = "\x15"
 const ESC = "\x1b"
 
 function fakeCtx(branch: unknown[], idle = true) {
@@ -55,7 +55,7 @@ describe("openTurnReader", () => {
     expect(events).toEqual([])
   })
 
-  for (const [name, key] of [["q", "q"], ["the shortcut", ALT_U], ["escape", ESC]] as const) {
+  for (const [name, key] of [["q", "q"], ["the shortcut", CTRL_U], ["escape", ESC]] as const) {
     test(`renders the turn text and closes on ${name}`, async () => {
       const { ctx, events, keys, rendered } = fakeCtx(turn)
       keys.push("j", key)
@@ -80,6 +80,21 @@ describe("speaking from the reader", () => {
     expect(s.requests).toEqual([["answer"]])
     expect(notes).toEqual(["Speaking the latest turn"])
     expect(rendered().at(-1)).toContain("s speak")
+  })
+
+  test("s speaks the last message, or all after toggling with a", async () => {
+    const two = [...turn, { type: "message", message: { role: "assistant", content: [{ type: "text", text: "more" }] } }]
+    const last = fakeCtx(two)
+    const s1 = speaker("sent")
+    last.keys.push(READER_SPEAK_KEY, "q")
+    await openTurnReader(last.ctx, s1)
+    expect(s1.requests).toEqual([["more"]])
+
+    const all = fakeCtx(two)
+    const s2 = speaker("sent")
+    all.keys.push("a", READER_SPEAK_KEY, "q")
+    await openTurnReader(all.ctx, s2)
+    expect(s2.requests).toEqual([["answer", "more"]])
   })
 
   test("a refused request is reported", async () => {
@@ -110,6 +125,6 @@ describe("registerTurnReader", () => {
     registerTurnReader(pi)
     expect(commands).toEqual(["cue:read"])
     expect(shortcuts).toEqual([READER_SHORTCUT])
-    expect(READER_SHORTCUT).toBe("alt+u")
+    expect(READER_SHORTCUT).toBe("ctrl+u")
   })
 })

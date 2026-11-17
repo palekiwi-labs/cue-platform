@@ -1,11 +1,11 @@
 import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import { matchesKey } from "@earendil-works/pi-tui"
 import { latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
-import { MARGIN_Y, readerWidth, TurnReader } from "../turn-reader/reader"
+import { MARGIN_Y, MODE_KEY, readerWidth, TurnReader } from "../turn-reader/reader"
 import type { SpeakResult, Speech } from "../speech"
 
 /** Open the latest turn reader. */
-export const READER_SHORTCUT = "alt+u"
+export const READER_SHORTCUT = "ctrl+u"
 /** Reader key that speaks the displayed text. */
 export const READER_SPEAK_KEY = "s"
 
@@ -57,8 +57,9 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
           else if (kb.matches(data, "tui.select.pageDown") || data === " ") reader.page(1)
           else if (matchesKey(data, "home") || data === "g") reader.top()
           else if (matchesKey(data, "end") || data === "G") reader.bottom()
+          else if (data === MODE_KEY) reader.toggle()
           else if (speaker && data === READER_SPEAK_KEY) {
-            const [note, level] = SPEAK_NOTES[speaker.request(messages, ctx)]
+            const [note, level] = SPEAK_NOTES[speaker.request(reader.shown(), ctx)]
             ctx.ui.notify(note, level)
           }
           else if (kb.matches(data, "tui.select.cancel") || matchesKey(data, READER_SHORTCUT) || data === "q") {

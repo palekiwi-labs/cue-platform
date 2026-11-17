@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
-import { readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
+import { MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
 const user = (text: string) => ({ type: "message", message: { role: "user", content: text } })
 const assistant = (timestamp: number, ...parts: { type: string; text?: string }[]) => ({
@@ -52,15 +52,45 @@ describe("TurnReader", () => {
     expect(readerWidth(50)).toBe(50)
   })
 
-  test("renders messages as markdown, separated by a rule, sized to content", () => {
+  test("shows the last message by default, sized to content", () => {
     const reader = new TurnReader(plain, md, ["# Title\n\nbody", "second"], () => 40)
-    const lines = reader.render(30)
-    expect(lines[0]).toStartWith("╭─ latest turn · 2 messages ")
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · last of 2 messages ")
+    expect(lines.slice(1, -1).map((l) => l.slice(1, -1).trim())).toEqual(["", "second", ""])
+    expect(lines.at(-1)).toContain(`${MODE_KEY} all · esc close`)
+    expect(reader.shown()).toEqual(["second"])
+    expect(lines.every((l) => l.length === 40)).toBe(true)
+  })
+
+  test("toggles to all messages as markdown, separated by a rule, and back", () => {
+    const reader = new TurnReader(plain, md, ["# Title\n\nbody", "second"], () => 40)
+    reader.toggle()
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · all 2 messages ")
     expect(lines.slice(1, -1).map((l) => l.slice(1, -1).trim())).toEqual([
       "", "Title", "", "body", "", "---", "", "second", "",
     ])
-    expect(lines.at(-1)).toContain("esc close")
-    expect(lines.every((l) => l.length === 30)).toBe(true)
+    expect(lines.at(-1)).toContain(`${MODE_KEY} last · esc close`)
+    expect(reader.shown()).toEqual(["# Title\n\nbody", "second"])
+    reader.toggle()
+    expect(reader.render(40)[0]).toContain("last of 2 messages")
+  })
+
+  test("draws the frame in the muted border color", () => {
+    const tagged = { fg: (c: string, s: string) => `<${c}>${s}`, bold: (s: string) => s }
+    const lines = new TurnReader(tagged, md, ["text"], () => 40).render(40)
+    expect(lines[0]).toStartWith("<borderMuted>╭─")
+    expect(lines[1]).toStartWith("<borderMuted>│")
+    expect(lines.join("")).not.toContain("<border>")
+  })
+
+  test("a single message has no mode toggle", () => {
+    const reader = new TurnReader(plain, md, ["only"], () => 40)
+    reader.toggle()
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · 1 message ")
+    expect(lines.at(-1)).not.toContain(`${MODE_KEY} all`)
+    expect(reader.shown()).toEqual(["only"])
   })
 
   test("hints the speak key only when speech is available", () => {
@@ -79,22 +109,44 @@ describe("TurnReader", () => {
     const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n\n")
     const reader = new TurnReader(plain, md, [lines], () => 16, true)
     const view = () => reader.render(40)
-    expect(reader.viewport()).toBe(10)
-    expect(view()).toHaveLength(14)
+    expect(reader.viewport()).toBe(8)
+    expect(view()).toHaveLength(12)
     expect(view()[0]).toContain("snapshot")
     expect(view()[2]).toContain("line 1")
-    expect(view().at(-1)).toContain("1-10/59")
+    expect(view().at(-1)).toContain("1-8/59")
     reader.scroll(2)
     expect(view()[2]).toContain("line 2")
     reader.page(1)
-    expect(view().at(-1)).toContain("12-21/59")
+    expect(view().at(-1)).toContain("10-17/59")
     reader.bottom()
-    expect(view()[11]).toContain("line 30")
-    expect(view().at(-1)).toContain("50-59/59")
+    expect(view()[9]).toContain("line 30")
+    expect(view().at(-1)).toContain("52-59/59")
     reader.scroll(5)
-    expect(view().at(-1)).toContain("50-59/59")
+    expect(view().at(-1)).toContain("52-59/59")
     reader.top()
     reader.scroll(-3)
-    expect(view().at(-1)).toContain("1-10/59")
+    expect(view().at(-1)).toContain("1-8/59")
+  })
+
+  test("height is capped at three quarters of the terminal", () => {
+    expect(readerHeight(40)).toBe(30)
+    expect(readerHeight(41)).toBe(30)
+    const long = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n\n")
+    expect(new TurnReader(plain, md, [long], () => 40).render(40)).toHaveLength(30)
+  })
+
+  test("small terminals drop the padding rows but keep borders and a body row", () => {
+    const long = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n\n")
+    const at = (rows: number) => new TurnReader(plain, md, [long], () => rows).render(40)
+    expect(readerHeight(6)).toBe(4)
+    expect(at(6)).toHaveLength(4)
+    expect(at(6)[1]).toContain("line 0")
+    expect(at(8)).toHaveLength(6)
+    expect(at(8)[1].trim()).toBe("│" + " ".repeat(38) + "│")
+    for (const rows of [1, 3, 4, 5]) {
+      const lines = at(rows)
+      expect(lines).toHaveLength(3)
+      expect(lines[1]).toContain("line 0")
+    }
   })
 })

@@ -90,5 +90,6 @@ describe("registerTurnSummary", () => {
     registerTurnSummary(api)
     expect(commands).toEqual(["cue:summary"])
     expect(shortcuts).toEqual([SUMMARY_SHORTCUT])
+    expect(SUMMARY_SHORTCUT).toBe("alt+u")
   })
 })
