@@ -119,7 +119,19 @@ function build(repoPath: string, baseSha: string, headSha: string, subject: stri
   return buildPacketFromDiff(diff, { repoPath, branch, baseSha, headSha, subject, now: Date.now() });
 }
 
-export async function fromPr(cwd: string, number: string): Promise<Review> {
+export interface ResolvedPr {
+  repo: string;
+  slug: string;
+  number: number;
+  title: string;
+  baseRefName: string;
+  headRefName: string;
+  baseSha: string;
+  headSha: string;
+}
+
+/** Fetches the PR refs and pins its head (or the given local head) and the merge-base with its base branch. */
+export async function resolvePr(cwd: string, number: string, head?: string): Promise<ResolvedPr> {
   const repo = mainRepo(cwd);
   const pr = await ghPr(repo, number);
   const headRef = `refs/station/pr/${pr.number}/head`;
@@ -131,12 +143,26 @@ export async function fromPr(cwd: string, number: string): Promise<Review> {
     `+refs/pull/${pr.number}/head:${headRef}`,
     `+refs/heads/${pr.baseRefName}:${baseRef}`,
   ]);
-  const headSha = (await runAsync(repo, ["rev-parse", headRef])).trim();
+  const headSha = (await runAsync(repo, ["rev-parse", "--verify", `${head ?? headRef}^{commit}`])).trim();
   const baseSha = (await runAsync(repo, ["merge-base", baseRef, headSha])).trim();
+  return {
+    repo,
+    slug: repoSlug(repo),
+    number: pr.number,
+    title: pr.title,
+    baseRefName: pr.baseRefName,
+    headRefName: pr.headRefName,
+    baseSha,
+    headSha,
+  };
+}
+
+export async function fromPr(cwd: string, number: string): Promise<Review> {
+  const pr = await resolvePr(cwd, number);
+  const { repo, slug, baseSha, headSha } = pr;
   const wt = join(repo, "worktrees", "review", `pr-${pr.number}`);
   await ensureWorktree(repo, wt, headSha);
   const packet = build(wt, baseSha, headSha, pr.title);
-  const slug = repoSlug(repo);
   return {
     key: `${slug.replace(/\//g, "-")}-pr-${pr.number}`,
     title: `#${pr.number}  ${pr.title}`,
