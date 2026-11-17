@@ -29,7 +29,7 @@ test("age buckets", () => {
 
 test("list renders, navigates and opens", () => {
   const opened: number[] = [];
-  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: (p) => opened.push(p.number), onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: (p) => opened.push(p.number), onLaunch: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
   v.setPrs([pr(1), pr(2, ["me"])], "me");
   const lines = v.render(100).map(stripTerminalSequences);
   assert.ok(lines.every((l) => visibleWidth(l) <= 100));
@@ -41,7 +41,7 @@ test("list renders, navigates and opens", () => {
 });
 
 test("j/k and arrows wrap around the list ends and keep the selection visible", () => {
-  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onLaunch: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
   for (const key of ["j", "k", "\x1b[A", "\x1b[B"]) v.handleInput(key);
   assert.equal(v.selected(), undefined);
   v.setPrs([pr(1)], "me");
@@ -84,6 +84,7 @@ test("y copies the selected URL, h copies a Markdown link, with notices", () => 
     repo: "o/r",
     onQuit: () => {},
     onOpen: () => {},
+    onLaunch: () => {},
     onRefresh: () => {},
     onPickSort: () => {},
     onCopy: (text) => {
@@ -138,6 +139,7 @@ test("list defaults to recently updated and s picks a sort keeping the selection
     repo: "o/r",
     onQuit: () => {},
     onOpen: () => {},
+    onLaunch: () => {},
     onRefresh: () => {},
     onCopy: () => {},
     onPickSort: (current, c) => {
@@ -213,7 +215,7 @@ test("flat layout keeps the global sort", () => {
 });
 
 test("t toggles the tree keeping the selection across toggles and refreshes", () => {
-  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onLaunch: () => {}, onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
   const prs = [stacked(1, "main", 1), stacked(2, "b1", 5), stacked(3, "main", 3)];
   v.setPrs(prs, "me");
   assert.equal(v.layoutMode(), "flat");
@@ -239,4 +241,16 @@ test("t toggles the tree keeping the selection across toggles and refreshes", ()
   v.handleInput("t");
   assert.equal(v.layoutMode(), "flat");
   assert.equal(v.selected()?.number, 2);
+});
+
+test("L asks to launch for the selected PR", () => {
+  const out: number[] = [];
+  const v = new PrsView({ repo: "o/r", onQuit: () => {}, onOpen: () => {}, onLaunch: (p) => out.push(p.number), onRefresh: () => {}, onCopy: () => {}, onPickSort: () => {} });
+  v.handleInput("L");
+  assert.deepEqual(out, []);
+  v.setPrs([pr(1), pr(2)], "me");
+  v.handleInput("j");
+  v.handleInput("L");
+  assert.deepEqual(out, [2]);
+  assert.match(stripTerminalSequences(v.render(200).at(-1) ?? ""), /L launch/);
 });

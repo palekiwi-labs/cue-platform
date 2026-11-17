@@ -12,6 +12,7 @@ import {
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
+import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkthrough } from "./launch.js";
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
@@ -350,6 +351,21 @@ function showPrs(repo: string): void {
       busy = false;
     }
   };
+  const launch = async (pr: PrSummary, kind: LaunchKind): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    const title = `${kind} #${pr.number}`;
+    router.showPopup({ title, text: `launching ${kind} for ${pr.title}…`, footer: "ctrl+c quit" });
+    try {
+      const station = [process.execPath, process.argv[1] ?? "station"];
+      const text = kind === "review" ? await launchReview(repo, pr.number) : await launchWalkthrough(repo, pr.number, station);
+      router.showPopup({ title, text, footer: "any key" }, true);
+    } catch (e) {
+      router.showPopup({ title, text: errText(e), error: true, footer: "any key" }, true);
+    } finally {
+      busy = false;
+    }
+  };
   const list = new PrsView({
     repo: repoSlug(repo),
     onQuit: () => {
@@ -357,6 +373,12 @@ function showPrs(repo: string): void {
       void source.client.close().finally(() => router.quit());
     },
     onOpen: (pr) => void open(pr),
+    onLaunch: (pr) =>
+      router.showPopup(
+        { title: `launch #${pr.number}`, text: launchPickerText(), footer: "any other key cancel" },
+        true,
+        Object.fromEntries(LAUNCHES.map((l) => [l.key, () => void launch(pr, l.kind)])),
+      ),
     onRefresh: () => void refresh(),
     onCopy: (text) => process.stdout.write(osc52(text)),
     onPickSort: (current, choose) =>
