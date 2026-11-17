@@ -18,21 +18,22 @@ export async function pruneReviews(repo: string, open: Set<number>): Promise<Pru
   }
   if (existsSync(dir)) {
     for (const name of readdirSync(dir)) {
-      const m = name.match(/^pr-(\d+)$/);
+      const m = name.match(/^pr-(\d+)(-findings)?$/);
       if (m) numbers.add(Number(m[1]));
     }
   }
   for (const n of [...numbers].sort((a, b) => a - b)) {
     if (open.has(n)) continue;
-    const wt = join(dir, `pr-${n}`);
-    if (existsSync(wt)) {
-      const dirty = (await runAsync(wt, ["status", "--porcelain"])).trim() !== "";
-      if (dirty) {
-        result.kept.push(n);
-        continue;
-      }
-      await runAsync(repo, ["worktree", "remove", "--force", wt]);
+    const wts = [join(dir, `pr-${n}`), join(dir, `pr-${n}-findings`)].filter((p) => existsSync(p));
+    let dirty = false;
+    for (const wt of wts) {
+      if ((await runAsync(wt, ["status", "--porcelain"])).trim() !== "") dirty = true;
     }
+    if (dirty) {
+      result.kept.push(n);
+      continue;
+    }
+    for (const wt of wts) await runAsync(repo, ["worktree", "remove", "--force", wt]);
     for (const side of ["head", "base"]) {
       await runAsync(repo, ["update-ref", "-d", `refs/station/pr/${n}/${side}`]).catch(() => "");
     }
