@@ -79,6 +79,8 @@ export const COMMENT_KEY = "c"
 export const DELETE_KEY = "d"
 /** Reader key that puts the quoted chunks and their comments into the editor. */
 export const REPLY_KEY = "r"
+/** Reader key that copies the focused chunk's source to the clipboard. */
+export const COPY_KEY = "y"
 
 /** The text editor the reader composes comments in. */
 export interface CommentEditor {
@@ -162,8 +164,15 @@ export class TurnReader implements Component {
   /** The texts to speak: the focused chunk's source in focus mode, else the messages displayed. */
   spoken(): readonly string[] {
     if (!this.focus) return this.shown()
+    const text = this.focusedSource()
+    return text === undefined ? [] : [text]
+  }
+
+  /** The focused chunk's Markdown source without its comment, or undefined when focus is off. */
+  focusedSource(): string | undefined {
+    if (!this.focus) return undefined
     const chunk = this.cache && this.body(this.cache.width).chunks[this.current]
-    return chunk ? [chunk.text] : []
+    return chunk?.text
   }
 
   /** Whether chunk focus is on. */
@@ -387,6 +396,7 @@ export class TurnReader implements Component {
           [n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"}` : "", 4],
           [this.speakable ? (this.focus ? "s speak chunk" : "s speak") : "", 3],
           [`${FOCUS_KEY} ${this.focus ? "unfocus" : "focus"}`, 9],
+          [this.focus ? `${COPY_KEY} copy` : "", 1],
           [this.focus ? `${COMMENT_KEY} comment` : "", 9],
           [this.focusedComment() ? `${DELETE_KEY} delete` : "", 9],
           [this.comments.size > 0 ? `${REPLY_KEY} reply` : "", 9],

@@ -3,7 +3,7 @@ import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
 import { Editor } from "@earendil-works/pi-tui"
 import { TurnComments } from "./comments"
-import { faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
+import { COPY_KEY, faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
 const user = (text: string) => ({ type: "message", message: { role: "user", content: text } })
 const assistant = (timestamp: number, ...parts: { type: string; text?: string }[]) => ({
@@ -182,7 +182,7 @@ describe("TurnReader chunk focus", () => {
     expect(lines[0]).toContain("latest turn · 1 message · chunk 1/3")
     expect(focusedText(lines)).toEqual(["Title", "intro"])
     expect(body(lines).filter(isFaint).map(text)).toEqual(["second", "third"])
-    expect(lines.at(-1)).toContain(`${FOCUS_KEY} unfocus · c comment · ↑↓ chunk · esc`)
+    expect(lines.at(-1)).toContain(`${FOCUS_KEY} unfocus · ${COPY_KEY} copy · c comment · ↑↓ chunk · esc`)
     reader.toggleFocus()
     expect(reader.render(60).some(isFaint)).toBe(false)
   })
@@ -583,5 +583,38 @@ describe("TurnReader speech", () => {
     expect(reader.render(80).at(-1)).toContain("s speak chunk · f unfocus")
     reader.toggleFocus()
     expect(reader.render(80).at(-1)).not.toContain("s speak chunk")
+  })
+})
+
+describe("TurnReader copy", () => {
+  test("only focus mode has a source to copy: the focused chunk, following navigation", () => {
+    const reader = new TurnReader(plain, md, ["# Title\nintro\n\nsecond"], () => 40)
+    reader.render(60)
+    expect(reader.focusedSource()).toBeUndefined()
+    reader.toggleFocus()
+    reader.render(60)
+    expect(reader.focusedSource()).toBe("# Title\nintro")
+    reader.move(1)
+    expect(reader.focusedSource()).toBe("second")
+    reader.toggleFocus()
+    expect(reader.focusedSource()).toBeUndefined()
+  })
+
+  test("the copied source keeps its markdown and leaves out the chunk's comment", () => {
+    const comments = new TurnComments()
+    comments.save("0:0", "**bold** `code`", "my note")
+    const reader = new TurnReader(plain, md, ["**bold** `code`"], () => 40, false, false, comments)
+    reader.render(60)
+    reader.toggleFocus()
+    expect(reader.render(60).some((l) => l.includes("my note"))).toBe(true)
+    expect(reader.focusedSource()).toBe("**bold** `code`")
+  })
+
+  test("hints the copy key only while focused, dropping it first when narrow", () => {
+    const reader = new TurnReader(plain, md, ["one\n\ntwo"], () => 40)
+    expect(reader.render(80).at(-1)).not.toContain(`${COPY_KEY} copy`)
+    reader.toggleFocus()
+    expect(reader.render(80).at(-1)).toContain(`f unfocus · ${COPY_KEY} copy · c comment`)
+    expect(reader.render(40).at(-1)).not.toContain(`${COPY_KEY} copy`)
   })
 })

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { SpeakResult } from "../speech"
+import { COPY_KEY } from "../turn-reader/reader"
 import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader } from "./turn-reader"
 
 const CTRL_U = "\x15"
@@ -12,6 +13,7 @@ const KEYS: Record<string, string> = { "tui.select.cancel": ESC, "tui.select.up"
 function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = false) {
   const editor = { text: editorText }
   const notes: string[] = []
+  const levels: string[] = []
   const events: string[] = []
   const keys: string[] = []
   let rendered: string[] = []
@@ -28,7 +30,10 @@ function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = fals
     isIdle: () => idle,
     sessionManager: { getBranch: () => branch },
     ui: {
-      notify: (msg: string) => notes.push(msg),
+      notify: (msg: string, level: string) => {
+        notes.push(msg)
+        levels.push(level)
+      },
       getEditorText: () => editor.text,
       setEditorText: (text: string) => {
         if (failSet) throw new Error("no editor")
@@ -49,7 +54,7 @@ function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = fals
       },
     },
   } as unknown as ExtensionContext
-  return { ctx, notes, events, keys, frames, editor, rendered: () => rendered }
+  return { ctx, notes, levels, events, keys, frames, editor, rendered: () => rendered }
 }
 
 const turn = [
@@ -282,6 +287,56 @@ describe("chunk comments in the reader", () => {
     await openTurnReader(later.ctx)
     expect(hasLine(later.rendered(), "┃ early")).toBe(true)
     expect(later.editor.text).toBe("> tw\n\nearly")
+  })
+})
+
+describe("copying from the reader", () => {
+  const chunked = [turn[0], { type: "message", message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }]
+  function clipboard(error?: Error) {
+    const copied: string[] = []
+    const copy = async (text: string) => {
+      if (error) throw error
+      copied.push(text)
+    }
+    return { copied, copy }
+  }
+
+  test("y copies the focused chunk's source, not its comment, and keeps the reader open", async () => {
+    const { ctx, keys, notes, events } = fakeCtx(chunked)
+    const c = clipboard()
+    keys.push("f", "j", "c", ..."note", "\r", COPY_KEY, "j", COPY_KEY, "q")
+    await openTurnReader(ctx, undefined, c.copy)
+    expect(c.copied).toEqual(["two", "three"])
+    expect(notes).toEqual(["Copied the focused chunk", "Copied the focused chunk"])
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("y does nothing with focus off", async () => {
+    const { ctx, keys, notes, frames } = fakeCtx(chunked)
+    const c = clipboard()
+    keys.push(COPY_KEY, "q")
+    await openTurnReader(ctx, undefined, c.copy)
+    expect(c.copied).toEqual([])
+    expect(notes).toEqual([])
+    expect(frames[0]!.at(-1)).not.toContain(`${COPY_KEY} copy`)
+  })
+
+  test("a failed copy is reported as an error with its reason; the reader stays open", async () => {
+    const { ctx, keys, notes, levels, events } = fakeCtx(chunked)
+    keys.push("f", COPY_KEY, "q")
+    await openTurnReader(ctx, undefined, clipboard(new Error("Clipboard unavailable")).copy)
+    expect(notes).toEqual(["Could not copy the focused chunk: Clipboard unavailable"])
+    expect(levels).toEqual(["error"])
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("y types into the comment editor while composing", async () => {
+    const { ctx, keys, frames } = fakeCtx(chunked)
+    const c = clipboard()
+    keys.push("c", COPY_KEY, "\r", "q")
+    await openTurnReader(ctx, undefined, c.copy)
+    expect(c.copied).toEqual([])
+    expect(frames.at(-2)!.some((l) => l.includes("┃ y"))).toBe(true)
   })
 })
 

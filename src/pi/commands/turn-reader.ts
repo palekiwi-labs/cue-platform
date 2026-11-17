@@ -1,9 +1,16 @@
-import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme, getSelectListTheme } from "@earendil-works/pi-coding-agent"
+import {
+  copyToClipboard,
+  type ExtensionAPI,
+  type ExtensionContext,
+  getMarkdownTheme,
+  getSelectListTheme,
+} from "@earendil-works/pi-coding-agent"
 import { Editor, matchesKey } from "@earendil-works/pi-tui"
 import { appendReply, replyText, TurnComments } from "../turn-reader/comments"
 import { latestTurnKey, latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
 import {
   COMMENT_KEY,
+  COPY_KEY,
   DELETE_KEY,
   FOCUS_KEY,
   MARGIN_Y,
@@ -72,7 +79,26 @@ export function insertReply(ctx: ExtensionContext, comments: TurnComments): bool
   return true
 }
 
-export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeaker): Promise<void> {
+/** Writes text to the system clipboard; rejects when no clipboard route works. */
+export type ClipboardWriter = (text: string) => Promise<void>
+
+/** Copy the focused chunk's source to the clipboard and report the outcome. */
+export async function copyChunk(ctx: ExtensionContext, text: string, copy: ClipboardWriter): Promise<void> {
+  try {
+    await copy(text)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    ctx.ui.notify(`Could not copy the focused chunk: ${reason}`, "error")
+    return
+  }
+  ctx.ui.notify("Copied the focused chunk", "info")
+}
+
+export async function openTurnReader(
+  ctx: ExtensionContext,
+  speaker?: TurnSpeaker,
+  copy: ClipboardWriter = copyToClipboard,
+): Promise<void> {
   if (!ctx.hasUI) return
   const branch = ctx.sessionManager.getBranch() as Parameters<typeof latestTurnTexts>[0]
   const messages = latestTurnTexts(branch, live)
@@ -118,6 +144,10 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
           else if (matchesKey(data, "end") || data === "G") reader.bottom()
           else if (data === MODE_KEY) reader.toggle()
           else if (data === FOCUS_KEY) reader.toggleFocus()
+          else if (data === COPY_KEY) {
+            const text = reader.focusedSource()
+            if (text !== undefined) void copyChunk(ctx, text, copy)
+          }
           else if (speaker && data === READER_SPEAK_KEY) {
             const notes = reader.focused() ? SPEAK_CHUNK_NOTES : SPEAK_NOTES
             const [note, level] = notes[speaker.request(reader.spoken(), ctx)]
