@@ -178,6 +178,27 @@ function severityColor(s: string): string {
   }
 }
 
+/**
+ * Header counts: verified findings by severity from the run summary, then the
+ * unconfirmable and dismissed findings the list also shows.
+ */
+export function severityCounts(r: FindingsRun): string {
+  const bySeverity = obj(r.summary.by_severity);
+  const counts = SEVERITY.filter((s) => typeof bySeverity[s] === "number" && (bySeverity[s] as number) > 0)
+    .map((s) => `${severityColor(s)}${String(bySeverity[s])} ${s}`);
+  const verified = counts.length === 0 ? "" : `${counts.join(`${C.dim}  `)} ${C.dim}verified`;
+  const dismissed = r.findings.filter(isDismissed).length;
+  const unconfirmable = r.findings.filter(
+    (f) => !isDismissed(f) && f.verification?.verdict.toLowerCase() === "unconfirmable",
+  ).length;
+  const rest = [
+    ...(unconfirmable > 0 ? [`${unconfirmable} unconfirmable`] : []),
+    ...(dismissed > 0 ? [`${dismissed} dismissed`] : []),
+  ];
+  const tail = rest.length === 0 ? "" : `${C.dim}${verified === "" ? "" : "  · "}${rest.join("  ")}`;
+  return verified + tail;
+}
+
 export function isDismissed(f: Finding): boolean {
   return f.dismiss_reason !== null || f.status?.toLowerCase() === "dismissed";
 }
@@ -377,10 +398,7 @@ export class FindingsView implements Component {
     const r = this.opts.run;
     const out: string[] = [];
     out.push(C.titleBg + fit(` ${C.text}${BOLD}findings  ${r.subject}`, width) + RESET);
-    const bySeverity = obj(r.summary.by_severity);
-    const counts = SEVERITY.filter((s) => typeof bySeverity[s] === "number" && (bySeverity[s] as number) > 0)
-      .map((s) => `${severityColor(s)}${String(bySeverity[s])} ${s}`)
-      .join(`${C.dim}  `);
+    const counts = severityCounts(r);
     out.push(C.barBg + fit(` ${C.dim}${r.context}   head ${C.text}${r.head.slice(0, 10)}   ${counts}`, width) + RESET);
 
     const sideW = Math.min(56, Math.max(28, Math.floor(width * 0.34)));
