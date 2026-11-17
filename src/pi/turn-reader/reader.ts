@@ -373,7 +373,7 @@ export class TurnReader implements Component {
     const n = this.messages.length
     const scrolls = position !== ""
     const hints: [string, number][] = this.composer
-      ? [["enter save", 9], ["shift+enter newline", 1], ["esc cancel", 9]]
+      ? [["enter save", 9], ["alt+enter newline", 1], ["esc cancel", 9]]
       : [
           [position, 2],
           [n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"}` : "", 4],

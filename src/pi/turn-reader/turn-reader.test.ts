@@ -319,7 +319,7 @@ describe("TurnReader chunk comments", () => {
     type(reader, "why two?")
     const composing = reader.render(60).map(strip)
     expect(reader.composing()).toBe(true)
-    expect(composing.at(-1)).toContain("enter save · shift+enter newline · esc cancel")
+    expect(composing.at(-1)).toContain("enter save · alt+enter newline · esc cancel")
     expect(composing.some((l) => l.includes("why two?"))).toBe(true)
     reader.composeInput("\r")
     expect(reader.composing()).toBe(false)
