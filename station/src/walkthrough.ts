@@ -2,16 +2,15 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Component,
-  Markdown,
-  type MarkdownTheme,
   matchesKey,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { excerpt, storeRoot } from "./findings.js";
+import { markdownRows } from "./markdown.js";
 import { catFiles } from "./git.js";
-import { highlightFile, highlightLines } from "./highlight.js";
+import { highlightFile } from "./highlight.js";
 import { prContext } from "./pr-review.js";
 
 export type RevKind = "base" | "head" | "commit";
@@ -290,38 +289,6 @@ export function loadWalkthroughSources(repoPath: string, w: Walkthrough): Map<st
 }
 
 const PROSE_WIDTH = 80;
-
-const paint = (color: string) => (t: string): string => `${color}${t}${C.text}`;
-
-const theme: MarkdownTheme = {
-  heading: (t) => `${C.accent}${BOLD}${t}${RESET}${C.text}`,
-  link: paint(C.accent),
-  linkUrl: paint(C.dim),
-  code: paint(C.mod),
-  codeBlock: paint(C.text),
-  codeBlockBorder: paint(C.faint),
-  quote: paint(C.dim),
-  quoteBorder: paint(C.faint),
-  hr: paint(C.faint),
-  listBullet: paint(C.accent),
-  bold: (t) => `${BOLD}${t}\x1b[22m`,
-  italic: (t) => `\x1b[3m${t}\x1b[23m`,
-  strikethrough: (t) => `\x1b[9m${t}\x1b[29m`,
-  underline: (t) => `\x1b[4m${t}\x1b[24m`,
-  highlightCode: (code, lang) => {
-    if (lang === undefined || lang === "") return code.split("\n").map((l) => `${C.text}${l}`);
-    try {
-      return highlightLines(code, lang);
-    } catch {
-      return code.split("\n").map((l) => `${C.text}${l}`);
-    }
-  },
-};
-
-function markdownRows(text: string, width: number): string[] {
-  if (text.trim() === "") return [];
-  return new Markdown(text, 0, 0, theme, { color: (t) => `${C.text}${t}` }).render(width);
-}
 
 function where(f: WalkthroughCode): string {
   return f.lines === null ? f.path : `${f.path}:${f.lines[0]}-${f.lines[1]}`;
