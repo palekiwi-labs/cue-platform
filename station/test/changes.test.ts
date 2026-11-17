@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { ChangesView, type ComposeRequest, type ExtraComment } from "../src/changes.js";
+import { ChangesView, type ComposeRequest } from "../src/changes.js";
 import { buildPacketFromDiff } from "../src/gen.js";
-import { type DiffRoundComment, reviewContext, slugify } from "../src/round.js";
+import { reviewContext, type RoundComment, slugify } from "../src/round.js";
 import {
   type CommentState,
   emptyComments,
@@ -43,12 +43,12 @@ interface Harness {
   comments: CommentState[];
   composed: ComposeRequest[];
   reply: { text: string | null };
-  submitted: DiffRoundComment[][];
+  submitted: RoundComment[][];
   submitOk: { ok: boolean };
   copied: string[];
 }
 
-function view(initial: CommentState = emptyComments(), extras?: ExtraComment[], extraCalls: string[] = []): Harness {
+function view(initial: CommentState = emptyComments()): Harness {
   const packet = buildPacketFromDiff(diff, {
     repoPath: "/tmp/r",
     branch: "b",
@@ -62,7 +62,7 @@ function view(initial: CommentState = emptyComments(), extras?: ExtraComment[], 
   const comments: CommentState[] = [];
   const composed: ComposeRequest[] = [];
   const reply = { text: "looks odd" as string | null };
-  const submitted: DiffRoundComment[][] = [];
+  const submitted: RoundComment[][] = [];
   const submitOk = { ok: true };
   const copied: string[] = [];
   const v = new ChangesView({
@@ -85,9 +85,6 @@ function view(initial: CommentState = emptyComments(), extras?: ExtraComment[], 
       done(submitOk.ok);
     },
     onCopy: (text) => copied.push(text),
-    extraComments: extras === undefined ? undefined : () => extras,
-    onEditExtra: (id) => extraCalls.push(`edit ${id}`),
-    onDeleteExtra: (id) => extraCalls.push(`delete ${id}`),
   });
   return { v, saved, opened, comments, composed, reply, submitted, submitOk, copied };
 }
@@ -344,23 +341,6 @@ test("S in the navigator submits every listed draft and clears them", () => {
     { outdated: true, anchor: "chunk", snippet: null },
   );
   assert.equal(comments.at(-1)?.comments.length, 0);
-});
-
-test("navigator lists finding and walkthrough comments after diff drafts", () => {
-  const calls: string[] = [];
-  const extras: ExtraComment[] = [
-    { id: "r1", label: "finding: Off by one", where: "Message", text: "why?", outdated: false },
-    { id: "r2", label: "walkthrough: Auth / Login", where: "Login", text: "stale", outdated: true },
-  ];
-  const { v, submitted } = view(emptyComments(), extras, calls);
-  assert.match(screen(v), /2 draft comments: 2 on findings\/walkthrough/);
-  keys(v, "C");
-  const text = screen(v);
-  assert.match(text, /finding: Off by o… Message/);
-  assert.match(text, /walkthrough: Aut… outdated/);
-  keys(v, "E", "j", "d", "S");
-  assert.deepEqual(calls, ["edit r1", "delete r2"]);
-  assert.deepEqual(submitted, [[]]);
 });
 
 test("failed submit keeps the drafts", () => {

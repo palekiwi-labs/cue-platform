@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnAsync } from "./git.js";
 
-export interface DiffRoundComment {
-  target: "diff";
+export interface RoundComment {
   path: string;
   chunk: string;
   outdated: boolean;
@@ -17,21 +16,6 @@ export interface DiffRoundComment {
   created_at: number;
 }
 
-/** A comment on one Markdown block of a review finding or a walkthrough step. */
-export interface ReaderRoundComment {
-  target: "finding" | "walkthrough";
-  source: string;
-  item: string;
-  item_title: string;
-  section: string;
-  quote: string;
-  outdated: boolean;
-  text: string;
-  created_at: number;
-}
-
-export type RoundComment = DiffRoundComment | ReaderRoundComment;
-
 export interface RoundTarget {
   repo: string;
   key: string;
@@ -41,7 +25,7 @@ export interface RoundTarget {
 }
 
 export interface Round {
-  schema: "station/round@2";
+  schema: "station/round@1";
   repo: string;
   review_key: string;
   title: string;
@@ -55,7 +39,7 @@ export interface Round {
 
 export function buildRound(target: RoundTarget, baseSha: string, headSha: string, comments: RoundComment[], now: number): Round {
   return {
-    schema: "station/round@2",
+    schema: "station/round@1",
     repo: target.repo,
     review_key: target.key,
     title: target.title,

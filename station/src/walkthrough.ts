@@ -304,8 +304,6 @@ export interface WalkthroughOptions {
   subtitle: string;
   onQuit: () => void;
   onOpen: (rev: string, file: string, line: number) => void;
-  onRead?: (chunk: number, section: number, step: number) => void;
-  commentCount?: (chunk: number, section: number, step: number) => number;
 }
 
 interface MainPane {
@@ -462,11 +460,6 @@ export class WalkthroughView implements Component {
         this.sideFocus = true;
         this.sideCursor = this.cursor;
         return;
-      case "\r": {
-        const row = this.rows[this.cursor];
-        if (row?.kind === "section") this.opts.onRead?.(row.chunk, row.section, this.step);
-        return;
-      }
       case "e": {
         const code = this.current().section?.steps[this.step]?.code;
         if (code != null) this.opts.onOpen(code.rev, code.path, code.lines?.[0] ?? 1);
@@ -600,10 +593,7 @@ export class WalkthroughView implements Component {
     if (section === null) return "";
     const code = section.steps[this.step]?.code;
     const loc = code == null ? "" : `${C.dim}${code.path} ${C.faint}${code.revKind}  `;
-    const row = this.rows[this.cursor];
-    const n = row?.kind === "section" ? (this.opts.commentCount?.(row.chunk, row.section, this.step) ?? 0) : 0;
-    const notes = n > 0 ? `${C.mod}${n}✎  ` : "";
-    return `${notes}${loc}${C.dim}step ${this.step + 1}/${section.steps.length}  `;
+    return `${loc}${C.dim}step ${this.step + 1}/${section.steps.length}  `;
   }
 
   render(width: number): string[] {
@@ -634,7 +624,7 @@ export class WalkthroughView implements Component {
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
     const keys = this.sideFocus
       ? ` ${k("j/k", "move")}${k("enter", "read")}${k("tab/esc", "back")}`
-      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${k("tab", "outline")}${k("t", "hide")}${this.opts.onRead === undefined ? "" : k("enter", "read")}${k("e", "open")}${k("q", "quit")}`;
+      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const right = `${more}${this.stepStatus()}${C.dim}${this.cursor + 1}/${this.rows.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
