@@ -131,7 +131,12 @@ class Router {
   private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
   constructor() {
-    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.altScreen.pageUp": [], "tui.altScreen.pageDown": [] }));
+    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, {
+      "tui.altScreen.pageUp": [],
+      "tui.altScreen.pageDown": [],
+      "tui.altScreen.previousPrompt": [],
+      "tui.altScreen.nextPrompt": [],
+    }));
     this.tui.addInputListener((data) => {
       if (this.composing !== null) {
         if (data === "\x1b") this.endCompose(null);
