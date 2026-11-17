@@ -39,7 +39,7 @@ function usage(code: number): never {
   out("       station walkthrough <w>  guided walkthrough (<ctx address>/review/walkthrough/<id>.json)");
   out("       station demo             built-in demo diff");
   out("");
-  out("  --context <slug>   cue context for submitted comment rounds (default review-<branch-slug>)");
+  out("  --context <slug>   cue context for submitted comment rounds of non-PR reviews (default review-<branch-slug>; PR reviews always use review-pr-N)");
   process.exit(code);
 }
 
@@ -51,14 +51,23 @@ function currentHead(repoPath: string): string | null {
   }
 }
 
-function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line: number): void {
-  openPath(tui, repoPath, file.status === "deleted" ? (file.old_path ?? file.path) : file.path, line);
+function openEditor(
+  tui: TuiAltScreen,
+  repoPath: string,
+  file: PacketFile,
+  line: number,
+  base?: string,
+): void {
+  openPath(tui, repoPath, file.status === "deleted" ? (file.old_path ?? file.path) : file.path, line, base);
 }
 
-function openPath(tui: TuiAltScreen, repoPath: string, path: string, line: number): void {
+function openPath(tui: TuiAltScreen, repoPath: string, path: string, line: number, base?: string): void {
   const editor = process.env.EDITOR ?? "nvim";
+  const env = { ...process.env };
+  if (base !== undefined && base !== "" && headInRepo(repoPath, base)) env.STATION_BASE = base;
+  else delete env.STATION_BASE;
   tui.stop({ preserveScreen: true });
-  spawnSync(editor, [`+${line}`, path], { cwd: repoPath, stdio: "inherit" });
+  spawnSync(editor, [`+${line}`, path], { cwd: repoPath, stdio: "inherit", env });
   tui.start();
   tui.requestRender(true);
 }
@@ -83,7 +92,7 @@ function changesView(
     onCopy: (text) => process.stdout.write(osc52(text)),
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
-    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line),
+    onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line, review.packet.base_sha),
     onSubmit: (comments, done) => void submit(router, review, comments, done),
   });
 }
@@ -97,7 +106,7 @@ async function submit(router: Router, review: Review, comments: RoundComment[], 
   }
   let context: string;
   try {
-    context = reviewContext(review.branch, contextOverride);
+    context = reviewContext(review.branch, review.pr, contextOverride);
   } catch (e) {
     fail(errText(e));
     return;
@@ -226,7 +235,7 @@ function prTabs(
     prWorktree: review.repoPath,
     chosen,
     onQuit,
-    openPath: (cwd, path, line) => openPath(router.tui, cwd, path, line),
+    openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
   };
   return new TabsScreen([
@@ -256,7 +265,7 @@ function showWalkthrough(address: string): void {
     subtitle: address,
     onQuit: () => router.quit(),
     onOpen: (rev, file, line) => {
-      if (rev === walkthrough.head) openPath(router.tui, repoPath, file, line);
+      if (rev === walkthrough.head) openPath(router.tui, repoPath, file, line, walkthrough.base);
       else router.showPopup({ title: "open", text: `${file} is at ${rev.slice(0, 10)}, not the head; open it from station pr`, error: true, footer: "any key" }, true);
     },
   }));
@@ -366,7 +375,7 @@ function showFindings(address: string): void {
   const router = new Router();
   router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files),
     onQuit: () => router.quit(),
-    onOpen: (file, line) => openPath(router.tui, repoPath, file, line),
+    onOpen: (file, line) => openPath(router.tui, repoPath, file, line, findingsRun.base),
   }));
   router.tui.start();
 }
@@ -411,6 +420,9 @@ export async function main(): Promise<void> {
   let target: Target;
   try {
     target = await resolve(args);
+    if (contextOverride !== null && ("prs" in target || ("pr" in target && target.pr !== null))) {
+      throw new Error("--context is not allowed for PR reviews; rounds go to review-pr-N");
+    }
     if ("findings" in target) {
       showFindings(target.findings);
       return;
