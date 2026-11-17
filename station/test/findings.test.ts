@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import { excerpt, FindingsView, loadRun, parseFinding, runDir, sortFindings } from "../src/findings.js";
+import { excerpt, FindingsView, isDismissed, loadRun, parseFinding, runDir, sortFindings } from "../src/findings.js";
 
 const ADDRESS = "org/repo/review-pr-1/review/runs/123-abc";
 
@@ -111,4 +111,23 @@ test("view navigates findings and renders code from the head source", () => {
   assert.deepEqual(opened, [["a.rb", 2]]);
   view.handleInput("q");
   assert.equal(quit, true);
+});
+
+test("dismissed findings are marked in the list", () => {
+  assert.equal(isDismissed(parseFinding({ dismiss_reason: "refuted" }, 0)), true);
+  assert.equal(isDismissed(parseFinding({ status: "dismissed" }, 0)), true);
+  assert.equal(isDismissed(parseFinding({ status: "applied" }, 0)), false);
+  const root = store({
+    "run.json": RUN,
+    "verifiers-opus.json": {
+      findings: [
+        { id: "finding-1", severity: "high", title: "Kept", file: "a.rb", line_start: 1 },
+        { id: "finding-2", severity: "high", title: "Gone", file: "a.rb", line_start: 2, dismiss_reason: "refuted" },
+      ],
+    },
+  });
+  const view = new FindingsView({ run: loadRun(ADDRESS, root), sources: new Map(), onQuit: () => {}, onOpen: () => {} });
+  const side = view.render(120).map((l) => stripTerminalSequences(l).slice(81));
+  assert.ok(side.some((l) => /HIGH {2}dismissed {2}a\.rb/.test(l)));
+  assert.equal(side.filter((l) => l.includes("dismissed")).length, 1);
 });

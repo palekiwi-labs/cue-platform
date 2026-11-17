@@ -5,6 +5,7 @@ import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { excerpt, storeRoot } from "./findings.js";
@@ -12,6 +13,8 @@ import { markdownRows } from "./markdown.js";
 import { catFiles } from "./git.js";
 import { highlightFile } from "./highlight.js";
 import { prContext } from "./pr-review.js";
+import type { StepRef, WalkthroughDrafts } from "./walkthrough-comments.js";
+import { CommentsPane, type Drafts } from "./drafts.js";
 
 export type RevKind = "base" | "head" | "commit";
 
@@ -304,6 +307,8 @@ export interface WalkthroughOptions {
   subtitle: string;
   onQuit: () => void;
   onOpen: (rev: string, file: string, line: number) => void;
+  drafts?: WalkthroughDrafts;
+  comments?: Drafts;
 }
 
 interface MainPane {
@@ -317,6 +322,9 @@ export class WalkthroughView implements Component {
   private step = 0;
   private sideCursor = 0;
   private sideFocus = false;
+  private sideMode: "outline" | "comments" = "outline";
+  private readonly pane: CommentsPane | null;
+  private notice: string | null = null;
   private sidebar = true;
   private offset = 0;
   private listOffset = 0;
@@ -326,6 +334,7 @@ export class WalkthroughView implements Component {
 
   constructor(private readonly opts: WalkthroughOptions) {
     this.rows = walkRows(opts.walkthrough);
+    this.pane = opts.comments === undefined ? null : new CommentsPane(opts.comments, "walkthrough");
   }
 
   invalidate(): void {}
@@ -367,12 +376,67 @@ export class WalkthroughView implements Component {
       this.opts.onQuit();
       return;
     }
-    if (this.sideFocus) this.sideInput(data);
+    this.notice = null;
+    if (this.sideFocus && this.sideMode === "comments") this.commentsInput(data);
+    else if (this.sideFocus) this.sideInput(data);
+    else if (data === "C") this.showComments();
     else this.mainInput(data);
+  }
+
+  private showComments(): void {
+    if (this.pane === null) return;
+    this.sidebar = true;
+    this.sideFocus = true;
+    this.sideMode = "comments";
+    this.pane.select(this.focusedDraft()?.id ?? null);
+  }
+
+  private jumpTo(id: string): void {
+    const drafts = this.opts.drafts;
+    drafts?.current();
+    const draft = drafts?.all().find((d) => d.id === id);
+    if (draft?.walkthrough !== undefined && draft.walkthrough !== this.opts.walkthrough.address) {
+      this.notice = "written on another walkthrough, select it with P";
+      return;
+    }
+    const ref = draft === undefined ? null : (drafts?.locate(draft) ?? null);
+    if (ref === null) return;
+    const index = this.rows.findIndex((r) => r.kind === "section" && r.chunk === ref.chunk && r.section === ref.section);
+    if (index === -1) return;
+    this.go(index);
+    this.step = ref.step;
+    this.reveal = true;
+    this.sideFocus = false;
+  }
+
+  private commentsInput(data: string): void {
+    const action = this.pane?.handleInput(data) ?? null;
+    if (action === "handled") return;
+    if (action !== null) {
+      if ("jump" in action) this.jumpTo(action.jump.id);
+      else this.notice = action.hint;
+      return;
+    }
+    switch (data) {
+      case "C":
+        this.sideMode = "outline";
+        this.sideCursor = this.cursor;
+        return;
+      case "t":
+        this.sideFocus = false;
+        this.sidebar = false;
+        return;
+      case "\t":
+        this.sideFocus = false;
+        return;
+    }
   }
 
   private sideInput(data: string): void {
     switch (data) {
+      case "C":
+        this.showComments();
+        return;
       case "j":
       case "\x1b[B":
         this.sideCursor = Math.min(this.rows.length - 1, this.sideCursor + 1);
@@ -396,6 +460,19 @@ export class WalkthroughView implements Component {
         this.sideFocus = false;
         return;
     }
+  }
+
+  private stepRef(): StepRef | null {
+    const row = this.rows[this.cursor];
+    if (row?.kind !== "section" || this.current().section === null) return null;
+    return { chunk: row.chunk, section: row.section, step: this.step };
+  }
+
+  private focusedDraft(): { ref: StepRef; id: string | null } | null {
+    const ref = this.stepRef();
+    const drafts = this.opts.drafts;
+    if (ref === null || drafts === undefined) return null;
+    return { ref, id: drafts.at(ref)?.id ?? null };
   }
 
   private moveStep(delta: number): void {
@@ -458,11 +535,27 @@ export class WalkthroughView implements Component {
       case "\t":
         this.sidebar = true;
         this.sideFocus = true;
+        this.sideMode = "outline";
         this.sideCursor = this.cursor;
         return;
       case "e": {
         const code = this.current().section?.steps[this.step]?.code;
         if (code != null) this.opts.onOpen(code.rev, code.path, code.lines?.[0] ?? 1);
+        return;
+      }
+      case "c": {
+        const f = this.focusedDraft();
+        if (f !== null) this.opts.drafts?.write(f.ref);
+        return;
+      }
+      case "E": {
+        const id = this.focusedDraft()?.id;
+        if (id != null) this.opts.drafts?.edit(id);
+        return;
+      }
+      case "d": {
+        const id = this.focusedDraft()?.id;
+        if (id != null) this.opts.drafts?.remove([id]);
         return;
       }
     }
@@ -500,6 +593,15 @@ export class WalkthroughView implements Component {
     return out;
   }
 
+  private commentRows(ref: StepRef, count: number, w: number): string[] {
+    const draft = this.opts.drafts?.at(ref);
+    if (draft === undefined) return [];
+    const bar = `${C.mod}┃ `;
+    const head = `${bar}${C.mod}${BOLD}comment${RESET}${C.noteBg}  ${C.dim}step ${ref.step + 1}/${count}`;
+    const body = wrapTextWithAnsi(draft.text, Math.max(10, w - 2)).map((l) => `${bar}${C.text}${l}`);
+    return [head, ...body].map((l) => C.noteBg + fit(l, w) + RESET);
+  }
+
   private mainPane(w: number): MainPane {
     const wt = this.opts.walkthrough;
     const pw = Math.min(w, PROSE_WIDTH);
@@ -526,9 +628,13 @@ export class WalkthroughView implements Component {
       });
     } else {
       heading(section.title, chunk.title);
+      const row = this.rows[this.cursor];
       section.steps.forEach((st, i) => {
         if (i > 0) out.push("");
         const start = out.length;
+        if (row?.kind === "section") {
+          out.push(...this.commentRows({ chunk: row.chunk, section: row.section, step: i }, section.steps.length, pw));
+        }
         out.push(...markdownRows(st.markdown, pw));
         if (st.code !== null) {
           const code = this.codeRows(st.code, w);
@@ -570,6 +676,7 @@ export class WalkthroughView implements Component {
   }
 
   private renderSide(height: number, w: number): string[] {
+    if (this.sideMode === "comments" && this.pane !== null) return this.pane.render(height, w, this.sideFocus);
     const out: string[] = [];
     const label = this.sideFocus ? C.accent : C.text;
     out.push(C.barBg + fit(` ${label}${BOLD}Walkthrough${RESET}${C.barBg} ${C.dim}${this.opts.walkthrough.chunks.length} chunks`, w) + RESET);
@@ -594,6 +701,12 @@ export class WalkthroughView implements Component {
     const code = section.steps[this.step]?.code;
     const loc = code == null ? "" : `${C.dim}${code.path} ${C.faint}${code.revKind}  `;
     return `${loc}${C.dim}step ${this.step + 1}/${section.steps.length}  `;
+  }
+
+  private commentKeys(k: (key: string, what: string) => string): string {
+    const f = this.focusedDraft();
+    if (f === null) return "";
+    return f.id === null ? k("c", "comment") : k("E/d", "edit/delete");
   }
 
   render(width: number): string[] {
@@ -622,9 +735,14 @@ export class WalkthroughView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = this.sideFocus
-      ? ` ${k("j/k", "move")}${k("enter", "read")}${k("tab/esc", "back")}`
-      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
+    const pane = this.pane === null ? "" : k("C", "comments");
+    const keys = this.notice !== null
+      ? ` ${C.add}${this.notice}`
+      : this.sideFocus && this.sideMode === "comments"
+      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("E/d", "edit/delete")}${k("S", "submit all")}${k("C", "outline")}${k("tab/esc", "back")}`
+      : this.sideFocus
+      ? ` ${k("j/k", "move")}${k("enter", "read")}${pane}${k("tab/esc", "back")}`
+      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${this.commentKeys(k)}${pane}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const right = `${more}${this.stepStatus()}${C.dim}${this.cursor + 1}/${this.rows.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
