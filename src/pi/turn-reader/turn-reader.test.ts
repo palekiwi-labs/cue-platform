@@ -707,3 +707,163 @@ describe("TurnReader copy", () => {
     expect(reader.render(80).at(-1)).not.toContain(`${COPY_KEY} copy`)
   })
 })
+
+describe("TurnReader comment navigation", () => {
+  const SGR = /\x1b\[[0-9;]*m/g
+  const strip = (l: string) => l.replace(SGR, "")
+  const paragraphs = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n\n")
+  const head = (lines: string[]) => /chunk \d+\/\d+/.exec(lines[0]!)?.[0]
+  const foot = (lines: string[]) => strip(lines.at(-1)!)
+  const shows = (lines: string[], s: string) => lines.slice(1, -1).some((l) => strip(l).includes(s))
+  const withComments = (...entries: [string, string][]) => {
+    const comments = new TurnComments()
+    for (const [key, text] of entries) comments.save(key, "q", text)
+    return comments
+  }
+  const open = (messages: string[], comments: TurnComments, rows = 16) => {
+    const reader = new TurnReader(plain, md, messages, () => rows, false, false, comments)
+    reader.render(60)
+    return reader
+  }
+
+  test("without comments reports so and leaves focus and scroll alone", () => {
+    const reader = open([paragraphs(30)], new TurnComments())
+    reader.toggleFocus()
+    reader.scroll(4)
+    const before = reader.render(60)
+    expect(reader.jumpComment(1)).toBe(false)
+    const after = reader.render(60)
+    expect(foot(after)).toContain(" no comments (c comment) ")
+    expect(reader.focused()).toBe(false)
+    expect(after.slice(0, -1)).toEqual(before.slice(0, -1))
+    reader.clearFlash()
+    expect(foot(reader.render(60))).not.toContain("comment ")
+  })
+
+  test("steps through commented chunks only, both ways, wrapping at either end", () => {
+    const reader = open([paragraphs(30)], withComments(["0:4", "on five"], ["0:20", "on twenty-one"]))
+    const steps: [1 | -1, string, string][] = [
+      [1, "chunk 5/30", "comment 1/2"],
+      [1, "chunk 21/30", "comment 2/2"],
+      [1, "chunk 5/30", "comment 1/2 · wrapped"],
+      [-1, "chunk 21/30", "comment 2/2 · wrapped"],
+      [-1, "chunk 5/30", "comment 1/2"],
+    ]
+    for (const [direction, chunk, flash] of steps) {
+      expect(reader.jumpComment(direction)).toBe(true)
+      const lines = reader.render(60)
+      expect(head(lines)).toBe(chunk)
+      expect(foot(lines)).toContain(` ${flash} `)
+      expect(shows(lines, chunk === "chunk 5/30" ? "┃ on five" : "┃ on twenty-one")).toBe(true)
+    }
+  })
+
+  test("from an uncommented chunk the jump lands on the nearest commented chunk in that direction", () => {
+    const reader = open([paragraphs(30)], withComments(["0:4", "a"], ["0:20", "b"]))
+    for (let i = 0; i < 10; i++) reader.move(1)
+    reader.jumpComment(-1)
+    expect(head(reader.render(60))).toBe("chunk 5/30")
+    for (let i = 0; i < 6; i++) reader.move(1)
+    reader.jumpComment(1)
+    expect(head(reader.render(60))).toBe("chunk 21/30")
+  })
+
+  test("a single comment reports that it is the only one", () => {
+    const reader = open(["one\n\ntwo"], withComments(["0:1", "x"]), 40)
+    reader.jumpComment(1)
+    expect(foot(reader.render(60))).toContain(" comment 1/1 ")
+    reader.jumpComment(1)
+    const lines = reader.render(60)
+    expect(head(lines)).toBe("chunk 2/2")
+    expect(foot(lines)).toContain(" comment 1/1 · only comment ")
+  })
+
+  test("with focus off it turns focus on, counting the first chunk in view", () => {
+    const reader = open([paragraphs(30)], withComments(["0:4", "a"], ["0:20", "b"]))
+    reader.toggleFocus()
+    reader.scroll(8)
+    expect(head(reader.render(60))).toBeUndefined()
+    reader.jumpComment(-1)
+    expect(reader.focused()).toBe(true)
+    expect(head(reader.render(60))).toBe("chunk 5/30")
+
+    const inView = open([paragraphs(30)], withComments(["0:4", "a"], ["0:20", "b"]))
+    inView.toggleFocus()
+    inView.scroll(8)
+    inView.jumpComment(1)
+    const lines = inView.render(60)
+    expect(head(lines)).toBe("chunk 5/30")
+    expect(foot(lines)).toContain(" comment 1/2 ")
+  })
+
+  test("in the last-message view comments on earlier messages are hidden and pointed out", () => {
+    const comments = withComments(["0:0", "early"])
+    const reader = open(["a1\n\na2", "b1\n\nb2"], comments, 40)
+    reader.toggleFocus()
+    expect(reader.jumpComment(1)).toBe(false)
+    const none = reader.render(86)
+    expect(foot(none)).toContain(" no comments here · 1 in earlier messages (a all) ")
+    expect(reader.focused()).toBe(false)
+
+    comments.save("1:1", "b2", "late")
+    reader.jumpComment(1)
+    const one = reader.render(80)
+    expect(head(one)).toBe("chunk 2/2")
+    expect(foot(one)).toContain(" comment 1/1 · 1 hidden (a all) ")
+
+    reader.toggle()
+    reader.render(80)
+    reader.jumpComment(1)
+    const all = reader.render(80)
+    expect(head(all)).toBe("chunk 4/4")
+    expect(foot(all)).toContain(" comment 2/2 ")
+    expect(foot(all)).not.toContain("hidden")
+    reader.jumpComment(1)
+    const back = reader.render(80)
+    expect(head(back)).toBe("chunk 1/4")
+    expect(foot(back)).toContain(" comment 1/2 · wrapped ")
+    expect(shows(back, "┃ early")).toBe(true)
+  })
+
+  test("a chunk taller than the view scrolls to show its comment below the end of the chunk", () => {
+    const tall = Array.from({ length: 12 }, (_, i) => `row ${i}`).join("\n")
+    const reader = open(["intro\n\n```\n" + tall + "\n```\n\nend"], withComments(["0:1", "short note"]))
+    reader.jumpComment(1)
+    const lines = reader.render(60)
+    expect(head(lines)).toBe("chunk 2/3")
+    expect(shows(lines, "┃ comment")).toBe(true)
+    expect(shows(lines, "┃ short note")).toBe(true)
+    expect(strip(lines[2]!)).toContain("row ")
+    expect(shows(lines, "intro")).toBe(false)
+  })
+
+  test("a comment taller than the view is shown from its label", () => {
+    const note = Array.from({ length: 20 }, (_, i) => `note ${i + 1}`).join("\n")
+    const reader = open(["intro\n\nbody\n\nend"], withComments(["0:1", note]))
+    reader.jumpComment(1)
+    const lines = reader.render(60)
+    expect(head(lines)).toBe("chunk 2/3")
+    expect(strip(lines[2]!)).toContain("┃ comment")
+    expect(shows(lines, "┃ note 1")).toBe(true)
+  })
+
+  test("hints the comment keys when a commented chunk is in view and there is room", () => {
+    const reader = open(["one\n\ntwo"], new TurnComments(), 40)
+    expect(foot(reader.render(86))).not.toContain("ctrl+↑↓")
+    const hidden = open(["a", "one"], withComments(["0:0", "x"]), 40)
+    expect(foot(hidden.render(86))).not.toContain("ctrl+↑↓")
+    const shown = open(["one\n\ntwo"], withComments(["0:1", "x"]), 40)
+    expect(foot(shown.render(86))).toContain("↑↓ chunk · ctrl+↑↓ comment · esc")
+    expect(foot(shown.render(60))).not.toContain("ctrl+↑↓")
+    shown.toggleFocus()
+    expect(foot(shown.render(86))).toContain("ctrl+↑↓ comment")
+  })
+
+  test("does nothing while composing", () => {
+    const comments = withComments(["0:1", "x"])
+    const reader = open(["one\n\ntwo"], comments, 40)
+    reader.comment(new Editor({ terminal: { rows: 40 }, requestRender: () => {} } as never, { borderColor: id, selectList: {} as never }))
+    expect(reader.jumpComment(1)).toBe(false)
+    expect(head(reader.render(60))).toBe("chunk 1/2")
+  })
+})
