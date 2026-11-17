@@ -82,6 +82,21 @@ describe("speaking from the reader", () => {
     expect(rendered().at(-1)).toContain("s speak")
   })
 
+  test("s speaks the last message, or all after toggling with a", async () => {
+    const two = [...turn, { type: "message", message: { role: "assistant", content: [{ type: "text", text: "more" }] } }]
+    const last = fakeCtx(two)
+    const s1 = speaker("sent")
+    last.keys.push(READER_SPEAK_KEY, "q")
+    await openTurnReader(last.ctx, s1)
+    expect(s1.requests).toEqual([["more"]])
+
+    const all = fakeCtx(two)
+    const s2 = speaker("sent")
+    all.keys.push("a", READER_SPEAK_KEY, "q")
+    await openTurnReader(all.ctx, s2)
+    expect(s2.requests).toEqual([["answer", "more"]])
+  })
+
   test("a refused request is reported", async () => {
     const { ctx, notes, keys } = fakeCtx(turn, false)
     keys.push(READER_SPEAK_KEY, "q")

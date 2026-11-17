@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
 import { latestTurnTexts } from "./latest-turn"
-import { readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
+import { MODE_KEY, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
 
 const user = (text: string) => ({ type: "message", message: { role: "user", content: text } })
 const assistant = (timestamp: number, ...parts: { type: string; text?: string }[]) => ({
@@ -52,15 +52,37 @@ describe("TurnReader", () => {
     expect(readerWidth(50)).toBe(50)
   })
 
-  test("renders messages as markdown, separated by a rule, sized to content", () => {
+  test("shows the last message by default, sized to content", () => {
     const reader = new TurnReader(plain, md, ["# Title\n\nbody", "second"], () => 40)
-    const lines = reader.render(30)
-    expect(lines[0]).toStartWith("╭─ latest turn · 2 messages ")
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · last of 2 messages ")
+    expect(lines.slice(1, -1).map((l) => l.slice(1, -1).trim())).toEqual(["", "second", ""])
+    expect(lines.at(-1)).toContain(`${MODE_KEY} all · esc close`)
+    expect(reader.shown()).toEqual(["second"])
+    expect(lines.every((l) => l.length === 40)).toBe(true)
+  })
+
+  test("toggles to all messages as markdown, separated by a rule, and back", () => {
+    const reader = new TurnReader(plain, md, ["# Title\n\nbody", "second"], () => 40)
+    reader.toggle()
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · all 2 messages ")
     expect(lines.slice(1, -1).map((l) => l.slice(1, -1).trim())).toEqual([
       "", "Title", "", "body", "", "---", "", "second", "",
     ])
-    expect(lines.at(-1)).toContain("esc close")
-    expect(lines.every((l) => l.length === 30)).toBe(true)
+    expect(lines.at(-1)).toContain(`${MODE_KEY} last · esc close`)
+    expect(reader.shown()).toEqual(["# Title\n\nbody", "second"])
+    reader.toggle()
+    expect(reader.render(40)[0]).toContain("last of 2 messages")
+  })
+
+  test("a single message has no mode toggle", () => {
+    const reader = new TurnReader(plain, md, ["only"], () => 40)
+    reader.toggle()
+    const lines = reader.render(40)
+    expect(lines[0]).toStartWith("╭─ latest turn · 1 message ")
+    expect(lines.at(-1)).not.toContain(`${MODE_KEY} all`)
+    expect(reader.shown()).toEqual(["only"])
   })
 
   test("hints the speak key only when speech is available", () => {

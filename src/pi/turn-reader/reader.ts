@@ -28,14 +28,19 @@ function trimBlank(lines: string[]): string[] {
   return lines.slice(a, b)
 }
 
+/** Reader key that toggles between the last message and all messages. */
+export const MODE_KEY = "a"
+
 /**
  * Boxed, scrollable view of the latest turn's assistant messages, rendered as
- * Markdown and separated by a rule. Grows with the content up to the rows
- * `rows()` reports, then scrolls.
+ * Markdown and separated by a rule. Shows the last message until toggled to
+ * all messages. Grows with the content up to the rows `rows()` reports, then
+ * scrolls.
  */
 export class TurnReader implements Component {
   private offset = 0
-  private cache?: { width: number; lines: string[] }
+  private all = false
+  private cache?: { width: number; all: boolean; lines: string[] }
 
   constructor(
     private theme: ReaderTheme,
@@ -50,15 +55,27 @@ export class TurnReader implements Component {
     this.cache = undefined
   }
 
+  /** The messages currently displayed. */
+  shown(): readonly string[] {
+    return this.all ? this.messages : this.messages.slice(-1)
+  }
+
+  /** Switch between the last message and all messages, if there is more than one. */
+  toggle(): void {
+    if (this.messages.length < 2) return
+    this.all = !this.all
+    this.offset = 0
+  }
+
   private body(inner: number): string[] {
-    if (this.cache?.width === inner) return this.cache.lines
+    if (this.cache?.width === inner && this.cache.all === this.all) return this.cache.lines
     const rule = this.theme.fg("dim", "---")
     const lines: string[] = []
-    this.messages.forEach((text, i) => {
+    this.shown().forEach((text, i) => {
       if (i > 0) lines.push("", rule, "")
       lines.push(...trimBlank(new Markdown(text, 0, 0, this.markdown).render(inner)))
     })
-    this.cache = { width: inner, lines }
+    this.cache = { width: inner, all: this.all, lines }
     return lines
   }
 
@@ -95,12 +112,14 @@ export class TurnReader implements Component {
     this.offset = Math.min(this.offset, this.maxOffset())
     const shown = body.slice(this.offset, this.offset + height)
 
-    const count = `${this.messages.length} message${this.messages.length === 1 ? "" : "s"}`
-    const head = ` latest turn · ${count}${this.running ? " · snapshot" : ""} `
+    const n = this.messages.length
+    const mode = n === 1 ? "1 message" : this.all ? `all ${n} messages` : `last of ${n} messages`
+    const head = ` latest turn · ${mode}${this.running ? " · snapshot" : ""} `
     const scrolls = body.length > height
     const position = scrolls ? `${this.offset + 1}-${this.offset + height}/${body.length} · ` : ""
+    const toggle = n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"} · ` : ""
     const speak = this.speakable ? "s speak · " : ""
-    const keys = speak + (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
+    const keys = toggle + speak + (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
     const foot = ` ${position}${keys} `
 
     const border = (s: string) => t.fg("border", s)
