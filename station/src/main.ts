@@ -144,7 +144,6 @@ interface Screen extends Component {
 class Router {
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
-  private back: (() => void) | null = null;
   private popup: { handles: OverlayHandle[]; dismissable: boolean; keys: Record<string, () => void> } | null = null;
   private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
@@ -166,7 +165,7 @@ class Router {
           action?.();
         } else if (data === "\x03") this.quit();
       } else if (data === "\x1b") {
-        if (this.screen?.handleEscape?.() !== true) this.back?.();
+        this.screen?.handleEscape?.();
       } else this.screen?.handleInput(data);
       this.tui.requestRender();
       return { consume: true };
@@ -174,10 +173,9 @@ class Router {
     process.stdout.on("resize", () => this.tui.requestRender(true));
   }
 
-  show(screen: Screen, back: (() => void) | null = null): void {
+  show(screen: Screen): void {
     if (this.screen !== null) this.tui.removeChild(this.screen);
     this.screen = screen;
-    this.back = back;
     this.tui.addChild(screen);
     this.tui.requestRender(true);
   }
@@ -345,7 +343,7 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(prTabs(router, review, chosen, toList, "back"), toList);
+      router.show(prTabs(router, review, chosen, toList, "back"));
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
