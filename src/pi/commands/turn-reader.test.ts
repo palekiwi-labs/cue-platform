@@ -40,17 +40,18 @@ function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = fals
         editor.text = text
       },
       custom: async (factory: Function) => {
-        await new Promise<void>((resolve) => {
-          const component = factory(tui, theme, kb, () => {
-            events.push("done")
-            resolve()
-          })
-          rendered = component.render(60)
-          for (const key of keys) {
-            component.handleInput(key)
-            frames.push(component.render(60))
-          }
+        let closed = false
+        const component = factory(tui, theme, kb, () => {
+          events.push("done")
+          closed = true
         })
+        rendered = component.render(60)
+        for (const key of keys) {
+          if (closed) break
+          component.handleInput(key)
+          await new Promise((resolve) => setTimeout(resolve, 0))
+          frames.push(component.render(60))
+        }
       },
     },
   } as unknown as ExtensionContext
@@ -344,6 +345,32 @@ describe("copying from the reader", () => {
     expect(notes).toEqual(["Could not copy the focused chunk: Clipboard unavailable"])
     expect(levels).toEqual(["error"])
     expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("a copy flashes copied in the footer until the next key restores the hints", async () => {
+    const { ctx, keys, frames, events } = fakeCtx(chunked)
+    const c = clipboard()
+    keys.push(COPY_KEY, "j", COPY_KEY, "f", "q")
+    await openTurnReader(ctx, undefined, c.copy)
+    const foot = frames.map((f) => f.at(-1)!)
+    expect(foot[0]).toContain(" copied ")
+    expect(foot[0]).not.toContain(`${COPY_KEY} copy`)
+    expect(foot[1]).not.toContain("copied")
+    expect(foot[1]).toContain("f unfocus")
+    expect(foot[2]).toContain(" copied ")
+    expect(foot[3]).not.toContain("copied")
+    expect(foot[3]).toContain("f focus")
+    expect(c.copied).toEqual(["one", "two"])
+    expect(events.filter((e) => e === "render")).toHaveLength(keys.length - 1 + 2)
+  })
+
+  test("a failed copy flashes its reason until the next key", async () => {
+    const { ctx, keys, frames } = fakeCtx(chunked)
+    keys.push(COPY_KEY, "j", "q")
+    await openTurnReader(ctx, undefined, clipboard(new Error("Clipboard unavailable")).copy)
+    expect(frames[0]!.at(-1)).toContain(" copy failed: Clipboard unavailable ")
+    expect(frames[1]!.at(-1)).not.toContain("copy failed")
+    expect(frames[1]!.at(-1)).toContain("f unfocus")
   })
 
   test("y types into the comment editor while composing", async () => {
