@@ -169,7 +169,7 @@ async function contexts(exec: Exec, cwd: string): Promise<ContextRow[]> {
 async function launchReview(exec: Exec, cwd: string, req: ReviewRequest): Promise<Outcome> {
   const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd })
   if (top.code !== 0) return failed("not a git checkout", top)
-  const args = ["pr", String(req.pr.number), "--manifest", req.manifest, "--context", req.context]
+  const args = ["pr", String(req.pr.number), "--manifest", req.manifest]
   if (req.parent) args.push("--parent", req.parent)
   args.push("-C", top.stdout.trim())
   const r = await exec("cue-review", args, { cwd })

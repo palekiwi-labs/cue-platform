@@ -7,11 +7,11 @@
  * ctrl+e) under the highlighted row. The highlight starts on the session's
  * context when listed, else on (no parent).
  *
- * Review: enter on a context reviews into it. The highlight starts on the first that exists of
- * review-<branch>, review-<linked>, the linked context and <branch>, else
- * the top. The linked and the suggested context have their own colours. ctrl+n edits a new name (prefilled with
- * review-<branch>) and creates it under the highlighted context; existing
- * names are refused. tab cycles the manifest.
+ * Review: the review context is fixed (review-pr-<N>). When it exists,
+ * enter reviews into it; otherwise enter creates it under the highlighted
+ * context. The highlight starts on the first that exists of the review
+ * context, the linked context and <branch>, else the top. The linked and
+ * the starting context have their own colours. tab cycles the manifest.
  */
 
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
@@ -24,7 +24,7 @@ export interface PickerInit {
   /** Default "review". */
   purpose?: "review" | "parent"
   pr: Pr
-  /** Review: generated review context slug. Parent: the context to create. */
+  /** Review: the fixed review context slug. Parent: the context to create. */
   context: string
   manifests: string[]
   manifest: number
@@ -62,9 +62,8 @@ const NONE = new Set<string>()
 export class ContextPicker {
   private query = new Input()
   private name = new Input()
-  /** Editing the name of a context to create under `under`. */
+  /** Parent: editing the name of the context to create. */
   private editing = false
-  private under: ContextRow | undefined
   private manifest: number
   private recent = true
   private step: number
@@ -96,10 +95,8 @@ export class ContextPicker {
       }
       return
     }
-    const linkedSlug = init.linked?.split("/").pop()
     const start =
       this.existing(init.context) ??
-      (linkedSlug ? this.existing(`review-${linkedSlug}`) : undefined) ??
       init.rows.find((r) => r.address === init.linked) ??
       (init.branch ? this.existing(init.branch) : undefined)
     if (start) this.preselect(start.address)
@@ -164,7 +161,7 @@ export class ContextPicker {
   }
 
   handleInput(data: string): void {
-    if (this.editing) return this.parentMode ? this.handleRename(data) : this.handleEdit(data)
+    if (this.editing) return this.handleRename(data)
     const n = this.count()
     const move = (d: number) => {
       this.selected = Math.max(0, Math.min(n - 1, this.selected + d))
@@ -185,22 +182,12 @@ export class ContextPicker {
       this.name.handleInput("\x05")
       return this.say("edit the name: enter keep, esc undo")
     }
-    if (this.parentMode && (matchesKey(data, "tab") || matchesKey(data, "shift+tab") || matchesKey(data, "ctrl+n"))) return
+    if (this.parentMode && (matchesKey(data, "tab") || matchesKey(data, "shift+tab"))) return
     if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
       const d = matchesKey(data, "tab") ? 1 : -1
       const k = this.init.manifests.length
       this.manifest = (this.manifest + d + k) % k
       return this.tui.requestRender()
-    }
-    if (matchesKey(data, "ctrl+n")) {
-      this.under = this.highlighted()
-      this.editing = true
-      this.name.setValue(this.init.context)
-      this.query.focused = false
-      this.name.focused = true
-      // setValue leaves the cursor at the start; edits append.
-      this.name.handleInput("\x05")
-      return this.say(`new context ${this.under ? `under ${this.under.address}` : "at the top level"}: enter create, esc back`)
     }
     if (matchesKey(data, "alt+a")) {
       this.recent = !this.recent
@@ -227,23 +214,6 @@ export class ContextPicker {
     this.tui.requestRender()
   }
 
-  private handleEdit(data: string): void {
-    if (matchesKey(data, "escape")) {
-      this.stopEditing()
-      return this.say("")
-    }
-    if (matchesKey(data, "enter")) {
-      const v = this.name.getValue().trim()
-      if (!SLUG.test(v)) return this.say("context must be a slug (letters, digits, . _ -)", "error")
-      if (this.existing(v)) return this.say(`${v} exists; pick another name`, "error")
-      const parent = this.under?.address
-      this.stopEditing()
-      return this.host.submit({ context: v, manifest: this.manifestName(), ...(parent ? { parent } : {}) })
-    }
-    this.name.handleInput(data)
-    this.tui.requestRender()
-  }
-
   /** Parent: ctrl+e edits the name to create; enter keeps it, esc undoes. */
   private handleRename(data: string): void {
     if (matchesKey(data, "escape")) {
@@ -264,7 +234,6 @@ export class ContextPicker {
 
   private stopEditing(): void {
     this.editing = false
-    this.under = undefined
     this.name.focused = false
     this.query.focused = true
   }
@@ -284,8 +253,8 @@ export class ContextPicker {
       if (this.count() === 0) return this.say("no matching contexts", "error")
       return this.host.submit({ context: this.newName, ...(row ? { parent: row.address } : {}) })
     }
-    if (!row) return this.say("no context: ctrl+n creates one", "error")
-    this.host.submit({ context: row.slug, manifest: this.manifestName() })
+    const parent = this.existing(this.init.context) ? undefined : row?.address
+    this.host.submit({ context: this.init.context, manifest: this.manifestName(), ...(parent ? { parent } : {}) })
   }
 
   // ---- rendering -------------------------------------------------------
@@ -313,15 +282,14 @@ export class ContextPicker {
     const label = (s: string) => t.fg("muted", s) + " "
     const scope = this.recent ? `recent ${this.days}d` : "all"
     if (this.parentMode) return this.renderParent(width, label, scope)
-    const hints = this.editing
-      ? ["enter create", "esc back"]
-      : ["enter review here", "ctrl+n new under", "tab manifest", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
+    const exists = this.existing(this.init.context) !== undefined
+    const row = this.highlighted()
+    const where = exists ? "exists" : row ? `new under ${row.address}` : "new, top level"
+    const hints = [exists ? "enter review" : "enter create and review", "tab manifest", "alt+a recent/all", "ctrl+up/down recency", "esc back"]
     const head = t.fg("accent", t.bold(`review #${pr.number}`)) + "  " + pr.title + "  " +
-      t.fg("muted", `pick the context (${scope})`)
-    const settings = this.editing
-      ? label(this.under ? `new under ${this.under.address}` : "new, top level") +
-        (this.name.render(Math.max(12, Math.min(48, width - 40)))[0] ?? "")
-      : label("manifest") + manifests
+      t.fg("muted", exists ? `(${scope})` : `pick the parent (${scope})`)
+    const settings = label("context") + t.fg("accent", this.init.context) + " " + t.fg("muted", where) +
+      "  " + label("manifest") + manifests
     return this.frame(width, head, settings, hints)
   }
 

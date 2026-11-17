@@ -230,7 +230,7 @@ export function fmtAge(createdAt: string, now: number = Date.now()): string {
   return `${Math.floor(d / 365)}y`
 }
 
-/** Same rule as cue-review's slugify, for the default review context. */
+/** Same rule as cue-review's slugify. */
 export function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -239,7 +239,8 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, "")
 }
 
-export const reviewContext = (pr: Pr): string => `review-${slugify(pr.headRef)}`
+/** The review context cue-review uses for a PR; not overridable. */
+export const reviewContext = (pr: Pr): string => `review-pr-${pr.number}`
 
 /** Text the fuzzy filter matches against. */
 export const haystack = (pr: Pr): string =>
