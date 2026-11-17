@@ -23,7 +23,7 @@ import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
 import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
-import { loadWalkthrough, sectionFiles, WalkthroughView } from "./walkthrough.js";
+import { loadWalkthrough, loadWalkthroughSources, WalkthroughView } from "./walkthrough.js";
 
 let contextOverride: string | null = null;
 
@@ -246,10 +246,13 @@ function showWalkthrough(address: string): void {
   const router = new Router();
   router.show(new WalkthroughView({
     walkthrough,
-    sources: loadSources(repoPath, walkthrough.head, sectionFiles(walkthrough)),
+    sources: loadWalkthroughSources(repoPath, walkthrough),
     subtitle: address,
     onQuit: () => router.quit(),
-    onOpen: (file, line) => openPath(router.tui, repoPath, file, line),
+    onOpen: (rev, file, line) => {
+      if (rev === walkthrough.head) openPath(router.tui, repoPath, file, line);
+      else router.showPopup({ title: "open", text: `${file} is at ${rev.slice(0, 10)}, not the head; open it from station pr`, error: true, footer: "any key" }, true);
+    },
   }));
   router.tui.start();
 }

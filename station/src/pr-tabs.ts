@@ -2,7 +2,7 @@ import type { PopupContent } from "./popup.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { findingsWorktree, listRuns, prContext, type RunEntry } from "./pr-review.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
-import { listWalkthroughs, loadWalkthrough, sectionFiles, type WalkthroughEntry, WalkthroughView } from "./walkthrough.js";
+import { listWalkthroughs, loadWalkthrough, loadWalkthroughSources, type WalkthroughEntry, WalkthroughView } from "./walkthrough.js";
 
 const PICK_KEYS = "abcdefghijklmnorstuvwxyz";
 
@@ -161,10 +161,10 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
       requireHead(host.repo, walkthrough.head);
       return new WalkthroughView({
         walkthrough,
-        sources: loadSources(host.repo, walkthrough.head, sectionFiles(walkthrough)),
+        sources: loadWalkthroughSources(host.repo, walkthrough),
         subtitle: prContext(host.repoSlug, host.pr),
         onQuit: host.onQuit,
-        onOpen: (file, line) => open(walkthrough.head, file, line),
+        onOpen: (rev, file, line) => open(rev, file, line),
       });
     },
   });
