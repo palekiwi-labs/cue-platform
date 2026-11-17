@@ -6,9 +6,11 @@ export const TEXT_WIDTH = 80
 export const PAD_X = 2
 /** Terminal rows left free above and below the reader. */
 export const MARGIN_Y = 1
+/** Share of the terminal height the reader may take. */
+export const MAX_HEIGHT = 0.75
 
 const CHROME_X = 2 + 2 * PAD_X
-const CHROME_Y = 4
+const BORDER_Y = 2
 
 interface ReaderTheme {
   fg(color: any, text: string): string
@@ -18,6 +20,11 @@ interface ReaderTheme {
 /** Overlay width for a terminal of `cols` columns: the text width plus chrome, capped. */
 export function readerWidth(cols: number): number {
   return Math.max(CHROME_X + 1, Math.min(TEXT_WIDTH + CHROME_X, cols))
+}
+
+/** Rows the whole reader may take on a terminal of `rows` rows, borders included. */
+export function readerHeight(rows: number): number {
+  return Math.max(BORDER_Y + 1, Math.min(Math.floor(rows * MAX_HEIGHT), rows - 2 * MARGIN_Y))
 }
 
 function trimBlank(lines: string[]): string[] {
@@ -79,9 +86,13 @@ export class TurnReader implements Component {
     return lines
   }
 
+  private padY(): number {
+    return readerHeight(this.rows()) > BORDER_Y + 2 ? 1 : 0
+  }
+
   /** Rows available for the body. */
   viewport(): number {
-    return Math.max(1, this.rows() - 2 * MARGIN_Y - CHROME_Y)
+    return Math.max(1, readerHeight(this.rows()) - BORDER_Y - 2 * this.padY())
   }
 
   private maxOffset(): number {
@@ -132,6 +143,7 @@ export class TurnReader implements Component {
       const cut = truncateToWidth(s, inner, "…")
       return border("│") + pad + cut + " ".repeat(Math.max(0, inner - visibleWidth(cut))) + pad + border("│")
     }
-    return [top, row(""), ...shown.map(row), row(""), bottom].map((l) => truncateToWidth(l, width))
+    const blank = Array(this.padY()).fill(row(""))
+    return [top, ...blank, ...shown.map(row), ...blank, bottom].map((l) => truncateToWidth(l, width))
   }
 }
