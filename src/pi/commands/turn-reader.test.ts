@@ -10,7 +10,7 @@ const UP = "\x1b[A"
 const DOWN = "\x1b[B"
 const KEYS: Record<string, string> = { "tui.select.cancel": ESC, "tui.select.up": UP, "tui.select.down": DOWN }
 
-function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = false) {
+function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = false, tagColors = false) {
   const editor = { text: editorText }
   const notes: string[] = []
   const levels: string[] = []
@@ -23,7 +23,7 @@ function fakeCtx(branch: unknown[], idle = true, editorText = "", failSet = fals
     requestRender: () => events.push("render"),
     showOverlay: () => ({ hide: () => events.push("backdrop hidden") }),
   }
-  const theme = { fg: (_c: unknown, s: string) => s, bold: (s: string) => s }
+  const theme = { fg: (c: unknown, s: string) => (tagColors ? `<${c}>${s}` : s), bold: (s: string) => s }
   const kb = { matches: (data: string, id: string) => KEYS[id] === data }
   const ctx = {
     hasUI: true,
@@ -266,6 +266,14 @@ describe("chunk comments in the reader", () => {
     expect(hasLine(frames[6], "half")).toBe(true)
     expect(hasLine(frames[7], "┃ half")).toBe(true)
     expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("the comment input box is drawn in the border color of the comment markers", async () => {
+    const { ctx, keys, frames } = fakeCtx(commentTurn(), true, "", false, true)
+    keys.push("c", ESC, "q")
+    await openTurnReader(ctx)
+    expect(hasLine(frames[0], "<border>───")).toBe(true)
+    expect(hasLine(frames[0], "<accent>─")).toBe(false)
   })
 
   test("keys go to the comment editor while composing", async () => {
