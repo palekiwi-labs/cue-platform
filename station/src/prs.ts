@@ -7,6 +7,7 @@ export interface PrsOptions {
   repo: string;
   onQuit: () => void;
   onOpen: (pr: PrSummary) => void;
+  onCheckout: (pr: PrSummary) => void;
   onRefresh: () => void;
   onCopy: (text: string) => void;
   onPickSort: (current: PrSort, choose: (sort: PrSort) => void) => void;
@@ -206,6 +207,11 @@ export class PrsView implements Component {
       case "h":
         this.copy("markdown");
         return;
+      case "c": {
+        const pr = this.selected();
+        if (pr !== undefined) this.opts.onCheckout(pr);
+        return;
+      }
       case "q":
       case "\x03":
         this.opts.onQuit();
@@ -289,7 +295,7 @@ export class PrsView implements Component {
     while (body.length < bodyH) body.push("");
     out.push(...body);
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}c${C.dim} checkout  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
     const pos = `${this.layout === "tree" ? "tree  " : ""}sort: ${sortLabel(this.sort)}  ` +
       (this.rows.length > 0 ? `${this.cursor + 1}/${this.rows.length} ` : "");
     const room = Math.max(1, width - pos.length - 2);
