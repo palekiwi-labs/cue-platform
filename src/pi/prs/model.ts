@@ -9,6 +9,7 @@
  * field a row shows, so nothing is fetched per PR.
  */
 
+import { stackPrs } from "../../prs/stack"
 import type { SessionRow } from "../browser/sessions"
 
 export type View = "repo" | "org"
@@ -170,28 +171,11 @@ export type Row =
   | { kind: "pr"; pr: Pr; depth: number }
 
 /**
- * PRs of one repo as a stacked tree, depth-first. Roots target the default
- * branch or a branch no listed PR heads; children target a parent's head.
- * Siblings are newest first. Cycles cannot loop (visited set).
+ * PRs of one repo as a stacked tree, depth-first, siblings newest first.
+ * See stackPrs for the root and cycle rules.
  */
 export function stackRepo(prs: Pr[]): { pr: Pr; depth: number }[] {
-  const heads = new Set(prs.map((p) => p.headRef))
-  const byBase = new Map<string, Pr[]>()
-  for (const p of prs) byBase.set(p.baseRef, [...(byBase.get(p.baseRef) ?? []), p])
-  const newest = (a: Pr, b: Pr) => b.createdAt.localeCompare(a.createdAt)
-  const out: { pr: Pr; depth: number }[] = []
-  const seen = new Set<Pr>()
-  const walk = (p: Pr, depth: number) => {
-    if (seen.has(p)) return
-    seen.add(p)
-    out.push({ pr: p, depth })
-    for (const c of (byBase.get(p.headRef) ?? []).sort(newest)) walk(c, depth + 1)
-  }
-  const roots = prs.filter((p) => p.baseRef === p.defaultBranch || !heads.has(p.baseRef))
-  for (const r of roots.sort(newest)) walk(r, 0)
-  // PRs only reachable through a cycle still show, at the top level.
-  for (const p of [...prs].sort(newest)) walk(p, 0)
-  return out
+  return stackPrs(prs, (a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 /**
