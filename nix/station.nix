@@ -29,6 +29,7 @@ pkgs.stdenv.mkDerivation {
   npmRebuildFlags = [ "--ignore-scripts" ];
 
   nativeBuildInputs = [
+    pkgs.git
     pkgs.nodejs
     pkgs.importNpmLock.npmConfigHook
     pkgs.makeWrapper
