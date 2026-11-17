@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { SpeakResult } from "../speech"
 import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader } from "./turn-reader"
 
-const ALT_U = "\x1bu"
+const CTRL_U = "\x15"
 const ESC = "\x1b"
 
 function fakeCtx(branch: unknown[], idle = true) {
@@ -55,7 +55,7 @@ describe("openTurnReader", () => {
     expect(events).toEqual([])
   })
 
-  for (const [name, key] of [["q", "q"], ["the shortcut", ALT_U], ["escape", ESC]] as const) {
+  for (const [name, key] of [["q", "q"], ["the shortcut", CTRL_U], ["escape", ESC]] as const) {
     test(`renders the turn text and closes on ${name}`, async () => {
       const { ctx, events, keys, rendered } = fakeCtx(turn)
       keys.push("j", key)
@@ -110,6 +110,6 @@ describe("registerTurnReader", () => {
     registerTurnReader(pi)
     expect(commands).toEqual(["cue:read"])
     expect(shortcuts).toEqual([READER_SHORTCUT])
-    expect(READER_SHORTCUT).toBe("alt+u")
+    expect(READER_SHORTCUT).toBe("ctrl+u")
   })
 })

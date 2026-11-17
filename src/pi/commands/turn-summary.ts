@@ -7,7 +7,7 @@ import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, tu
 import { speakNotes, type TurnSpeaker } from "./turn-reader"
 
 /** Open the turn summary popup. */
-export const SUMMARY_SHORTCUT = "ctrl+u"
+export const SUMMARY_SHORTCUT = "alt+u"
 /** Summary popup key that speaks the shown summary. */
 export const SUMMARY_SPEAK_KEY = "s"
 

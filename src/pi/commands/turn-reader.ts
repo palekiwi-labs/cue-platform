@@ -5,7 +5,7 @@ import { MARGIN_Y, readerWidth, TurnReader } from "../turn-reader/reader"
 import type { SpeakResult, Speech } from "../speech"
 
 /** Open the latest turn reader. */
-export const READER_SHORTCUT = "alt+u"
+export const READER_SHORTCUT = "ctrl+u"
 /** Reader key that speaks the displayed text. */
 export const READER_SPEAK_KEY = "s"
 
