@@ -39,7 +39,7 @@ function usage(code: number): never {
   out("       station walkthrough <w>  guided walkthrough (<ctx address>/review/walkthrough/<id>.json)");
   out("       station demo             built-in demo diff");
   out("");
-  out("  --context <slug>   cue context for submitted comment rounds (default review-<branch-slug>)");
+  out("  --context <slug>   cue context for submitted comment rounds of non-PR reviews (default review-<branch-slug>; PR reviews always use review-pr-N)");
   process.exit(code);
 }
 
@@ -106,7 +106,7 @@ async function submit(router: Router, review: Review, comments: RoundComment[], 
   }
   let context: string;
   try {
-    context = reviewContext(review.branch, contextOverride);
+    context = reviewContext(review.branch, review.pr, contextOverride);
   } catch (e) {
     fail(errText(e));
     return;
@@ -420,6 +420,9 @@ export async function main(): Promise<void> {
   let target: Target;
   try {
     target = await resolve(args);
+    if (contextOverride !== null && ("prs" in target || ("pr" in target && target.pr !== null))) {
+      throw new Error("--context is not allowed for PR reviews; rounds go to review-pr-N");
+    }
     if ("findings" in target) {
       showFindings(target.findings);
       return;

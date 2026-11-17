@@ -361,7 +361,12 @@ test("whole-chunk comment carries both line spans and the full body", () => {
 
 test("review context follows cue-review naming", () => {
   assert.equal(slugify("Feat/Some Thing"), "feat-some-thing");
-  assert.equal(reviewContext("feat/x", null), "review-feat-x");
-  assert.equal(reviewContext(null, "mine"), "mine");
-  assert.throws(() => reviewContext(null, null), /--context/);
+  assert.equal(reviewContext("feat/x", null, null), "review-feat-x");
+  assert.equal(reviewContext(null, null, "mine"), "mine");
+  assert.throws(() => reviewContext(null, null, null), /--context/);
+});
+
+test("PR review rounds go to review-pr-N and reject --context", () => {
+  assert.equal(reviewContext("feat/x", 42, null), "review-pr-42");
+  assert.throws(() => reviewContext("feat/x", 42, "mine"), /--context/);
 });

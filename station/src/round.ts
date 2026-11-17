@@ -61,7 +61,11 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export function reviewContext(branch: string | null, override: string | null): string {
+export function reviewContext(branch: string | null, pr: number | null, override: string | null): string {
+  if (pr !== null) {
+    if (override !== null) throw new Error(`--context is not allowed for PR reviews; rounds go to review-pr-${pr}`);
+    return `review-pr-${pr}`;
+  }
   if (override !== null) return override;
   if (branch === null || branch === "HEAD" || slugify(branch) === "") {
     throw new Error("no branch to name the review context; pass --context <slug>");
