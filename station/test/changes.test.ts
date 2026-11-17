@@ -119,6 +119,11 @@ test("fold chunk persists and hides its lines", () => {
 
 test("y copies the chunk, line or range location", () => {
   const { v, copied } = view();
+  keys(v, "y");
+  assert.match(screen(v), /copied src\/a\.ts:1-3/);
+  keys(v, "j", "k");
+  assert.doesNotMatch(screen(v), /copied/);
+  copied.length = 0;
   keys(v, "y", "\r", "y", "j", "y", "V", "j", "y", "j", "y");
   assert.deepEqual(copied, ["src/a.ts:1-3", "src/a.ts:1", "src/a.ts:2 (base)", "src/a.ts:2", "src/a.ts:2-3"]);
 });
