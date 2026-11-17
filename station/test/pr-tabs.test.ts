@@ -50,7 +50,7 @@ test("footer carries the tab strip with the active tab marked", () => {
   ]);
   tabs.handleInput("2");
   const lines = tabs.render(80).map((l) => stripTerminalSequences(l));
-  assert.match(lines[1]!, /^ 1 changes \[2 findings\] │b footer/);
+  assert.match(lines[1]!, /^ 1 changes 2 findings │b footer/);
   assert.equal(lines[0], "b title");
 });
 

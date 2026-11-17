@@ -13,7 +13,7 @@ export interface Tab {
 
 export function tabStrip(labels: string[], active: number): string {
   const parts = labels.map((l, i) =>
-    i === active ? `${C.accent}[${i + 1} ${l}]` : `${C.dim}${i + 1} ${l}`,
+    i === active ? `${C.accent}${i + 1} ${l}` : `${C.dim}${i + 1} ${l}`,
   );
   return ` ${parts.join(" ")}${C.faint} │${RESET}`;
 }
