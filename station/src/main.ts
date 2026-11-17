@@ -38,8 +38,11 @@ function currentHead(repoPath: string): string | null {
 }
 
 function openEditor(tui: TuiAltScreen, repoPath: string, file: PacketFile, line: number): void {
+  openPath(tui, repoPath, file.status === "deleted" ? (file.old_path ?? file.path) : file.path, line);
+}
+
+function openPath(tui: TuiAltScreen, repoPath: string, path: string, line: number): void {
   const editor = process.env.EDITOR ?? "nvim";
-  const path = file.status === "deleted" ? (file.old_path ?? file.path) : file.path;
   tui.stop({ preserveScreen: true });
   spawnSync(editor, [`+${line}`, path], { cwd: repoPath, stdio: "inherit" });
   tui.start();
@@ -283,7 +286,10 @@ function showFindings(address: string): void {
   }
   const files = findingsRun.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
   const router = new Router();
-  router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files), onQuit: () => router.quit() }));
+  router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files),
+    onQuit: () => router.quit(),
+    onOpen: (file, line) => openPath(router.tui, repoPath, file, line),
+  }));
   router.tui.start();
 }
 
