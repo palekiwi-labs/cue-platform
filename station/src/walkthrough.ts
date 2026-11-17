@@ -448,6 +448,14 @@ export class WalkthroughView implements Component {
       this.go(this.cursor - 1);
       return;
     }
+    if (matchesKey(data, "shift+down")) {
+      this.offset += 1;
+      return;
+    }
+    if (matchesKey(data, "shift+up")) {
+      this.offset -= 1;
+      return;
+    }
     if (matchesKey(data, "down")) {
       this.moveStep(1);
       return;
@@ -649,7 +657,7 @@ export class WalkthroughView implements Component {
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
     const keys = this.sideFocus
       ? ` ${k("j/k", "move")}${k("enter", "read")}${k("tab/esc", "back")}`
-      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k", "scroll")}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
+      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const right = `${more}${this.stepStatus()}${C.dim}${this.cursor + 1}/${this.rows.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
