@@ -1014,7 +1014,7 @@ export class ChangesView implements Component {
       const row = this.rows[this.offset + r];
       const diff = row === undefined ? "" : this.renderRow(row, diffW);
       const diffCell = fit(diff, diffW);
-      out.push(sideW > 0 ? `${side[r] ?? ""}${C.faint}│${RESET}${diffCell}` : diffCell);
+      out.push(sideW > 0 ? `${diffCell}${C.faint}│${RESET}${side[r] ?? ""}` : diffCell);
     }
 
     const cur = this.current();

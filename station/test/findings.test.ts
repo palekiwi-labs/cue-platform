@@ -97,6 +97,16 @@ test("view navigates findings and renders code from the head source", () => {
   assert.match(shown, /Msg/);
   assert.match(shown, /2 ▎y = 2/);
   assert.match(shown, /finding 1\/1/);
+  for (const [width, sideWidth] of [[120, 40], [80, 28], [180, 56], [120, 40]] as const) {
+    const body = view.render(width).map(stripTerminalSequences).slice(2, -1);
+    const divider = width - sideWidth - 1;
+    for (const l of body) {
+      assert.equal(l[divider], "│", l);
+      assert.equal(l.length, width);
+    }
+    assert.ok(body.some((l) => l.slice(0, divider).includes("Msg")));
+    assert.ok(body.some((l) => l.slice(divider + 1).includes("Title one")));
+  }
   view.handleInput("e");
   assert.deepEqual(opened, [["a.rb", 2]]);
   view.handleInput("q");

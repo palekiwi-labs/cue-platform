@@ -384,7 +384,7 @@ export class FindingsView implements Component {
     const side = this.renderList(bodyH, sideW);
     for (let i = 0; i < bodyH; i++) {
       const row = rows[this.offset + i] ?? "";
-      out.push(`${side[i] ?? ""}${C.faint}│${RESET}${fit(" ".repeat(pad) + truncateToWidth(row, mainW - pad, ""), mainW)}${RESET}`);
+      out.push(`${fit(" ".repeat(pad) + truncateToWidth(row, mainW - pad, ""), mainW)}${RESET}${C.faint}│${RESET}${side[i] ?? ""}`);
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;

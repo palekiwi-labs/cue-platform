@@ -127,6 +127,23 @@ test("ctrl+up/down read straight through and the main pane follows", () => {
   assert.match(text(v), /missing\.ts not found at head abcdef1234/);
 });
 
+test("the reading pane starts at the left edge with the outline on the right", () => {
+  const v = v1View();
+  for (const [width, sideWidth] of [[140, 47], [80, 28], [180, 56], [140, 47]] as const) {
+    const body = v.render(width).map((l) => stripTerminalSequences(l)).slice(2, -1);
+    const divider = width - sideWidth - 1;
+    for (const l of body) {
+      assert.equal(l[divider], "│", l);
+      assert.equal(l.length, width);
+    }
+    assert.ok(body.some((l) => l.slice(0, divider).includes("Overall summary.")));
+    assert.ok(body.some((l) => l.slice(divider + 1).includes("Gamma")));
+    assert.ok(body.every((l) => !l.slice(divider + 1).includes("Overall summary.")));
+  }
+  v.handleInput("t");
+  assert.ok(v.render(140).map((l) => stripTerminalSequences(l)).slice(2, -1).every((l) => !l.includes("│")));
+});
+
 test("tab focuses the outline, enter jumps, esc returns", () => {
   const v = v1View();
   v.handleInput("\t");
