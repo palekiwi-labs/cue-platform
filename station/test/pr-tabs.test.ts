@@ -103,14 +103,16 @@ test("walkthrough addresses, listing and file shape", () => {
   assert.equal(w.pr, 7);
   assert.equal(w.summary, "s");
   assert.deepEqual(w.chunks[0]!.sections, [
-    { title: "a", markdown: "x", file: { path: "f.ts", lines: [3, 9] } },
-    { title: "Section 2", markdown: "y", file: { path: "g.ts", lines: null } },
-    { title: "c", markdown: "z", file: null },
+    { title: "a", steps: [{ markdown: "x", code: { path: "f.ts", lines: [3, 9], rev: "h".repeat(12), revKind: "head" } }] },
+    { title: "Section 2", steps: [{ markdown: "y", code: { path: "g.ts", lines: null, rev: "h".repeat(12), revKind: "head" } }] },
+    { title: "c", steps: [{ markdown: "z", code: null }] },
   ]);
   assert.deepEqual(w.chunks[1], { id: "chunk-2", title: "Chunk 2", summary: "", sections: [] });
   const list = listWalkthroughs("org/repo", 7, store);
   assert.deepEqual(list.map((e) => e.id), ["w1", "w0"]);
   assert.equal(walkthroughPickerText(list), "a  w1  head hhhhhhhhhh  t\nb  w0  head 0000000000  older");
+  writeFileSync(join(dir, "v3.json"), JSON.stringify({ version: 3 }));
+  assert.throws(() => loadWalkthrough("org/repo/review-pr-7/review/walkthrough/v3.json", store), /version 3/);
   writeFileSync(join(dir, "v2.json"), JSON.stringify({ version: 2 }));
-  assert.throws(() => loadWalkthrough("org/repo/review-pr-7/review/walkthrough/v2.json", store), /version 2/);
+  assert.throws(() => loadWalkthrough("org/repo/review-pr-7/review/walkthrough/v2.json", store), /\$\.head: must be a non-empty string/);
 });
