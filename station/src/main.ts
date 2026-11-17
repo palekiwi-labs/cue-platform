@@ -22,8 +22,10 @@ import type { PacketFile } from "./packet.js";
 import { preparerRun, submitToSupervisor } from "./prepare.js";
 import { walkthroughSaveCommand } from "./walkthrough-save.js";
 import { fromDemo, fromPr, fromRange, resolvePr, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
-import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
-import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
+import { buildRound, type DiffRoundComment, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
+import { loadComments, loadFolds, loadReaderComments, saveComments, saveFolds, saveReaderComments } from "./state.js";
+import { readerRound, ReaderComments, roundOrder } from "./reader-comments.js";
+import type { ExtraComment } from "./changes.js";
 import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
@@ -85,7 +87,23 @@ function changesView(
   review: Review,
   onQuit: () => void,
   quitLabel?: string,
+  reader: ReaderComments | null = null,
 ): ChangesView {
+  let cached: { version: number; entries: ExtraComment[] } | null = null;
+  const extraComments = (): ExtraComment[] => {
+    if (reader === null) return [];
+    if (cached?.version === reader.version) return cached.entries;
+    const round = readerRound(reader.all());
+    const entries = roundOrder(reader.all()).map((c, i) => ({
+      id: c.id,
+      label: `${c.kind}: ${c.item_title}`,
+      where: c.section,
+      text: c.text,
+      outdated: round[i]?.outdated === true,
+    }));
+    cached = { version: reader.version, entries };
+    return entries;
+  };
   return new ChangesView({
     title: review.title,
     subtitle: review.subtitle,
@@ -101,11 +119,28 @@ function changesView(
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
     onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line, review.packet.base_sha),
-    onSubmit: (comments, done) => void submit(router, review, comments, done),
+    onSubmit: (comments, done) => void submit(router, review, comments, done, reader),
+    extraComments: reader === null ? undefined : extraComments,
+    onEditExtra: (id) => {
+      const c = reader?.get(id);
+      if (reader === null || c === undefined) return;
+      router.compose({ title: `${c.item_title} · ${c.section}`, text: c.text }, (text) => {
+        if (text !== null) reader.update(id, text);
+      });
+    },
+    onDeleteExtra: (id) => reader?.remove([id]),
   });
 }
 
-async function submit(router: Router, review: Review, comments: RoundComment[], done: (ok: boolean) => void): Promise<void> {
+async function submit(
+  router: Router,
+  review: Review,
+  diffComments: DiffRoundComment[],
+  done: (ok: boolean) => void,
+  reader: ReaderComments | null = null,
+): Promise<void> {
+  const readerIds = (reader?.all() ?? []).map((c) => c.id);
+  const comments: RoundComment[] = [...diffComments, ...readerRound(reader?.all() ?? [])];
   const title = "submit comments";
   const fail = (text: string): void => router.showPopup({ title, text, error: true, footer: "any key" }, true);
   if (review.cueDir === null) {
@@ -125,6 +160,7 @@ async function submit(router: Router, review: Review, comments: RoundComment[], 
   try {
     const address = await submitRound(review.cueDir, context, round);
     done(true);
+    reader?.remove(readerIds);
     router.showPopup(
       { title: "round submitted", text: address, footer: "y copy  any key close" },
       true,
@@ -235,6 +271,7 @@ function prTabs(
   const pr = review.pr;
   const repo = review.cueDir;
   if (pr === null || repo === null) throw new Error("not a pull request review");
+  const readerComments = new ReaderComments(loadReaderComments(review.key), (s) => saveReaderComments(review.key, s));
   const host: PrTabHost = {
     repo,
     repoSlug: review.repo,
@@ -245,9 +282,12 @@ function prTabs(
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+    readerComments,
+    compose: (request, done) => router.compose(request, done),
+    copy: (text) => process.stdout.write(osc52(text)),
   };
   return new TabsScreen([
-    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },
+    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, readerComments) },
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
   ]);
