@@ -23,8 +23,9 @@ import { preparerRun, submitToSupervisor } from "./prepare.js";
 import { walkthroughSaveCommand } from "./walkthrough-save.js";
 import { fromDemo, fromPr, fromRange, resolvePr, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
-import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
-import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
+import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
+import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
+import { WalkthroughDrafts } from "./walkthrough-comments.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
 import { loadWalkthrough, loadWalkthroughSources, WalkthroughView } from "./walkthrough.js";
@@ -243,6 +244,12 @@ function prTabs(
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+    walkthroughDrafts: new WalkthroughDrafts(
+      loadWalkthroughComments(review.key),
+      (state) => saveWalkthroughComments(review.key, state),
+      () => currentWalkthrough(review.repo, pr, chosen),
+      (request, done) => router.compose(request, done),
+    ),
   };
   return new TabsScreen([
     { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },

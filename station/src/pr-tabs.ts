@@ -2,7 +2,15 @@ import type { PopupContent } from "./popup.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { findingsWorktree, listRuns, prContext, type RunEntry } from "./pr-review.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
-import { listWalkthroughs, loadWalkthrough, loadWalkthroughSources, type WalkthroughEntry, WalkthroughView } from "./walkthrough.js";
+import {
+  listWalkthroughs,
+  loadWalkthrough,
+  loadWalkthroughSources,
+  type Walkthrough,
+  type WalkthroughEntry,
+  WalkthroughView,
+} from "./walkthrough.js";
+import type { WalkthroughDrafts } from "./walkthrough-comments.js";
 
 const PICK_KEYS = "abcdefghijklmnorstuvwxyz";
 
@@ -16,6 +24,7 @@ export interface PrTabHost {
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
+  walkthroughDrafts?: WalkthroughDrafts;
 }
 
 export type FindingsTabHost = PrTabHost;
@@ -150,6 +159,17 @@ export function findingsTab(host: PrTabHost): TabScreen {
   });
 }
 
+/** The walkthrough chosen for the PR, else the newest one, for drafts read before the tab loads it. */
+export function currentWalkthrough(repoSlug: string, pr: number, chosen: Map<string, string>): Walkthrough | null {
+  const address = chosen.get(`walkthrough#${pr}`) ?? listWalkthroughs(repoSlug, pr)[0]?.address;
+  if (address === undefined) return null;
+  try {
+    return loadWalkthrough(address);
+  } catch {
+    return null;
+  }
+}
+
 export function walkthroughTab(host: PrTabHost): TabScreen {
   return new ProducerTab<WalkthroughEntry>(host, {
     name: "walkthrough",
@@ -159,12 +179,14 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
     view: (address, open) => {
       const walkthrough = loadWalkthrough(address);
       requireHead(host.repo, walkthrough.head);
+      host.walkthroughDrafts?.use(walkthrough);
       return new WalkthroughView({
         walkthrough,
         sources: loadWalkthroughSources(host.repo, walkthrough),
         subtitle: prContext(host.repoSlug, host.pr),
         onQuit: host.onQuit,
         onOpen: (rev, file, line) => open(rev, file, line, walkthrough.base),
+        drafts: host.walkthroughDrafts,
       });
     },
   });
