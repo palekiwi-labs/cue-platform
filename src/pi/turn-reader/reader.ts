@@ -89,6 +89,10 @@ export const DELETE_KEY = "d"
 export const REPLY_KEY = "r"
 /** Reader key that copies the focused chunk's source to the clipboard. */
 export const COPY_KEY = "y"
+/** Reader key that focuses the previous commented chunk of the displayed messages. */
+export const PREV_COMMENT_KEY = "ctrl+up"
+/** Reader key that focuses the next commented chunk of the displayed messages. */
+export const NEXT_COMMENT_KEY = "ctrl+down"
 
 /** The text editor the reader composes comments in. */
 export interface CommentEditor {
@@ -107,6 +111,7 @@ interface Chunk {
   key: string
   quote: string
   text: string
+  note: number
 }
 
 interface Composer {
@@ -130,7 +135,8 @@ interface Body {
  * all messages. Grows with the content up to the rows `rows()` reports, then
  * scrolls. Opens in focus mode on the first chunk: the arrows step through
  * chunks (blank-line separated runs of source), wrapping at either end, and
- * every chunk but the focused one is dimmed. Each chunk
+ * every chunk but the focused one is dimmed; ctrl+up and ctrl+down jump
+ * between commented chunks. Each chunk
  * may carry one draft comment, shown under it and composed in an editor at
  * the bottom of the reader.
  */
@@ -241,8 +247,10 @@ export class TurnReader implements Component {
         const start = body.lines.length
         for (const line of lines) push(line, index)
         const comment = this.comments.get(key)
+        let note = -1
         if (comment) {
           push("", index)
+          note = body.lines.length
           push(label, index, label)
           for (const line of plainText(comment.text).split("\n")) {
             for (const part of wrapTextWithAnsi(line, textWidth)) {
@@ -250,7 +258,7 @@ export class TurnReader implements Component {
             }
           }
         }
-        body.chunks.push({ start, end: body.lines.length - 1, key, quote: sourceText(chunk), text: chunk.text })
+        body.chunks.push({ start, end: body.lines.length - 1, key, quote: sourceText(chunk), text: chunk.text, note })
       }
     })
     this.current = Math.min(this.current, Math.max(0, body.chunks.length - 1))
@@ -287,6 +295,54 @@ export class TurnReader implements Component {
     if (n === 0) return
     this.current = (this.current + direction + n) % n
     this.reveal()
+  }
+
+  /**
+   * Focus the previous or next commented chunk of the displayed messages, wrapping
+   * past either end, and scroll its comment into view. Turning focus on first
+   * if needed, the chunk it lands on counts when it is commented. Reports the
+   * outcome in the footer; returns whether a chunk was focused.
+   */
+  jumpComment(direction: 1 | -1): boolean {
+    if (!this.cache || this.composer) return false
+    const { chunks } = this.body(this.cache.width)
+    const marked = chunks.flatMap((c, i) => (c.note >= 0 ? [i] : []))
+    const hidden = this.all ? 0 : this.comments.size - marked.length
+    if (marked.length === 0) {
+      this.showFlash(
+        hidden > 0
+          ? `no comments here · ${hidden} in earlier messages (${MODE_KEY} all)`
+          : `no comments (${COMMENT_KEY} comment)`,
+      )
+      return false
+    }
+    let from = this.current
+    if (!this.focus) {
+      this.toggleFocus()
+      from = this.current - direction
+    }
+    const ahead = direction > 0 ? marked.filter((i) => i > from) : marked.filter((i) => i < from).reverse()
+    const target = ahead[0] ?? (direction > 0 ? marked[0]! : marked.at(-1)!)
+    const only = marked.length === 1 && target === from
+    this.current = target
+    this.revealComment()
+    const where = only ? " · only comment" : ahead.length === 0 ? " · wrapped" : ""
+    const more = hidden > 0 ? ` · ${hidden} hidden (${MODE_KEY} all)` : ""
+    this.showFlash(`comment ${marked.indexOf(target) + 1}/${marked.length}${where}${more}`)
+    return true
+  }
+
+  private revealComment(): void {
+    const chunk = this.cache?.chunks[this.current]
+    if (!chunk) return
+    const view = this.viewport()
+    if (chunk.note < 0 || chunk.end - chunk.start + 1 <= view) return this.reveal()
+    this.offset = chunk.end - chunk.note + 1 <= view ? chunk.end - view + 1 : chunk.note
+    this.scroll(0)
+  }
+
+  private commentsInView(): boolean {
+    return this.cache?.chunks.some((c) => c.note >= 0) ?? false
   }
 
   private reveal(): void {
@@ -425,6 +481,7 @@ export class TurnReader implements Component {
           [this.focusedComment() ? `${DELETE_KEY} delete` : "", 9],
           [this.comments.size > 0 ? `${REPLY_KEY} reply` : "", 9],
           [chunk ? "↑↓ chunk" : scrolls ? "↑↓" : "", 5],
+          [this.commentsInView() ? "ctrl+↑↓ comment" : "", 3],
           [scrolls ? "pgup pgdn g G" : "", 1],
           [this.focus || scrolls ? "esc" : "esc close", 6],
         ]

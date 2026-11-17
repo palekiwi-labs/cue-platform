@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { setKittyProtocolActive } from "@earendil-works/pi-tui"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { SpeakResult } from "../speech"
 import { COPY_KEY } from "../turn-reader/reader"
@@ -312,6 +313,83 @@ describe("chunk comments in the reader", () => {
     await openTurnReader(later.ctx)
     expect(hasLine(later.rendered().map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")), "┃ early")).toBe(true)
     expect(later.editor.text).toBe("> tw\n\nearly")
+  })
+})
+
+describe("comment navigation in the reader", () => {
+  afterEach(() => setKittyProtocolActive(false))
+  let turns = 0
+  const navTurn = () => {
+    const id = `nav-${++turns}`
+    return [
+      { type: "message", id, message: { role: "user", content: "q" } },
+      {
+        type: "message",
+        id: `${id}-a`,
+        message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree\n\nfour" }] },
+      },
+    ]
+  }
+  const head = (f: string[] | undefined) => /chunk \d\/\d/.exec(f?.[0] ?? "")?.[0]
+  const setup = ["j", "c", "x", "\r", "j", "j", "c", "y", "\r"]
+
+  const encodings: [string, string, string, boolean][] = [
+    ["xterm", "\x1b[1;5A", "\x1b[1;5B", false],
+    ["rxvt", "\x1bOa", "\x1bOb", false],
+    ["kitty", "\x1b[1;5A", "\x1b[1;5B", true],
+    ["kitty with press event type", "\x1b[1;5:1A", "\x1b[1;5:1B", true],
+    ["kitty with caps lock", "\x1b[1;69A", "\x1b[1;69B", true],
+  ]
+  for (const [name, up, down, kitty] of encodings) {
+    test(`ctrl+up and ctrl+down as ${name} jump between commented chunks, wrapping`, async () => {
+      setKittyProtocolActive(kitty)
+      const { ctx, keys, frames } = fakeCtx(navTurn())
+      keys.push(...setup, down, down, up, "q")
+      await openTurnReader(ctx)
+      const jumps = frames.slice(setup.length, setup.length + 3)
+      expect(jumps.map(head)).toEqual(["chunk 2/4", "chunk 4/4", "chunk 2/4"])
+      expect(jumps[0]!.at(-1)).toContain(" comment 1/2 · wrapped ")
+      expect(jumps[1]!.at(-1)).toContain(" comment 2/2 ")
+      expect(jumps[2]!.at(-1)).toContain(" comment 1/2 ")
+    })
+  }
+
+  test("plain and other modified arrows keep their meaning", async () => {
+    const { ctx, keys, frames } = fakeCtx(navTurn())
+    keys.push(...setup, UP, DOWN, "\x1b[1;2A", "\x1b[1;3A", "\x1b[1;6A", "q")
+    await openTurnReader(ctx)
+    const after = frames.slice(setup.length, setup.length + 5)
+    expect(after.map(head)).toEqual(["chunk 3/4", "chunk 4/4", "chunk 4/4", "chunk 4/4", "chunk 4/4"])
+    expect(after.some((f) => /comment \d\/\d|no comments/.test(f.at(-1)!))).toBe(false)
+  })
+
+  test("ctrl+arrows go to the comment editor while composing, not to navigation", async () => {
+    const { ctx, keys, frames, events } = fakeCtx(navTurn())
+    keys.push(...setup, "j", "c", "\x1b[1;5A", "\x1b[1;5B", "z", "\r", "q")
+    await openTurnReader(ctx)
+    const saved = frames.at(-2)!
+    expect(head(saved)).toBe("chunk 1/4")
+    expect(saved.some((l) => l.includes("┃ z"))).toBe(true)
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("with no comments ctrl+down reports it and keeps the reader open", async () => {
+    const { ctx, keys, frames, notes, events } = fakeCtx(navTurn())
+    keys.push("\x1b[1;5B", "j", "q")
+    await openTurnReader(ctx)
+    expect(head(frames[0])).toBe("chunk 1/4")
+    expect(frames[0]!.at(-1)).toContain(" no comments (c comment) ")
+    expect(frames[1]!.at(-1)).not.toContain("no comments")
+    expect(notes).toEqual([])
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("with focus off ctrl+down turns focus on at a commented chunk", async () => {
+    const { ctx, keys, frames } = fakeCtx(navTurn())
+    keys.push(...setup, "f", "\x1b[1;5B", "q")
+    await openTurnReader(ctx)
+    expect(head(frames[setup.length])).toBeUndefined()
+    expect(head(frames[setup.length + 1])).toBe("chunk 2/4")
   })
 })
 

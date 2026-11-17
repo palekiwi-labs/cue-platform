@@ -15,6 +15,8 @@ import {
   FOCUS_KEY,
   MARGIN_Y,
   MODE_KEY,
+  NEXT_COMMENT_KEY,
+  PREV_COMMENT_KEY,
   readerWidth,
   REPLY_KEY,
   TurnReader,
@@ -141,6 +143,8 @@ export async function openTurnReader(
           else if (data === REPLY_KEY) {
             if (insertReply(ctx, comments)) return close()
           }
+          else if (matchesKey(data, PREV_COMMENT_KEY)) reader.jumpComment(-1)
+          else if (matchesKey(data, NEXT_COMMENT_KEY)) reader.jumpComment(1)
           else if (kb.matches(data, "tui.select.up") || data === "k") reader.move(-1)
           else if (kb.matches(data, "tui.select.down") || data === "j") reader.move(1)
           else if (kb.matches(data, "tui.select.pageUp") || data === "b") reader.page(-1)
