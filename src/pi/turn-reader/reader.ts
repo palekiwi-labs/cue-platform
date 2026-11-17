@@ -119,15 +119,16 @@ interface Body {
  * Boxed, scrollable view of the latest turn's assistant messages, rendered as
  * Markdown and separated by a rule. Shows the last message until toggled to
  * all messages. Grows with the content up to the rows `rows()` reports, then
- * scrolls. In focus mode the arrows step through chunks (blank-line separated
- * runs of source) and every chunk but the focused one is dimmed. Each chunk
+ * scrolls. Opens in focus mode on the first chunk: the arrows step through
+ * chunks (blank-line separated runs of source), wrapping at either end, and
+ * every chunk but the focused one is dimmed. Each chunk
  * may carry one draft comment, shown under it and composed in an editor at
  * the bottom of the reader.
  */
 export class TurnReader implements Component {
   private offset = 0
   private all = false
-  private focus = false
+  private focus = true
   private current = 0
   private cache?: Body
   private composer?: Composer
@@ -254,17 +255,17 @@ export class TurnReader implements Component {
     this.offset = Math.min(this.maxOffset(), Math.max(0, this.offset + delta))
   }
 
-  /** Step one chunk in focus mode, otherwise scroll one line. */
+  /** Step one chunk in focus mode when there are chunks, otherwise scroll one line. */
   move(direction: 1 | -1): void {
-    if (this.focus) this.step(direction)
+    if (this.focus && (this.cache?.chunks.length ?? 0) > 0) this.step(direction)
     else this.scroll(direction)
   }
 
-  /** Focus the neighbouring chunk and scroll it into view. */
+  /** Focus the neighbouring chunk, wrapping past either end, and scroll it into view. */
   step(direction: 1 | -1): void {
-    const chunks = this.cache?.chunks ?? []
-    if (chunks.length === 0) return
-    this.current = Math.min(chunks.length - 1, Math.max(0, this.current + direction))
+    const n = this.cache?.chunks.length ?? 0
+    if (n === 0) return
+    this.current = (this.current + direction + n) % n
     this.reveal()
   }
 
@@ -389,6 +390,7 @@ export class TurnReader implements Component {
   private footer(width: number, position: string): string {
     const n = this.messages.length
     const scrolls = position !== ""
+    const chunk = this.focus && (this.cache?.chunks.length ?? 0) > 0
     const hints: [string, number][] = this.composer
       ? [["enter save", 9], ["alt+enter newline", 1], ["esc cancel", 9]]
       : [
@@ -396,11 +398,11 @@ export class TurnReader implements Component {
           [n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"}` : "", 4],
           [this.speakable ? (this.focus ? "s speak chunk" : "s speak") : "", 3],
           [`${FOCUS_KEY} ${this.focus ? "unfocus" : "focus"}`, 9],
-          [this.focus ? `${COPY_KEY} copy` : "", 1],
-          [this.focus ? `${COMMENT_KEY} comment` : "", 9],
+          [chunk ? `${COPY_KEY} copy` : "", 1],
+          [chunk ? `${COMMENT_KEY} comment` : "", 9],
           [this.focusedComment() ? `${DELETE_KEY} delete` : "", 9],
           [this.comments.size > 0 ? `${REPLY_KEY} reply` : "", 9],
-          [this.focus ? "↑↓ chunk" : scrolls ? "↑↓" : "", 5],
+          [chunk ? "↑↓ chunk" : scrolls ? "↑↓" : "", 5],
           [scrolls ? "pgup pgdn g G" : "", 1],
           [this.focus || scrolls ? "esc" : "esc close", 6],
         ]
