@@ -17,7 +17,9 @@ import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
 import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
-import { fromDemo, fromPr, fromRange, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
+import { preparerRun, submitToSupervisor } from "./prepare.js";
+import { walkthroughSaveCommand } from "./walkthrough-save.js";
+import { fromDemo, fromPr, fromRange, resolvePr, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
 import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
 import { loadComments, loadFolds, saveComments, saveFolds } from "./state.js";
 import { findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
@@ -38,6 +40,10 @@ function usage(code: number): never {
   out("       station findings <run>   verified findings of a review run (<ctx address>/review/runs/<run_id>)");
   out("       station walkthrough <w>  guided walkthrough (<ctx address>/review/walkthrough/<id>.json)");
   out("       station demo             built-in demo diff");
+  out("       station prepare-walkthrough <number> [--head <sha>] [--model <id>]");
+  out("                                submit a walkthrough preparer run for a PR to the supervisor");
+  out("       station walkthrough-save --repo <path> --pr <n> --base <sha> --head <sha> <file>");
+  out("                                validate a walkthrough file and save it to review-pr-N");
   out("");
   out("  --context <slug>   cue context for submitted comment rounds of non-PR reviews (default review-<branch-slug>; PR reviews always use review-pr-N)");
   process.exit(code);
@@ -407,8 +413,39 @@ async function resolve(args: string[]): Promise<Target> {
   usage(2);
 }
 
+function takeFlag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i === -1) return undefined;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith("-")) usage(2);
+  args.splice(i, 2);
+  return value;
+}
+
+async function prepareWalkthrough(args: string[]): Promise<void> {
+  const head = takeFlag(args, "--head");
+  const model = takeFlag(args, "--model");
+  const [number, extra] = args;
+  if (number === undefined || extra !== undefined || !/^\d+$/.test(number)) usage(2);
+  const pr = await resolvePr(process.cwd(), number, head);
+  const station = [process.execPath, process.argv[1] ?? "station"];
+  const { batchId, runIds } = await submitToSupervisor([preparerRun(station, pr, model)]);
+  console.log(`submitted walkthrough for #${pr.number} at ${pr.headSha.slice(0, 12)}`);
+  console.log(`batch ${batchId}  run ${runIds.join(" ")}`);
+}
+
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  if (args[0] === "walkthrough-save" || args[0] === "prepare-walkthrough") {
+    try {
+      if (args[0] === "walkthrough-save") process.exit(await walkthroughSaveCommand(args.slice(1)));
+      await prepareWalkthrough(args.slice(1));
+      process.exit(0);
+    } catch (e) {
+      console.error(`station: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+  }
   const flag = args.indexOf("--context");
   if (flag !== -1) {
     const value = args[flag + 1];

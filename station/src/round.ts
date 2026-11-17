@@ -77,7 +77,7 @@ export function roundName(now: number): string {
   return `station/round-${now}.json`;
 }
 
-async function contextAddress(dir: string, context: string, title: string): Promise<string> {
+export async function ensureContext(dir: string, context: string, title: string): Promise<string> {
   let status: string;
   try {
     status = await spawnAsync("cue", ["status", "-C", dir, "--context", context, "--json"], dir);
@@ -90,7 +90,7 @@ async function contextAddress(dir: string, context: string, title: string): Prom
 
 /** Writes the round as a review artifact and returns its canonical address. */
 export async function submitRound(dir: string, context: string, round: Round): Promise<string> {
-  const address = await contextAddress(dir, context, `Review ${round.branch ?? context}`);
+  const address = await ensureContext(dir, context, `Review ${round.branch ?? context}`);
   const name = roundName(round.submitted_at);
   const tmp = mkdtempSync(join(tmpdir(), "station-round-"));
   try {
