@@ -121,7 +121,7 @@ export async function openTurnReader(
       const reader = new TurnReader(
         theme, getMarkdownTheme(), messages, () => tui.terminal.rows, running, !!speaker, comments,
       )
-      const editorTheme = { borderColor: (s: string) => theme.fg("accent", s), selectList: getSelectListTheme() }
+      const editorTheme = { borderColor: (s: string) => theme.fg("border", s), selectList: getSelectListTheme() }
       const close = () => {
         backdrop.hide()
         done()
