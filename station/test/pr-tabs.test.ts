@@ -7,7 +7,8 @@ import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { listRuns, prContext } from "../src/pr-review.js";
 import { runPickerText } from "../src/pr-tabs.js";
 import { type TabScreen, TabsScreen } from "../src/tabs.js";
-import { loadWalkthrough, walkthroughPath } from "../src/walkthrough.js";
+import { listWalkthroughs, loadWalkthrough, walkthroughPath } from "../src/walkthrough.js";
+import { walkthroughPickerText } from "../src/pr-tabs.js";
 
 class Fake implements TabScreen {
   inputs: string[] = [];
@@ -69,14 +70,47 @@ test("runs are listed from review-pr-N newest first", () => {
   assert.match(runPickerText(list), /^a  200-b  head 2222222222  running\nb  100-a  head 1111111111  verified$/);
 });
 
-test("walkthrough addresses and file shape", () => {
+test("walkthrough addresses, listing and file shape", () => {
   const store = mkdtempSync(join(tmpdir(), "station-walk-"));
   const address = "org/repo/review-pr-7/review/walkthrough/w1.json";
   assert.throws(() => walkthroughPath("org/repo/ctx/review/w1.json", store));
   assert.throws(() => walkthroughPath("org/repo/ctx/review/walkthrough/../x.json", store));
-  mkdirSync(join(store, "org/repo/review-pr-7/review/walkthrough"), { recursive: true });
-  writeFileSync(join(store, address), JSON.stringify({ base: "b", head: "h", title: "t", chunks: [{ markdown: "# one" }, {}] }));
+  const dir = join(store, "org/repo/review-pr-7/review/walkthrough");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(store, address), JSON.stringify({
+    version: 1,
+    pr: 7,
+    base: "b",
+    head: "h".repeat(12),
+    title: "t",
+    summary: "s",
+    chunks: [
+      {
+        id: "c1",
+        title: "first",
+        sections: [
+          { title: "a", markdown: "x", file: { path: "f.ts", lines: [9, 3] } },
+          { markdown: "y", file: { path: "g.ts" } },
+          { title: "c", markdown: "z", file: { lines: [1, 2] } },
+        ],
+      },
+      {},
+    ],
+  }));
+  writeFileSync(join(dir, "w0.json"), JSON.stringify({ version: 1, title: "older", head: "0".repeat(12) }));
+  writeFileSync(join(dir, "broken.json"), "{");
   const w = loadWalkthrough(address, store);
-  assert.deepEqual(w.chunks, [{ markdown: "# one" }, { markdown: "" }]);
-  assert.equal(w.head, "h");
+  assert.equal(w.pr, 7);
+  assert.equal(w.summary, "s");
+  assert.deepEqual(w.chunks[0]!.sections, [
+    { title: "a", markdown: "x", file: { path: "f.ts", lines: [3, 9] } },
+    { title: "Section 2", markdown: "y", file: { path: "g.ts", lines: null } },
+    { title: "c", markdown: "z", file: null },
+  ]);
+  assert.deepEqual(w.chunks[1], { id: "chunk-2", title: "Chunk 2", summary: "", sections: [] });
+  const list = listWalkthroughs("org/repo", 7, store);
+  assert.deepEqual(list.map((e) => e.id), ["w1", "w0"]);
+  assert.equal(walkthroughPickerText(list), "a  w1  head hhhhhhhhhh  t\nb  w0  head 0000000000  older");
+  writeFileSync(join(dir, "v2.json"), JSON.stringify({ version: 2 }));
+  assert.throws(() => loadWalkthrough("org/repo/review-pr-7/review/walkthrough/v2.json", store), /version 2/);
 });

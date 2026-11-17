@@ -2,20 +2,23 @@ import type { PopupContent } from "./popup.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { findingsWorktree, listRuns, prContext, type RunEntry } from "./pr-review.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
+import { listWalkthroughs, loadWalkthrough, sectionFiles, type WalkthroughEntry, WalkthroughView } from "./walkthrough.js";
 
 const PICK_KEYS = "abcdefghijklmnorstuvwxyz";
 
-export interface FindingsTabHost {
+export interface PrTabHost {
   repo: string;
   repoSlug: string;
   pr: number;
   prHead: string;
   prWorktree: string;
-  chosen: Map<number, string>;
+  chosen: Map<string, string>;
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
 }
+
+export type FindingsTabHost = PrTabHost;
 
 export function runPickerText(runs: RunEntry[]): string {
   return runs
@@ -24,56 +27,75 @@ export function runPickerText(runs: RunEntry[]): string {
     .join("\n");
 }
 
-export class FindingsTab implements TabScreen {
-  private inner: TabScreen;
+export function walkthroughPickerText(entries: WalkthroughEntry[]): string {
+  return entries
+    .slice(0, PICK_KEYS.length)
+    .map((w, i) => `${PICK_KEYS[i]}  ${w.id}  head ${w.head.slice(0, 10)}  ${w.title}`)
+    .join("\n");
+}
 
-  constructor(private readonly host: FindingsTabHost) {
+interface Producer<E extends { address: string }> {
+  name: string;
+  folder: string;
+  list(): E[];
+  pickerText(entries: E[]): string;
+  view(address: string, open: (head: string, file: string, line: number) => void): TabScreen;
+}
+
+/**
+ * A PR tab over one producer folder in review-pr-N: loads the single entry,
+ * asks once with a lettered picker when there are several, and remembers
+ * the choice per PR in the host's `chosen` map.
+ */
+class ProducerTab<E extends { address: string }> implements TabScreen {
+  private inner: TabScreen;
+  private loaded = false;
+
+  constructor(
+    private readonly host: PrTabHost,
+    private readonly producer: Producer<E>,
+  ) {
     this.inner = this.notice([]);
-    const runs = listRuns(host.repoSlug, host.pr);
-    const remembered = host.chosen.get(host.pr);
-    if (remembered !== undefined && runs.some((r) => r.address === remembered)) this.load(remembered);
-    else if (runs.length === 1) this.load(runs[0]!.address);
-    else this.pick(runs);
+    const entries = producer.list();
+    const remembered = host.chosen.get(this.key);
+    if (remembered !== undefined && entries.some((e) => e.address === remembered)) this.load(remembered);
+    else if (entries.length === 1) this.load(entries[0]!.address);
+    else this.pick(entries);
+  }
+
+  private get key(): string {
+    return `${this.producer.folder}#${this.host.pr}`;
   }
 
   private notice(body: string[]): TabScreen {
     return new NoticeView({
-      title: `findings  #${this.host.pr}`,
+      title: `${this.producer.name}  #${this.host.pr}`,
       subtitle: prContext(this.host.repoSlug, this.host.pr),
       body,
       onQuit: this.host.onQuit,
     });
   }
 
-  private pick(runs = listRuns(this.host.repoSlug, this.host.pr)): void {
-    const where = `${prContext(this.host.repoSlug, this.host.pr)}/review/runs/`;
-    if (runs.length === 0) {
-      this.inner = this.notice([`no review runs in ${where}`]);
+  private pick(entries = this.producer.list()): void {
+    const where = `${prContext(this.host.repoSlug, this.host.pr)}/review/${this.producer.folder}/`;
+    if (entries.length === 0) {
+      this.inner = this.notice([`nothing in ${where}`]);
       return;
     }
-    if (!(this.inner instanceof FindingsView)) this.inner = this.notice(["no run chosen", "", "p pick a run"]);
+    if (!this.loaded) this.inner = this.notice([`no ${this.producer.name} chosen`, "", "P pick one"]);
     const keys = Object.fromEntries(
-      runs.slice(0, PICK_KEYS.length).map((r, i) => [PICK_KEYS[i]!, () => this.load(r.address)]),
+      entries.slice(0, PICK_KEYS.length).map((e, i) => [PICK_KEYS[i]!, () => this.load(e.address)]),
     );
-    this.host.showPopup({ title: "review run", text: runPickerText(runs), footer: "any other key cancel" }, true, keys);
+    this.host.showPopup({ title: this.producer.name, text: this.producer.pickerText(entries), footer: "any other key cancel" }, true, keys);
   }
 
   private load(address: string): void {
     try {
-      const run = loadRun(address);
-      if (!headInRepo(this.host.repo, run.head)) {
-        throw new Error(`head ${run.head.slice(0, 10)} is not in this repository (git fetch may help)`);
-      }
-      const files = run.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
-      this.host.chosen.set(this.host.pr, address);
-      this.inner = new FindingsView({
-        run,
-        sources: loadSources(this.host.repo, run.head, files),
-        onQuit: this.host.onQuit,
-        onOpen: (file, line) => void this.open(run.head, file, line),
-      });
+      this.inner = this.producer.view(address, (head, file, line) => void this.open(head, file, line));
+      this.loaded = true;
+      this.host.chosen.set(this.key, address);
     } catch (e) {
-      this.inner = this.notice([e instanceof Error ? e.message : String(e), "", "p pick a run"]);
+      this.inner = this.notice([e instanceof Error ? e.message : String(e), "", "P pick one"]);
     }
   }
 
@@ -91,7 +113,7 @@ export class FindingsTab implements TabScreen {
   }
 
   handleInput(data: string): void {
-    if (data === "p") this.pick();
+    if (data === "P") this.pick();
     else this.inner.handleInput(data);
   }
 
@@ -102,4 +124,48 @@ export class FindingsTab implements TabScreen {
   render(width: number): string[] {
     return this.inner.render(width);
   }
+}
+
+function requireHead(repo: string, head: string): void {
+  if (!headInRepo(repo, head)) throw new Error(`head ${head.slice(0, 10)} is not in this repository (git fetch may help)`);
+}
+
+export function findingsTab(host: PrTabHost): TabScreen {
+  return new ProducerTab<RunEntry>(host, {
+    name: "review run",
+    folder: "runs",
+    list: () => listRuns(host.repoSlug, host.pr),
+    pickerText: runPickerText,
+    view: (address, open) => {
+      const run = loadRun(address);
+      requireHead(host.repo, run.head);
+      const files = run.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
+      return new FindingsView({
+        run,
+        sources: loadSources(host.repo, run.head, files),
+        onQuit: host.onQuit,
+        onOpen: (file, line) => open(run.head, file, line),
+      });
+    },
+  });
+}
+
+export function walkthroughTab(host: PrTabHost): TabScreen {
+  return new ProducerTab<WalkthroughEntry>(host, {
+    name: "walkthrough",
+    folder: "walkthrough",
+    list: () => listWalkthroughs(host.repoSlug, host.pr),
+    pickerText: walkthroughPickerText,
+    view: (address, open) => {
+      const walkthrough = loadWalkthrough(address);
+      requireHead(host.repo, walkthrough.head);
+      return new WalkthroughView({
+        walkthrough,
+        sources: loadSources(host.repo, walkthrough.head, sectionFiles(walkthrough)),
+        subtitle: prContext(host.repoSlug, host.pr),
+        onQuit: host.onQuit,
+        onOpen: (file, line) => open(walkthrough.head, file, line),
+      });
+    },
+  });
 }
