@@ -5,19 +5,23 @@ import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader }
 
 const CTRL_U = "\x15"
 const ESC = "\x1b"
+const UP = "\x1b[A"
+const DOWN = "\x1b[B"
+const KEYS: Record<string, string> = { "tui.select.cancel": ESC, "tui.select.up": UP, "tui.select.down": DOWN }
 
 function fakeCtx(branch: unknown[], idle = true) {
   const notes: string[] = []
   const events: string[] = []
   const keys: string[] = []
   let rendered: string[] = []
+  const frames: string[][] = []
   const tui = {
     terminal: { rows: 30 },
     requestRender: () => events.push("render"),
     showOverlay: () => ({ hide: () => events.push("backdrop hidden") }),
   }
   const theme = { fg: (_c: unknown, s: string) => s, bold: (s: string) => s }
-  const kb = { matches: (data: string, id: string) => id === "tui.select.cancel" && data === ESC }
+  const kb = { matches: (data: string, id: string) => KEYS[id] === data }
   const ctx = {
     hasUI: true,
     isIdle: () => idle,
@@ -31,12 +35,15 @@ function fakeCtx(branch: unknown[], idle = true) {
             resolve()
           })
           rendered = component.render(60)
-          for (const key of keys) component.handleInput(key)
+          for (const key of keys) {
+            component.handleInput(key)
+            frames.push(component.render(60))
+          }
         })
       },
     },
   } as unknown as ExtensionContext
-  return { ctx, notes, events, keys, rendered: () => rendered }
+  return { ctx, notes, events, keys, frames, rendered: () => rendered }
 }
 
 const turn = [
@@ -113,6 +120,19 @@ describe("speaking from the reader", () => {
   })
 })
 
+
+describe("chunk focus in the reader", () => {
+  test("f toggles focus and the arrows step chunks only while focused", async () => {
+    const chunked = [turn[0], { type: "message", message: { role: "assistant", content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }]
+    const { ctx, keys, frames } = fakeCtx(chunked)
+    keys.push(DOWN, "f", DOWN, DOWN, UP, "f", "q")
+    await openTurnReader(ctx)
+    const heads = frames.slice(0, 6).map((f) => /chunk \d\/\d/.exec(f[0]!)?.[0])
+    expect(heads).toEqual([undefined, "chunk 1/3", "chunk 2/3", "chunk 3/3", "chunk 2/3", undefined])
+    expect(frames[2]!.filter((l) => l.includes("\x1b[2m"))).toHaveLength(2)
+    expect(frames[5]!.some((l) => l.includes("\x1b[2m"))).toBe(false)
+  })
+})
 describe("registerTurnReader", () => {
   test("registers the read command and the shortcut", () => {
     const commands: string[] = []
