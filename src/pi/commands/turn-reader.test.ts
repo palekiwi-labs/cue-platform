@@ -196,6 +196,15 @@ describe("chunk comments in the reader", () => {
     expect(events.at(-1)).toBe("done")
   })
 
+  for (const [name, altEnter] of [["tmux csi-u", "\x1b[13;3u"], ["xterm modifyOtherKeys", "\x1b[27;3;13~"]]) {
+    test(`alt+enter as ${name} adds a comment newline without cancelling`, async () => {
+      const { ctx, keys, editor } = fakeCtx(commentTurn("one"), true)
+      keys.push("c", ...chars("ab"), altEnter, ...chars("cd"), ENTER, "r")
+      await openTurnReader(ctx)
+      expect(editor.text).toBe("> one\n\nab\ncd")
+    })
+  }
+
   test("comments are visible inline and inserting never sends", async () => {
     const { ctx, keys, frames, editor } = fakeCtx(commentTurn(), true)
     keys.push("c", ...chars("hi"), ENTER, "r")
