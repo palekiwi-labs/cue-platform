@@ -15,6 +15,8 @@ import {
 } from "../src/state.js";
 import { parseWalkthrough, type Walkthrough, WalkthroughView } from "../src/walkthrough.js";
 import { WalkthroughDrafts } from "../src/walkthrough-comments.js";
+import { Drafts, type PaneEntry } from "../src/drafts.js";
+import type { RoundComment } from "../src/round.js";
 
 const draft: WalkthroughDraft = {
   id: "d1",
@@ -83,6 +85,9 @@ interface Harness {
   saved: WalkthroughCommentState[];
   composed: ComposeRequest[];
   reply: { text: string | null };
+  diff: PaneEntry[];
+  edited: string[];
+  submitted: RoundComment[][];
 }
 
 function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness {
@@ -93,6 +98,20 @@ function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness 
     composed.push(req);
     done(reply.text);
   });
+  const diff: PaneEntry[] = [];
+  const edited: string[] = [];
+  const submitted: RoundComment[][] = [];
+  const hub = new Drafts((rc, done) => {
+    submitted.push(rc);
+    done(true);
+  });
+  hub.register("changes", {
+    entries: () => diff,
+    edit: (id) => edited.push(id),
+    remove: (ids) => diff.splice(0, diff.length, ...diff.filter((e) => !ids.includes(e.id))),
+    round: () => [],
+  });
+  hub.register("walkthrough", drafts);
   const v = new WalkthroughView({
     walkthrough: w,
     sources: new Map(),
@@ -100,8 +119,9 @@ function harness(w: Walkthrough, initial = emptyWalkthroughComments()): Harness 
     onQuit: () => {},
     onOpen: () => {},
     drafts,
+    comments: hub,
   });
-  return { v, drafts, saved, composed, reply };
+  return { v, drafts, saved, composed, reply, diff, edited, submitted };
 }
 
 function screen(v: WalkthroughView): string {
@@ -168,4 +188,57 @@ test("a regenerated step leaves its draft outdated and hidden", () => {
   assert.match(screen(v), /c comment/);
   const same = harness(walk(STEPS), state);
   assert.deepEqual(same.drafts.locate(d), { chunk: 1, section: 0, step: 1 });
+});
+
+function side(v: WalkthroughView): string {
+  return v.render(140).map((l) => stripTerminalSequences(l).split("│").at(-1) ?? "").join("\n");
+}
+
+test("C lists diff and walkthrough drafts grouped per tab", () => {
+  const { v, diff, edited } = harness(walk(STEPS));
+  diff.push({ tab: "changes", id: "x", title: "src/a.ts", where: "line 2", text: "diff note", outdated: false });
+  press(v, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, DOWN, DOWN, "c", "\x1b[A", "c");
+  press(v, "C");
+  const pane = side(v);
+  assert.match(pane, /Comments 3/);
+  assert.match(pane, /Changes 1.*\n.*src\/a\.ts line 2.*\n.*diff note.*\n.*Walkthrough 2.*\n.*Room list price step 2\/3.*\n.*why per person\?.*\n.*Room list price step 3\/3/);
+  assert.match(screen(v), /enter jump/);
+  press(v, "g", "\r");
+  assert.match(screen(v), /open the changes tab to jump to this comment/);
+  assert.equal(v.focusedSidebar, true);
+  press(v, "E");
+  assert.deepEqual(edited, ["x"]);
+  press(v, "d");
+  assert.equal(diff.length, 0);
+  assert.match(side(v), /Comments 2/);
+});
+
+test("enter on a walkthrough draft jumps to its step; outdated drafts stay put", () => {
+  const first = harness(walk(STEPS));
+  press(first.v, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, CTRL_DOWN, DOWN, DOWN, "c");
+  const state = first.saved.at(-1)!;
+  const { v } = harness(walk(STEPS), state);
+  press(v, "C", "\r");
+  assert.equal(v.focusedSidebar, false);
+  assert.equal(v.position, 4);
+  assert.equal(v.focusedStep, 2);
+  const gone = harness(walk(["a", "b", "c"]), state);
+  press(gone.v, "C");
+  assert.match(side(gone.v), /Room list price outdated/);
+  press(gone.v, "\r");
+  assert.equal(gone.v.focusedSidebar, true);
+  assert.equal(gone.v.position, 0);
+  press(gone.v, "d");
+  assert.equal(gone.saved.at(-1)?.comments.length, 0);
+  assert.match(side(gone.v), /no draft comments/);
+});
+
+test("C toggles the pane back to the outline and esc returns to the steps", () => {
+  const { v } = harness(walk(STEPS));
+  press(v, "C");
+  assert.match(side(v), /Comments 0/);
+  press(v, "C");
+  assert.match(side(v), /Walkthrough 2 chunks/);
+  assert.equal(v.handleEscape(), true);
+  assert.equal(v.focusedSidebar, false);
 });

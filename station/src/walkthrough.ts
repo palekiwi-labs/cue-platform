@@ -14,6 +14,7 @@ import { catFiles } from "./git.js";
 import { highlightFile } from "./highlight.js";
 import { prContext } from "./pr-review.js";
 import type { StepRef, WalkthroughDrafts } from "./walkthrough-comments.js";
+import { CommentsPane, type Drafts } from "./drafts.js";
 
 export type RevKind = "base" | "head" | "commit";
 
@@ -307,6 +308,7 @@ export interface WalkthroughOptions {
   onQuit: () => void;
   onOpen: (rev: string, file: string, line: number) => void;
   drafts?: WalkthroughDrafts;
+  comments?: Drafts;
 }
 
 interface MainPane {
@@ -320,6 +322,9 @@ export class WalkthroughView implements Component {
   private step = 0;
   private sideCursor = 0;
   private sideFocus = false;
+  private sideMode: "outline" | "comments" = "outline";
+  private readonly pane: CommentsPane | null;
+  private notice: string | null = null;
   private sidebar = true;
   private offset = 0;
   private listOffset = 0;
@@ -329,6 +334,7 @@ export class WalkthroughView implements Component {
 
   constructor(private readonly opts: WalkthroughOptions) {
     this.rows = walkRows(opts.walkthrough);
+    this.pane = opts.comments === undefined ? null : new CommentsPane(opts.comments, "walkthrough");
   }
 
   invalidate(): void {}
@@ -370,12 +376,62 @@ export class WalkthroughView implements Component {
       this.opts.onQuit();
       return;
     }
-    if (this.sideFocus) this.sideInput(data);
+    this.notice = null;
+    if (this.sideFocus && this.sideMode === "comments") this.commentsInput(data);
+    else if (this.sideFocus) this.sideInput(data);
+    else if (data === "C") this.showComments();
     else this.mainInput(data);
+  }
+
+  private showComments(): void {
+    if (this.pane === null) return;
+    this.sidebar = true;
+    this.sideFocus = true;
+    this.sideMode = "comments";
+    this.pane.select(this.focusedDraft()?.id ?? null);
+  }
+
+  private jumpTo(id: string): void {
+    const drafts = this.opts.drafts;
+    const draft = drafts?.all().find((d) => d.id === id);
+    const ref = draft === undefined ? null : (drafts?.locate(draft) ?? null);
+    if (ref === null) return;
+    const index = this.rows.findIndex((r) => r.kind === "section" && r.chunk === ref.chunk && r.section === ref.section);
+    if (index === -1) return;
+    this.go(index);
+    this.step = ref.step;
+    this.reveal = true;
+    this.sideFocus = false;
+  }
+
+  private commentsInput(data: string): void {
+    const action = this.pane?.handleInput(data) ?? null;
+    if (action === "handled") return;
+    if (action !== null) {
+      if ("jump" in action) this.jumpTo(action.jump.id);
+      else this.notice = action.hint;
+      return;
+    }
+    switch (data) {
+      case "C":
+        this.sideMode = "outline";
+        this.sideCursor = this.cursor;
+        return;
+      case "t":
+        this.sideFocus = false;
+        this.sidebar = false;
+        return;
+      case "\t":
+        this.sideFocus = false;
+        return;
+    }
   }
 
   private sideInput(data: string): void {
     switch (data) {
+      case "C":
+        this.showComments();
+        return;
       case "j":
       case "\x1b[B":
         this.sideCursor = Math.min(this.rows.length - 1, this.sideCursor + 1);
@@ -474,6 +530,7 @@ export class WalkthroughView implements Component {
       case "\t":
         this.sidebar = true;
         this.sideFocus = true;
+        this.sideMode = "outline";
         this.sideCursor = this.cursor;
         return;
       case "e": {
@@ -614,6 +671,7 @@ export class WalkthroughView implements Component {
   }
 
   private renderSide(height: number, w: number): string[] {
+    if (this.sideMode === "comments" && this.pane !== null) return this.pane.render(height, w, this.sideFocus);
     const out: string[] = [];
     const label = this.sideFocus ? C.accent : C.text;
     out.push(C.barBg + fit(` ${label}${BOLD}Walkthrough${RESET}${C.barBg} ${C.dim}${this.opts.walkthrough.chunks.length} chunks`, w) + RESET);
@@ -672,9 +730,14 @@ export class WalkthroughView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = this.sideFocus
-      ? ` ${k("j/k", "move")}${k("enter", "read")}${k("tab/esc", "back")}`
-      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${this.commentKeys(k)}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
+    const pane = this.pane === null ? "" : k("C", "comments");
+    const keys = this.notice !== null
+      ? ` ${C.add}${this.notice}`
+      : this.sideFocus && this.sideMode === "comments"
+      ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("E/d", "edit/delete")}${k("S", "submit all")}${k("C", "outline")}${k("tab/esc", "back")}`
+      : this.sideFocus
+      ? ` ${k("j/k", "move")}${k("enter", "read")}${pane}${k("tab/esc", "back")}`
+      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${this.commentKeys(k)}${pane}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const right = `${more}${this.stepStatus()}${C.dim}${this.cursor + 1}/${this.rows.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));

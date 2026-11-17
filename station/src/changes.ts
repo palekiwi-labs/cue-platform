@@ -3,6 +3,7 @@ import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWith
 import type { Packet, PacketChunk, PacketFile } from "./packet.js";
 import type { Highlights } from "./highlight.js";
 import type { RoundComment } from "./round.js";
+import { CommentsPane, type Drafts } from "./drafts.js";
 import { chunkFingerprint, type CommentState, type DraftComment, type FoldState } from "./state.js";
 
 export const RESET = "\x1b[0m";
@@ -88,7 +89,7 @@ export interface ChangesOptions {
   onComments: (comments: CommentState) => void;
   onCompose: (request: ComposeRequest, done: (text: string | null) => void) => void;
   onOpen: (file: PacketFile, line: number) => void;
-  onSubmit: (comments: RoundComment[], done: (ok: boolean) => void) => void;
+  drafts: Drafts;
   onCopy: (text: string) => void;
 }
 
@@ -110,7 +111,7 @@ export function fit(text: string, width: number): string {
   return truncateToWidth(text, width, "", true);
 }
 
-function tailPath(path: string, width: number): string {
+export function tailPath(path: string, width: number): string {
   if (visibleWidth(path) <= width) return path;
   return "…" + path.slice(path.length - Math.max(1, width - 1));
 }
@@ -140,7 +141,7 @@ export class ChangesView implements Component {
   private sidebar = true;
   private sideFocus = false;
   private sideMode: "files" | "comments" = "files";
-  private commentCursor = 0;
+  private readonly pane: CommentsPane;
   private fileCursor = 0;
   private lastHeight = 20;
 
@@ -158,6 +159,24 @@ export class ChangesView implements Component {
       return chunkFingerprint(this.packet.files[fi]?.path ?? "", c.patch);
     });
     this.rebuild();
+    this.pane = new CommentsPane(opts.drafts, "changes");
+    opts.drafts.register("changes", {
+      entries: () =>
+        this.commentEntries().map((e) => ({
+          tab: "changes" as const,
+          id: e.comment.id,
+          title: e.comment.path,
+          where: this.entryLabel(e),
+          text: e.comment.text,
+          outdated: e.chunk === null,
+        })),
+      edit: (id) => {
+        const e = this.commentEntries().find((x) => x.comment.id === id);
+        if (e !== undefined) this.edit(e);
+      },
+      remove: (ids) => this.setComments(this.comments.comments.filter((c) => !ids.includes(c.id))),
+      round: () => this.commentEntries().map((e) => ({ id: e.comment.id, comment: this.roundComment(e) })),
+    });
   }
 
   invalidate(): void {}
@@ -587,27 +606,12 @@ export class ChangesView implements Component {
     };
   }
 
-  private submit(): void {
-    const entries = this.commentEntries();
-    if (entries.length === 0) return;
-    const ids = new Set(entries.map((e) => e.comment.id));
-    this.opts.onSubmit(entries.map((e) => this.roundComment(e)), (ok) => {
-      if (!ok) return;
-      this.setComments(this.comments.comments.filter((c) => !ids.has(c.id)));
-      this.commentCursor = 0;
-    });
-  }
-
   private showComments(): void {
     this.sidebar = true;
     this.sideFocus = true;
-    if (this.sideMode !== "comments") this.sidebarOffset = 0;
     this.sideMode = "comments";
     const it = this.item;
-    const entries = this.commentEntries();
-    const at = it !== null && "comment" in it ? entries.findIndex((e) => e.comment.id === it.comment) : -1;
-    if (at !== -1) this.commentCursor = at;
-    this.commentCursor = Math.max(0, Math.min(this.commentCursor, entries.length - 1));
+    this.pane.select(it !== null && "comment" in it ? it.comment : null);
   }
 
   private showFiles(): void {
@@ -758,41 +762,17 @@ export class ChangesView implements Component {
   }
 
   private handleCommentsInput(data: string): void {
-    const entries = this.commentEntries();
-    const n = entries.length;
-    const e = entries[this.commentCursor];
+    const action = this.pane.handleInput(data);
+    if (action === "handled") return;
+    if (action !== null) {
+      if ("hint" in action) this.notice = { text: action.hint, error: false };
+      const e = "jump" in action ? this.commentEntries().find((x) => x.comment.id === action.jump.id) : undefined;
+      if (e !== undefined) this.jumpToComment(e);
+      return;
+    }
     switch (data) {
-      case "j":
-      case "\x1b[B":
-        this.commentCursor = Math.max(0, Math.min(n - 1, this.commentCursor + 1));
-        return;
-      case "k":
-      case "\x1b[A":
-        this.commentCursor = Math.max(0, this.commentCursor - 1);
-        return;
-      case "g":
-        this.commentCursor = 0;
-        return;
-      case "G":
-        this.commentCursor = Math.max(0, n - 1);
-        return;
-      case "\r":
-      case "l":
-        if (e !== undefined) this.jumpToComment(e);
-        return;
-      case "E":
-        if (e !== undefined) this.edit(e);
-        return;
-      case "d":
-        if (e === undefined) return;
-        this.setComments(this.comments.comments.filter((x) => x.id !== e.comment.id));
-        this.commentCursor = Math.max(0, Math.min(this.commentCursor, n - 2));
-        return;
       case "C":
         this.showFiles();
-        return;
-      case "S":
-        this.submit();
         return;
       case "\t":
         this.sideFocus = false;
@@ -967,11 +947,13 @@ export class ChangesView implements Component {
 
   private draftSummary(): string {
     const all = this.comments.comments;
-    if (all.length === 0) return "";
+    const walk = this.opts.drafts.entries("walkthrough").length;
+    if (all.length === 0 && walk === 0) return "";
     const known = new Set(this.fingerprints);
     const detached = all.filter((c) => !known.has(c.chunk)).length;
     const extra = detached > 0 ? ` (${detached} on outdated code)` : "";
-    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}${C.dim} (C list)`;
+    const others = walk > 0 ? `, ${walk} on the walkthrough` : "";
+    return `   ${C.mod}${all.length} draft comment${all.length === 1 ? "" : "s"}${extra}${others}${C.dim} (C list)`;
   }
 
   private lineSelection(row: LineRow): "cursor" | "range" | null {
@@ -985,31 +967,7 @@ export class ChangesView implements Component {
   }
 
   private renderCommentsSidebar(height: number, w: number): string[] {
-    const entries = this.commentEntries();
-    const out: string[] = [];
-    const label = this.sideFocus ? C.accent : C.text;
-    out.push(C.barBg + fit(` ${label}${BOLD}Comments${RESET}${C.barBg} ${C.dim}${entries.length}`, w) + RESET);
-    if (entries.length === 0) out.push(fit(` ${C.faint}no draft comments`, w) + RESET);
-    const listH = Math.max(1, Math.floor((height - 1) / 2));
-    const cur = this.commentCursor;
-    if (cur < this.sidebarOffset) this.sidebarOffset = cur;
-    if (cur >= this.sidebarOffset + listH) this.sidebarOffset = cur - listH + 1;
-    for (let i = this.sidebarOffset; i < entries.length && out.length + 2 <= height; i++) {
-      const e = entries[i] as CommentEntry;
-      const outdated = e.chunk === null;
-      const on = i === cur;
-      const base = on ? C.selBg : "";
-      const marker = on ? `${this.sideFocus ? C.accent : C.dim}▎` : " ";
-      const where = this.entryLabel(e);
-      const path = tailPath(e.comment.path, Math.max(4, w - 3 - visibleWidth(where)));
-      const pathStyle = outdated ? C.faint : on ? `${C.text}${BOLD}` : C.text;
-      const whereStyle = outdated ? C.del : C.dim;
-      out.push(base + fit(`${marker}${pathStyle}${path}${RESET}${base} ${whereStyle}${where}`, w) + RESET);
-      const first = e.comment.text.split("\n")[0] ?? "";
-      out.push(base + fit(`${marker} ${outdated ? C.faint : C.mod}${first}`, w) + RESET);
-    }
-    while (out.length < height) out.push(" ".repeat(w));
-    return out;
+    return this.pane.render(height, w, this.sideFocus);
   }
 
   private renderSidebar(height: number, w: number): string[] {

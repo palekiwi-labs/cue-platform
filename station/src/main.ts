@@ -26,6 +26,7 @@ import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from
 import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
 import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { WalkthroughDrafts } from "./walkthrough-comments.js";
+import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
 import { loadWalkthrough, loadWalkthroughSources, WalkthroughView } from "./walkthrough.js";
@@ -86,6 +87,7 @@ function changesView(
   review: Review,
   onQuit: () => void,
   quitLabel?: string,
+  drafts = reviewDrafts(router, review),
 ): ChangesView {
   return new ChangesView({
     title: review.title,
@@ -102,8 +104,12 @@ function changesView(
     onComments: (comments) => saveComments(review.key, comments),
     onCompose: (request, done) => router.compose(request, done),
     onOpen: (file, line) => openEditor(router.tui, review.repoPath, file, line, review.packet.base_sha),
-    onSubmit: (comments, done) => void submit(router, review, comments, done),
+    drafts,
   });
+}
+
+function reviewDrafts(router: Router, review: Review): Drafts {
+  return new Drafts((comments, done) => void submit(router, review, comments, done));
 }
 
 async function submit(router: Router, review: Review, comments: RoundComment[], done: (ok: boolean) => void): Promise<void> {
@@ -234,6 +240,14 @@ function prTabs(
   const pr = review.pr;
   const repo = review.cueDir;
   if (pr === null || repo === null) throw new Error("not a pull request review");
+  const drafts = reviewDrafts(router, review);
+  const walkthroughDrafts = new WalkthroughDrafts(
+    loadWalkthroughComments(review.key),
+    (state) => saveWalkthroughComments(review.key, state),
+    () => currentWalkthrough(review.repo, pr, chosen),
+    (request, done) => router.compose(request, done),
+  );
+  drafts.register("walkthrough", walkthroughDrafts);
   const host: PrTabHost = {
     repo,
     repoSlug: review.repo,
@@ -244,15 +258,11 @@ function prTabs(
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
-    walkthroughDrafts: new WalkthroughDrafts(
-      loadWalkthroughComments(review.key),
-      (state) => saveWalkthroughComments(review.key, state),
-      () => currentWalkthrough(review.repo, pr, chosen),
-      (request, done) => router.compose(request, done),
-    ),
+    walkthroughDrafts,
+    drafts,
   };
   return new TabsScreen([
-    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel) },
+    { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, drafts) },
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
   ]);

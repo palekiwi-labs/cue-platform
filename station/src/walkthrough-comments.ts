@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ComposeRequest } from "./changes.js";
+import type { DraftGroup, PaneEntry } from "./drafts.js";
+import type { RoundComment } from "./round.js";
 import { stepFingerprint, type WalkthroughCommentState, type WalkthroughDraft } from "./state.js";
 import type { Walkthrough, WalkthroughStep } from "./walkthrough.js";
 
@@ -16,7 +18,7 @@ export interface StepRef {
  * Walkthrough draft comments of one review, one per step. A draft whose step
  * markdown no longer matches the current walkthrough is outdated.
  */
-export class WalkthroughDrafts {
+export class WalkthroughDrafts implements DraftGroup {
   private loaded: Walkthrough | null | undefined;
 
   constructor(
@@ -66,10 +68,42 @@ export class WalkthroughDrafts {
     );
   }
 
-  title(d: WalkthroughDraft): string {
+  private where(d: WalkthroughDraft): string {
     const ref = this.locate(d);
     const count = ref === null ? null : this.step(ref)?.steps.length;
-    return `${d.section_title} · ${count == null ? "outdated" : `step ${d.step + 1}/${count}`}`;
+    return count == null ? "outdated" : `step ${d.step + 1}/${count}`;
+  }
+
+  title(d: WalkthroughDraft): string {
+    return `${d.section_title} · ${this.where(d)}`;
+  }
+
+  private ordered(): { draft: WalkthroughDraft; ref: StepRef | null }[] {
+    const items = this.state.comments.map((draft) => ({ draft, ref: this.locate(draft) }));
+    const live = items.filter((i) => i.ref !== null);
+    const outdated = items.filter((i) => i.ref === null);
+    const key = (r: StepRef | null): number[] => (r === null ? [] : [r.chunk, r.section, r.step]);
+    live.sort((a, b) => {
+      const [x, y] = [key(a.ref), key(b.ref)];
+      return (x[0]! - y[0]!) || (x[1]! - y[1]!) || (x[2]! - y[2]!);
+    });
+    outdated.sort((a, b) => a.draft.created_at - b.draft.created_at);
+    return [...live, ...outdated];
+  }
+
+  entries(): PaneEntry[] {
+    return this.ordered().map(({ draft, ref }) => ({
+      tab: "walkthrough" as const,
+      id: draft.id,
+      title: draft.section_title,
+      where: this.where(draft),
+      text: draft.text,
+      outdated: ref === null,
+    }));
+  }
+
+  round(): { id: string; comment: RoundComment }[] {
+    return [];
   }
 
   private set(comments: WalkthroughDraft[]): void {

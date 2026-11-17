@@ -11,6 +11,7 @@ import {
   WalkthroughView,
 } from "./walkthrough.js";
 import type { WalkthroughDrafts } from "./walkthrough-comments.js";
+import type { Drafts } from "./drafts.js";
 
 const PICK_KEYS = "abcdefghijklmnorstuvwxyz";
 
@@ -25,6 +26,7 @@ export interface PrTabHost {
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
   walkthroughDrafts?: WalkthroughDrafts;
+  drafts?: Drafts;
 }
 
 export type FindingsTabHost = PrTabHost;
@@ -187,6 +189,7 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
         onQuit: host.onQuit,
         onOpen: (rev, file, line) => open(rev, file, line, walkthrough.base),
         drafts: host.walkthroughDrafts,
+        comments: host.drafts,
       });
     },
   });
