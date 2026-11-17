@@ -1,4 +1,5 @@
 import { type Component, Markdown, type MarkdownTheme, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { type SourceChunk, sourceChunks } from "./chunks"
 
 /** Prose width the reader formats Markdown to, matching the editor's textwidth. */
 export const TEXT_WIDTH = 80
@@ -35,19 +36,51 @@ function trimBlank(lines: string[]): string[] {
   return lines.slice(a, b)
 }
 
+function renderChunk(chunk: SourceChunk, inner: number, markdown: MarkdownTheme): string[] {
+  const indent = Math.min(chunk.indent, Math.max(0, inner - 1))
+  const pad = " ".repeat(indent)
+  return trimBlank(new Markdown(chunk.text, 0, 0, markdown).render(inner - indent)).map((l) => pad + l)
+}
+
+const FAINT = "\x1b[2m"
+const NORMAL = "\x1b[22m"
+
+/** `line` in the faint attribute, kept faint across the styles it contains. */
+export function faint(line: string): string {
+  return FAINT + line.replace(/\x1b\[[0-9;]*m/g, (sgr) => sgr + FAINT) + NORMAL
+}
+
 /** Reader key that toggles between the last message and all messages. */
 export const MODE_KEY = "a"
+/** Reader key that toggles chunk focus. */
+export const FOCUS_KEY = "f"
+
+interface Chunk {
+  start: number
+  end: number
+}
+
+interface Body {
+  width: number
+  all: boolean
+  lines: string[]
+  owner: number[]
+  chunks: Chunk[]
+}
 
 /**
  * Boxed, scrollable view of the latest turn's assistant messages, rendered as
  * Markdown and separated by a rule. Shows the last message until toggled to
  * all messages. Grows with the content up to the rows `rows()` reports, then
- * scrolls.
+ * scrolls. In focus mode the arrows step through chunks (blank-line separated
+ * runs of source) and every chunk but the focused one is dimmed.
  */
 export class TurnReader implements Component {
   private offset = 0
   private all = false
-  private cache?: { width: number; all: boolean; lines: string[] }
+  private focus = false
+  private current = 0
+  private cache?: Body
 
   constructor(
     private theme: ReaderTheme,
@@ -72,18 +105,51 @@ export class TurnReader implements Component {
     if (this.messages.length < 2) return
     this.all = !this.all
     this.offset = 0
+    this.current = 0
   }
 
-  private body(inner: number): string[] {
-    if (this.cache?.width === inner && this.cache.all === this.all) return this.cache.lines
+  /** Whether chunk focus is on. */
+  focused(): boolean {
+    return this.focus
+  }
+
+  /** Toggle chunk focus; turning it on focuses the first chunk in view. */
+  toggleFocus(): void {
+    this.focus = !this.focus
+    if (!this.focus) return
+    const chunks = this.cache?.chunks ?? []
+    const next = chunks.findIndex((c) => c.end >= this.offset)
+    this.current = next < 0 ? Math.max(0, chunks.length - 1) : next
+  }
+
+  private body(inner: number): Body {
+    if (this.cache?.width === inner && this.cache.all === this.all) return this.cache
     const rule = this.theme.fg("dim", "---")
-    const lines: string[] = []
+    const body: Body = { width: inner, all: this.all, lines: [], owner: [], chunks: [] }
+    const push = (line: string, chunk = -1) => {
+      body.lines.push(line)
+      body.owner.push(chunk)
+    }
     this.shown().forEach((text, i) => {
-      if (i > 0) lines.push("", rule, "")
-      lines.push(...trimBlank(new Markdown(text, 0, 0, this.markdown).render(inner)))
+      if (i > 0) {
+        push("")
+        push(rule)
+        push("")
+      }
+      let first = true
+      for (const chunk of sourceChunks(text)) {
+        const lines = renderChunk(chunk, inner, this.markdown)
+        if (lines.length === 0) continue
+        if (!first) push("")
+        first = false
+        const index = body.chunks.length
+        body.chunks.push({ start: body.lines.length, end: body.lines.length + lines.length - 1 })
+        for (const line of lines) push(line, index)
+      }
     })
-    this.cache = { width: inner, all: this.all, lines }
-    return lines
+    this.current = Math.min(this.current, Math.max(0, body.chunks.length - 1))
+    this.cache = body
+    return body
   }
 
   private padY(): number {
@@ -103,6 +169,24 @@ export class TurnReader implements Component {
     this.offset = Math.min(this.maxOffset(), Math.max(0, this.offset + delta))
   }
 
+  /** Step one chunk in focus mode, otherwise scroll one line. */
+  move(direction: 1 | -1): void {
+    if (this.focus) this.step(direction)
+    else this.scroll(direction)
+  }
+
+  /** Focus the neighbouring chunk and scroll it into view. */
+  step(direction: 1 | -1): void {
+    const chunks = this.cache?.chunks ?? []
+    if (chunks.length === 0) return
+    this.current = Math.min(chunks.length - 1, Math.max(0, this.current + direction))
+    const { start, end } = chunks[this.current]!
+    const view = this.viewport()
+    if (end - start + 1 >= view || start < this.offset) this.offset = start
+    else if (end >= this.offset + view) this.offset = end - view + 1
+    this.scroll(0)
+  }
+
   page(direction: 1 | -1): void {
     this.scroll(direction * Math.max(1, this.viewport() - 1))
   }
@@ -118,19 +202,24 @@ export class TurnReader implements Component {
   render(width: number): string[] {
     const t = this.theme
     const inner = Math.max(1, width - CHROME_X)
-    const body = this.body(inner)
+    const { lines: body, owner, chunks } = this.body(inner)
     const height = Math.min(body.length, this.viewport())
     this.offset = Math.min(this.offset, this.maxOffset())
     const shown = body.slice(this.offset, this.offset + height)
 
     const n = this.messages.length
     const mode = n === 1 ? "1 message" : this.all ? `all ${n} messages` : `last of ${n} messages`
-    const head = ` latest turn · ${mode}${this.running ? " · snapshot" : ""} `
+    const chunk = this.focus && chunks.length > 0 ? ` · chunk ${this.current + 1}/${chunks.length}` : ""
+    const head = ` latest turn · ${mode}${chunk}${this.running ? " · snapshot" : ""} `
     const scrolls = body.length > height
     const position = scrolls ? `${this.offset + 1}-${this.offset + height}/${body.length} · ` : ""
     const toggle = n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"} · ` : ""
     const speak = this.speakable ? "s speak · " : ""
-    const keys = toggle + speak + (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
+    const focus = `${FOCUS_KEY} ${this.focus ? "unfocus" : "focus"} · `
+    const nav = this.focus
+      ? (scrolls ? "↑↓ chunk · pgup pgdn g G · esc" : "↑↓ chunk · esc")
+      : (scrolls ? "↑↓ pgup pgdn g G · esc" : "esc close")
+    const keys = toggle + speak + focus + nav
     const foot = ` ${position}${keys} `
 
     const border = (s: string) => t.fg("borderMuted", s)
@@ -139,11 +228,14 @@ export class TurnReader implements Component {
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
       t.fg("dim", foot) + border("─╯")
     const pad = " ".repeat(PAD_X)
-    const row = (s: string) => {
+    const row = (s: string, dim = false) => {
       const cut = truncateToWidth(s, inner, "…")
-      return border("│") + pad + cut + " ".repeat(Math.max(0, inner - visibleWidth(cut))) + pad + border("│")
+      const fill = " ".repeat(Math.max(0, inner - visibleWidth(cut)))
+      return border("│") + pad + (dim ? faint(cut) : cut) + fill + pad + border("│")
     }
+    const dimmed = (i: number) => this.focus && owner[i] !== this.current && body[i]!.trim() !== ""
+    const rows = shown.map((line, i) => row(line, dimmed(this.offset + i)))
     const blank = Array(this.padY()).fill(row(""))
-    return [top, ...blank, ...shown.map(row), ...blank, bottom].map((l) => truncateToWidth(l, width))
+    return [top, ...blank, ...rows, ...blank, bottom].map((l) => truncateToWidth(l, width))
   }
 }

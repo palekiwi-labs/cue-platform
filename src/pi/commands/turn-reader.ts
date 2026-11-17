@@ -1,7 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import { matchesKey } from "@earendil-works/pi-tui"
 import { latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
-import { MARGIN_Y, MODE_KEY, readerWidth, TurnReader } from "../turn-reader/reader"
+import { FOCUS_KEY, MARGIN_Y, MODE_KEY, readerWidth, TurnReader } from "../turn-reader/reader"
 import type { SpeakResult, Speech } from "../speech"
 
 /** Open the latest turn reader. */
@@ -51,13 +51,14 @@ export async function openTurnReader(ctx: ExtensionContext, speaker?: TurnSpeake
         render: (width) => reader.render(width),
         invalidate: () => reader.invalidate(),
         handleInput(data: string) {
-          if (kb.matches(data, "tui.select.up") || data === "k") reader.scroll(-1)
-          else if (kb.matches(data, "tui.select.down") || data === "j") reader.scroll(1)
+          if (kb.matches(data, "tui.select.up") || data === "k") reader.move(-1)
+          else if (kb.matches(data, "tui.select.down") || data === "j") reader.move(1)
           else if (kb.matches(data, "tui.select.pageUp") || data === "b") reader.page(-1)
           else if (kb.matches(data, "tui.select.pageDown") || data === " ") reader.page(1)
           else if (matchesKey(data, "home") || data === "g") reader.top()
           else if (matchesKey(data, "end") || data === "G") reader.bottom()
           else if (data === MODE_KEY) reader.toggle()
+          else if (data === FOCUS_KEY) reader.toggleFocus()
           else if (speaker && data === READER_SPEAK_KEY) {
             const [note, level] = SPEAK_NOTES[speaker.request(reader.shown(), ctx)]
             ctx.ui.notify(note, level)
