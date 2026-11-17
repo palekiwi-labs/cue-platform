@@ -129,6 +129,7 @@ export class ChangesView implements Component {
   private comments: CommentState;
   private item: Item | null = null;
   private anchor: number | null = null;
+  private notice: { text: string; error: boolean } | null = null;
   private wrapW = 0;
   private rows: Row[] = [];
   private rowOfStop: number[] = [];
@@ -479,18 +480,27 @@ export class ChangesView implements Component {
 
   private copyChunk(): void {
     const ci = this.current().chunk;
-    if (ci !== null) this.opts.onCopy(this.location(ci, null, null));
+    if (ci !== null) this.copy(this.location(ci, null, null));
+  }
+
+  private copy(text: string): void {
+    try {
+      this.opts.onCopy(text);
+      this.notice = { text: `copied ${text}`, error: false };
+    } catch (e) {
+      this.notice = { text: `copy failed: ${e instanceof Error ? e.message : String(e)}`, error: true };
+    }
   }
 
   private copyLines(): void {
     const it = this.item;
     if (it === null) return;
     if (!("line" in it)) {
-      this.opts.onCopy(this.location(it.chunk, null, null));
+      this.copy(this.location(it.chunk, null, null));
       return;
     }
     const a = this.anchor ?? it.line;
-    this.opts.onCopy(this.location(it.chunk, Math.min(a, it.line), Math.max(a, it.line)));
+    this.copy(this.location(it.chunk, Math.min(a, it.line), Math.max(a, it.line)));
   }
 
   private editComment(): void {
@@ -801,6 +811,7 @@ export class ChangesView implements Component {
   }
 
   handleInput(data: string): void {
+    this.notice = null;
     if (this.sideFocus) {
       if (this.sideMode === "comments") this.handleCommentsInput(data);
       else this.handleFilesInput(data);
@@ -1067,8 +1078,11 @@ export class ChangesView implements Component {
       : this.item !== null
       ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("y", "copy loc")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
       : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}y${C.dim} copy loc  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
-    const gap = Math.max(1, width - visibleWidth(keys) - pos.length);
-    out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
+    const left = this.notice === null
+      ? keys
+      : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, Math.max(1, width - pos.length - 2), "…");
+    const gap = Math.max(1, width - visibleWidth(left) - pos.length);
+    out.push(C.barBg + fit(`${left}${C.barBg}${" ".repeat(gap)}${C.dim}${pos}`, width) + RESET);
     return out;
   }
 }
