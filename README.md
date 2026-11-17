@@ -40,16 +40,17 @@ and add `inputs.cue-platform.packages.${system}.default` to the shell's
 package list.
 
 Keep `inputs.nixpkgs.follows`. With it, cue-platform and its own inputs
-(cue, cast, llm-agents) build against your nixpkgs, so shared packages
+(cue, cast) build against your nixpkgs, so shared packages
 such as tmux, gh and jq are the same versions as the rest of your shell.
-Without it they come from cue-platform's lock file. The nvim build keeps
-nvf's own nixpkgs either way.
+Without it they come from cue-platform's lock file. Pi is provided by
+nixpkgs's `pi-coding-agent` (currently 1.5.2), not llm-agents. A consumer
+that follows its own nixpkgs must provide that version too, or it can get a
+different Pi version than the development dependencies. The nvim build
+keeps nvf's own nixpkgs either way.
 
-If the shell also uses other llm-agents packages, share one copy:
-
-```nix
-inputs.llm-agents.follows = "cue-platform/llm-agents";
-```
+The flake no longer exports an `llm-agents` input. Consumers using other
+llm-agents packages must declare that input independently rather than
+following `cue-platform/llm-agents`.
 
 ### 2. Pi package
 

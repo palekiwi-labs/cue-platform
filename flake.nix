@@ -4,10 +4,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    llm-agents = {
-      url = "github:numtide/llm-agents.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     nvf.url = "github:NotAShelf/nvf";
     cue = {
       url = "github:palekiwi-labs/cue/cue-agent-prototype";
@@ -23,7 +19,6 @@
     {
       nixpkgs,
       flake-utils,
-      llm-agents,
       nvf,
       cue,
       cast,
@@ -36,7 +31,6 @@
         platform = import ./nix/packages.nix {
           inherit
             pkgs
-            llm-agents
             nvf
             cue
             cast

@@ -3,7 +3,6 @@
 # installed with pi's own mechanism (see README).
 {
   pkgs,
-  llm-agents,
   nvf,
   cue,
   cast,
@@ -12,7 +11,7 @@ let
   system = pkgs.stdenv.hostPlatform.system;
 in
 {
-  inherit (llm-agents.packages.${system}) pi;
+  pi = pkgs.pi-coding-agent;
   # gh is called from PATH by cue-review. jq has no shipped caller since
   # the cue-log-compact skill was retired; kept for agent shells.
   inherit (pkgs) gh jq;

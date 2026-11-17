@@ -17,7 +17,7 @@
     "start": "node bin/station.js"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "1.4.0",
+    "@earendil-works/pi-tui": "1.5.2",
     "@nats-io/transport-node": "^3.4.0",
     "highlight.js": "11.11.1"
   },
