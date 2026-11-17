@@ -38,69 +38,39 @@ function setup(extra: {
 }
 
 describe("ContextPicker", () => {
-  test("without a match the highlight starts at the top", () => {
+  test("without the review context, enter creates it under the highlighted context", () => {
     const s = setup()
     s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "alpha", manifest: "default" }])
+    expect(s.results).toEqual([{ context: "review-t", manifest: "default", parent: "o/r/alpha" }])
   })
 
-  test("enter on a context reviews into it; tab cycles the manifest", () => {
+  test("search moves the parent; tab cycles the manifest", () => {
     const s = setup()
     s.type("bet")
     s.p.handleInput("\t")
     s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "beta", manifest: "quick" }])
+    expect(s.results).toEqual([{ context: "review-t", manifest: "quick", parent: "o/r/beta" }])
   })
 
-  test("review-<branch> is highlighted over <branch>", () => {
+  test("an existing review context is reused without a parent", () => {
     const s = setup({ rows: [row("alpha"), row("t"), row("review-t")], scope: "o/r", branch: "t" })
+    s.type("alp")
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
 
-  test("without review-<branch> the branch context is highlighted", () => {
-    const s = setup({ scope: "o/r", branch: "beta" })
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "beta", manifest: "default" }])
-  })
-
-  test("review-<linked> comes before the linked context, which comes before <branch>", () => {
-    const rows = [row("alpha"), row("beta"), row("work"), row("review-work")]
+  test("the linked context comes before <branch> as the starting parent", () => {
+    const rows = [row("alpha"), row("beta"), row("work")]
     const a = setup({ rows, scope: "o/r", branch: "beta", linked: "o/r/work" })
     a.p.handleInput("\r")
-    expect(a.results[0]!.context).toBe("review-work")
-    const b = setup({ rows: rows.slice(0, 3), scope: "o/r", branch: "beta", linked: "o/r/work" })
+    expect(a.results[0]!.parent).toBe("o/r/work")
+    const b = setup({ rows, scope: "o/r", branch: "beta" })
     b.p.handleInput("\r")
-    expect(b.results[0]!.context).toBe("work")
+    expect(b.results[0]!.parent).toBe("o/r/beta")
   })
 
-  test("ctrl+n edits a prefilled name and creates under the highlighted context; esc backs out", () => {
-    const s = setup({ scope: "o/r", branch: "beta" })
-    s.p.handleInput("\x0e")
-    s.p.handleInput("\x1b")
-    expect(s.cancelled()).toBe(false)
-    s.p.handleInput("\x0e")
-    s.type("-2")
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([{ context: "review-t-2", manifest: "default", parent: "o/r/beta" }])
-  })
-
-  test("ctrl+n refuses existing names and non-slugs", () => {
-    const s = setup({ rows: [row("alpha"), row("review-t")], scope: "o/r" })
-    s.p.handleInput("\x0e")
-    s.p.handleInput("\r")
-    expect(s.p.render(100).at(-1)).toContain("exists")
-    s.type(" x")
-    s.p.handleInput("\r")
-    expect(s.p.render(100).at(-1)).toContain("slug")
-    expect(s.results).toEqual([])
-  })
-
-  test("with no contexts ctrl+n creates at the top level", () => {
+  test("with no contexts enter creates at the top level", () => {
     const s = setup({ rows: [] })
-    s.p.handleInput("\r")
-    expect(s.results).toEqual([])
-    s.p.handleInput("\x0e")
     s.p.handleInput("\r")
     expect(s.results).toEqual([{ context: "review-t", manifest: "default" }])
   })
@@ -173,7 +143,7 @@ describe("ContextPicker", () => {
       expect(s.p.render(160)[0]).toContain("all-time")
       s.p.handleInput("\r")
       expect(s.results).toEqual(purpose === "review"
-        ? [{ context: "old", manifest: "default" }]
+        ? [{ context: "review-t", manifest: "default", parent: "o/r/old" }]
         : purpose === "conversation"
           ? [{ context: "o/r/old" }]
           : [{ context: "review-t", parent: "o/r/old" }])

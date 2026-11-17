@@ -592,7 +592,7 @@ describe("PR conversation context selection", () => {
   })
 
   test("review picker still selects a manifest and launches without linking", async () => {
-    const s = conversations([contextRow("review-branch-2")])
+    const s = conversations([contextRow("review-pr-2")])
     await tick()
     s.browser.handleInput("\x12")
     await tick()
@@ -600,7 +600,7 @@ describe("PR conversation context selection", () => {
     s.browser.handleInput("\t")
     s.browser.handleInput("\r")
     await tick()
-    expect(s.launchReview).toHaveBeenCalledWith({ pr: pr(2), context: "review-branch-2", manifest: "quick" })
+    expect(s.launchReview).toHaveBeenCalledWith({ pr: pr(2), context: "review-pr-2", manifest: "quick" })
     expect(s.link).not.toHaveBeenCalled()
     expect(s.checkout).not.toHaveBeenCalled()
   })

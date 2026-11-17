@@ -29,42 +29,44 @@ review artifacts.
 
 ## Lifecycle
 
-1. **Context**: one review context per target, `review-<branch-slug>`
-   (`cue context create ... --mode review`, or let cue-review create it).
-   When you create it, parent it under the context of the work being
-   reviewed, or the scope's review root if that work has no context.
-   Sessions reviewing that work link to it (`cue-session-link`). Never
-   run `cue context switch` for the operator; create or name it
-   explicitly.
+1. **Context**: PR reviews always use `<org>/<repo>/review-pr-<N>`;
+   other targets use `review-<branch-slug>` (`cue context create ...
+   --mode review`, or let cue-review create it). When you create it,
+   parent it under the context of the work being reviewed, or the
+   scope's review root if that work has no context. Sessions reviewing
+   that work link to it (`cue-session-link`). Never run
+   `cue context switch` for the operator; create or name it explicitly.
 2. **Run**: fire the pipeline, do not babysit it. One command per review
    target; all are detached by default (a window in the `review` tmux
    session) and return immediately:
 
-       cue-review pr 123 [124 ...]     [--context <slug>] [-C <dir>]
+       cue-review pr 123 [124 ...]     [-C <dir>]
        cue-review branch [<name>]     [--base <integration-ref>] [-C <dir>]
        cue-review commit <sha>        [-C <dir>]
        cue-review range <base>..<head> [-C <dir>]
 
-   - `pr`: resolves via `gh`, fetches refs. Context `review-<branch-slug>`.
+   - `pr`: resolves via `gh`, fetches refs. Context `review-pr-<N>`,
+     fixed: `--context` is rejected. Station reads PR reviews from this
+     context, so every producer for one PR (review runs, station
+     comment rounds, walkthroughs) lands in one place.
    - `branch` (no name = current branch): pre-PR review, no gh needed.
      Base is the merge-base with `origin/HEAD` (or `--base`). Context
-     `review-<branch-slug>` — the same context `pr` uses later, so
-     pre-PR and PR reviews share history.
+     `review-<branch-slug>`.
    - `commit`: reviews one commit against its first parent.
    - `range`: exact tree-to-tree diff of the two commits, no merge-base
      substitution.
 
-   All targets share the context naming scheme: `review-<branch-slug>`
-   of the branch the reviewed head belongs to (current branch first,
-   then any local, then remote-tracking). One body of work, one context;
-   pass `--context` to override (e.g. a commit with no branch).
+   `branch`, `commit` and `range` share the naming scheme
+   `review-<branch-slug>` of the branch the reviewed head belongs to
+   (current branch first, then any local, then remote-tracking); pass
+   `--context` to override (e.g. a commit with no branch).
 
    Refs are resolved to SHAs before anything detaches. Windows are named
    `pr-<N>` / `b-<tail>` / `c-<sha>` / `r-<sha>` and tagged with the
    context, title, target kind and SHAs. `--foreground` blocks (summary
    on stdout) only on explicit request; `--force` fires past a window
-   already running for the same context; `--context` overrides the
-   automatic name (single target only).
+   already running for the same context; for non-PR targets `--context`
+   overrides the automatic name (single target only).
 
    All four targets accept `--parent <org>/<repo>/<context>` (single
    target only). When operating inside a feature work context, pass
@@ -83,7 +85,7 @@ review artifacts.
    the operator names, else `default`.
 3. **Collect**: `cue-review status` lists windows with
    `@review_state` (running/ok/failed/pending). When `ok`, read:
-   - findings: `<scope>/<context>/review/<RUN_ID>/verifiers-<name>.json`
+   - findings: `<scope>/<context>/review/runs/<RUN_ID>/verifiers-<name>.json`
      (verified findings; refuted ones stay, marked dismissed)
    - merge list `merge-<name>.json`; raw reviews `reviewers-<name>.json`
    - run record `run.json`: check target and resolved SHAs first; older
@@ -93,12 +95,17 @@ review artifacts.
      configuration-first; `observed.models` comes from runtime events.
      Missing receipts/streams are explicit, not zero-cost/no-activity.
      `observed.requests` are tool requests, not proof of files read or
-     comprehension. Resolve finding `source_ids` to entry artifact paths
-     for provenance; new agent artifacts do not repeat model metadata.
-   - diff `<scope>/<context>/tmp/<RUN_ID>/review.diff`; traces `trace/agent/`
+     comprehension. Finding `source_ids` are `<artifact address>#<id>`;
+     match them to entry artifacts for provenance; new agent artifacts
+     do not repeat model metadata.
+   - diff: not stored. Reproduce it with `diff_command` from `run.json`
+     (`git diff --no-ext-diff <base> <head>`); both shas are pinned as
+     `refs/review/runs/<RUN_ID>/{base,head}`. Traces `trace/agent/`.
 
-   RUN_ID is unique per run; the newest `review/<RUN_ID>/` supersedes
-   older ones and serves as the actionable backlog.
+   RUN_ID is the run's start time in Unix seconds. Runs carry their
+   `base` and `head`; group runs by `head` to see what exists for a
+   revision. The newest run for the current head serves as the
+   actionable backlog.
 4. **Discuss and triage**: walk findings with the operator
    (`file:line_start-line_end` locations). Triage means updating a
    finding's `status` (`applied`) or `dismiss_reason` (`dismissed`)

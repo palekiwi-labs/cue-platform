@@ -56,7 +56,7 @@ def die [msg: string, code: int = 2] {
 }
 
 def main [] {
-  print -e "usage: cue-review pr <number-or-branch>... [--context <slug>] [--foreground] [-C <dir>]"
+  print -e "usage: cue-review pr <number-or-branch>... [--foreground] [-C <dir>]"
   print -e "       cue-review branch [<name>]... [--base <integration-ref>] [--context <slug>] [--foreground] [-C <dir>]"
   print -e "       cue-review commit <sha>... [--context <slug>] [--foreground] [-C <dir>]"
   print -e "       cue-review range <base>..<head>... [--context <slug>] [--foreground] [-C <dir>]"
@@ -216,19 +216,20 @@ def input-block [ctx: record, phase: string, name: string, inputs: list<string>]
     $"run_id: ($ctx.run_id)"
     $"base: ($ctx.base)"
     $"head: ($ctx.head)"
-    $"diff: ($ctx.diff)"
-    $"run_record: ([$ctx.store $ctx.address review $ctx.run_id run.json] | path join)"
+    $"diff_command: ($ctx.diff_command)"
+    $"store: ($ctx.store)"
+    $"run_record: ($ctx.address)/review/runs/($ctx.run_id)/run.json"
     ...$input_lines
     "output:"
     "  tool: cue-review"
     $"  context: ($ctx.slug)"
-    $"  filename: ($ctx.run_id)/($phase)-($name).json"
+    $"  filename: runs/($ctx.run_id)/($phase)-($name).json"
     "</review-run>"
   ] | str join "\n"
 }
 
-def artifact-path [ctx: record, phase: string, name: string] {
-  [$ctx.store $ctx.address review $ctx.run_id $"($phase)-($name).json"] | path join
+def artifact-address [ctx: record, phase: string, name: string] {
+  $"($ctx.address)/review/runs/($ctx.run_id)/($phase)-($name).json"
 }
 
 # Keep receipt metrics, not response text or container-local logs. `model`
@@ -367,8 +368,8 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
   let results = ($entries | enumerate | each {|it|
     let candidate = ($runs | get -o $it.index)
     let run = if ($candidate | describe | str starts-with "record") { $candidate } else { null }
-    let path = (artifact-path $ctx $phase $it.item.name)
-    let ok = ($path | path exists)
+    let path = (artifact-address $ctx $phase $it.item.name)
+    let ok = ([$ctx.store $path] | path join | path exists)
     let outcome = ($run | get -o outcome | default "unknown")
     let secs = (($run | get -o duration_ms | default 0) / 1000 | math round)
     let cost = ($run | get -o cost_usd | default 0 | math round -p 3)
@@ -439,13 +440,15 @@ def run-review [
     log "warning: working tree is dirty; uncommitted changes are not reviewed"
   }
 
-  let tmp = (mktemp -t cue-review-diff.XXXXXX)
-  $diff.stdout | save -f $tmp
-  let added = (do { ^cue add -C $repo --type tmp --context $context --file $tmp review.diff } | complete)
-  rm -f $tmp
-  if $added.exit_code != 0 { die $"saving diff failed: ($added.stderr | str trim)" }
-  let diff_path = ($added.stdout | lines | where {|l| $l | str ends-with "/review.diff" } | last | str trim)
-  let run_id = ($diff_path | path dirname | path basename)
+  let run_id = (date now | format date "%s")
+  if ([$st.store $st.address review runs $run_id] | path join | path exists) {
+    die $"run ($run_id) already exists in ($st.address); retry in a second"
+  }
+  for side in [[base $base_sha] [head $head_sha]] {
+    let pinned = (do { ^git -C $repo update-ref $"refs/review/runs/($run_id)/($side.0)" $side.1 } | complete)
+    if $pinned.exit_code != 0 { die $"pinning ($side.0) failed: ($pinned.stderr | str trim)" }
+  }
+  let diff_command = $"git diff --no-ext-diff ($base_sha) ($head_sha)"
 
   # Lineage record: what was fired, what it resolved to. Never trust older
   # runs' findings just because the context matches.
@@ -462,13 +465,13 @@ def run-review [
     head: $head_sha
     context: $st.address
     run_id: $run_id
-    diff: $diff_path
+    diff_command: $diff_command
   }
   $record | to json | save -f $record_file
-  let rec = (do { ^cue add -C $repo --type review --context $context --file $record_file $"($run_id)/run.json" } | complete)
+  let rec = (do { ^cue add -C $repo --type review --context $context --file $record_file $"runs/($run_id)/run.json" } | complete)
   rm -f $record_file
   if $rec.exit_code != 0 { die $"run record failed: ($rec.stderr | str trim)" 1 }
-  let record_path = ([$st.store $st.address review $run_id run.json] | path join)
+  let record_path = ([$st.store $st.address review runs $run_id run.json] | path join)
 
   let ctx = {
     slug: $context
@@ -478,7 +481,7 @@ def run-review [
     run_id: $run_id
     base: $base_sha
     head: $head_sha
-    diff: $diff_path
+    diff_command: $diff_command
     manifest_name: ($manifest | path parse | get stem)
     # What the monitor shows for this run's job: target, context, manifest.
     label: ([
@@ -598,14 +601,14 @@ def resolve-parent [parent: any, n: int, repo: path] {
 def "main pr" [
   ...prs: string     # PR numbers or branch names
   --manifest: string = $DEFAULT_MANIFEST  # Manifest name (or path)
-  --context: string  # Context slug; default review-<branch-slug>. Single PR only
+  --context: string  # Rejected: PR reviews always use review-pr-<number>
   --parent: string   # Parent canonical context address for a new context; single target only
   --foreground       # Run in this shell instead of the review tmux session
   --force            # Fire even if a window for the context is already running
   -C: path           # Repository directory (default: current)
 ] {
   if ($prs | is-empty) { die "give at least one PR number or branch" }
-  check-single-context $context ($prs | length)
+  if $context != null { die "--context is not accepted for pr targets; PR reviews always use review-pr-<number>" }
   let resolved_parent = (resolve-parent $parent ($prs | length) ($C | default $env.PWD | path expand))
   let manifest = (resolve-manifest $manifest)
   let repo = (repo-of ($C | default $env.PWD | path expand))
@@ -634,7 +637,7 @@ def "main pr" [
       base_sha: $base_sha
       head_sha: $head_sha
       refs: $"($info.baseRefName)..($info.headRefName)"
-      context: ($context | default $"review-(slugify $info.headRefName)")
+      context: $"review-pr-($info.number)"
       title: $"Review: ($info.title)"
       window: $"pr-($pr)"
     } --foreground=$foreground --force=$force
@@ -644,7 +647,6 @@ def "main pr" [
 
 # Review a local branch (default: the current branch) before any PR exists.
 # Base is the merge-base with the integration ref (--base or origin/HEAD).
-# The context name matches the PR context, so a later `pr` reuses it.
 def "main branch" [
   ...names: string    # Branch names; default: the current branch
   --base: string      # Integration ref for the merge-base (default: origin/HEAD)
@@ -831,11 +833,11 @@ def "main manifests" [
 
 def print-summary [ctx: record, summary: list] {
   print $"run_id: ($ctx.run_id)"
-  print $"diff: ($ctx.address)/tmp/($ctx.run_id)/review.diff"
+  print $"diff: ($ctx.diff_command)"
   for s in $summary {
     print $"($s.phase):"
     for p in $s.produced {
-      print $"  ($ctx.address)/review/($ctx.run_id)/($p | path basename)"
+      print $"  ($p)"
     }
   }
 }

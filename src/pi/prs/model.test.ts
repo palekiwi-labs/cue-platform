@@ -195,8 +195,8 @@ test("fmtAge", () => {
   expect(fmtAge("nope", now)).toBe("?")
 })
 
-test("reviewContext matches cue-review slugify", () => {
-  expect(reviewContext(pr({ headRef: "Feat/Cue_Agent!" }))).toBe("review-feat-cue_agent")
+test("reviewContext is review-pr-<number>", () => {
+  expect(reviewContext(pr({ number: 42, headRef: "Feat/Cue_Agent!" }))).toBe("review-pr-42")
 })
 
 test("worktreeFor", () => {
