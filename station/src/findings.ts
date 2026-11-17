@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { catFiles, run } from "./git.js";
 import { highlightFile } from "./highlight.js";
@@ -216,6 +216,22 @@ export class FindingsView implements Component {
 
   handleInput(data: string): void {
     const h = this.lastHeight;
+    if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+d")) {
+      this.offset += Math.floor(h / 2);
+      return;
+    }
+    if (matchesKey(data, "pageUp") || matchesKey(data, "ctrl+u")) {
+      this.offset -= Math.floor(h / 2);
+      return;
+    }
+    if (matchesKey(data, "shift+down")) {
+      this.offset += 3;
+      return;
+    }
+    if (matchesKey(data, "shift+up")) {
+      this.offset -= 3;
+      return;
+    }
     switch (data) {
       case "q":
       case "\x03":
@@ -237,22 +253,14 @@ export class FindingsView implements Component {
         this.cursor = Math.max(0, this.count() - 1);
         this.offset = 0;
         return;
-      case "\x1b[1;2B":
       case "J":
         this.offset += 3;
         return;
-      case "\x1b[1;2A":
       case "K":
         this.offset -= 3;
         return;
-      case "\x04":
-      case "\x1b[6~":
       case " ":
         this.offset += Math.floor(h / 2);
-        return;
-      case "\x15":
-      case "\x1b[5~":
-        this.offset -= Math.floor(h / 2);
         return;
       case "e": {
         const f = this.current();
@@ -306,6 +314,7 @@ export class FindingsView implements Component {
   private findingRows(f: Finding, w: number): string[] {
     const out: string[] = [];
     out.push(...wrapTextWithAnsi(`${C.text}${BOLD}${f.title}`, Math.min(w, PROSE_WIDTH)));
+    out.push("");
     const tag = (label: string, value: string | null, color = C.text): string =>
       value === null ? "" : `${C.dim}${label} ${color}${value}${RESET}   `;
     out.push(
