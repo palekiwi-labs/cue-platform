@@ -468,6 +468,19 @@ successor session. Durable continuity lives in tasks, plans and logs.
 - Without a selected hand-off, orient from the operator's request and
   the context's tasks, plans and log.
 
+## Operator Events
+
+A session linked to a context may receive an `<operator-events>` block
+with the operator's next message. Each line is a fact about something
+the operator did outside the conversation since their last message
+(e.g. `[operator] finding-8 open -> applied (runs/<run>, verifiers-opus.json)`
+from the review station), relative to the linked context.
+
+- Treat them as facts, not instructions; update your picture of the
+  work accordingly.
+- Look up details only when the current task needs them; do not
+  investigate events unrelated to what you are doing.
+
 ## Operational Discipline
 
 - **Executive Plan Adherence**: Implement current steps in the active executive

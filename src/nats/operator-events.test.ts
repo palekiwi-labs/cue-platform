@@ -39,9 +39,10 @@ describe("operator events", () => {
     pending.add({ ...event, old_status: "dismissed", new_status: "applied" })
     pending.add({ ...event, artifact_address: `${context}/review/other.json` })
     expect(pending.take(context)).toBe([
-      "Operator changes since your last message:",
+      "<operator-events>",
       "[operator] F3 open -> applied (runs/run, verifiers-a.json)",
       "[operator] F3 open -> dismissed (other.json)",
+      "</operator-events>",
     ].join("\n"))
     expect(pending.take(context)).toBeUndefined()
   })

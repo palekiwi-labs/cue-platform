@@ -66,7 +66,7 @@ export class PendingOperatorChanges {
       `[operator] ${e.finding_id} ${e.old_status ?? "unset"} -> ${e.new_status} (${shortLocation(e.artifact_address, context)})`)
     if (this.overflow) changes.push(`[operator] ${this.overflow} more changes`)
     this.clear()
-    return ["Operator changes since your last message:", ...changes].join("\n")
+    return ["<operator-events>", ...changes, "</operator-events>"].join("\n")
   }
 }
 
