@@ -309,6 +309,7 @@ export interface WalkthroughOptions {
   onOpen: (rev: string, file: string, line: number) => void;
   drafts?: WalkthroughDrafts;
   comments?: Drafts;
+  refreshable?: boolean;
 }
 
 interface MainPane {
@@ -338,6 +339,28 @@ export class WalkthroughView implements Component {
   }
 
   invalidate(): void {}
+
+  restorePosition(previous: WalkthroughView): void {
+    const row = previous.rows[previous.cursor];
+    if (row !== undefined && row.kind !== "overview" && this.opts.walkthrough.chunks.length > 0) {
+      const id = previous.opts.walkthrough.chunks[row.chunk]?.id;
+      const found = this.opts.walkthrough.chunks.findIndex((c) => c.id === id);
+      const chunk = found >= 0 ? found : Math.min(row.chunk, this.opts.walkthrough.chunks.length - 1);
+      const sections = this.opts.walkthrough.chunks[chunk]!.sections;
+      const section = row.kind === "section" && sections.length > 0 ? Math.min(row.section, sections.length - 1) : -1;
+      this.cursor = this.rows.findIndex((r) => r.kind !== "overview" && r.chunk === chunk &&
+        (section < 0 ? r.kind === "chunk" : r.kind === "section" && r.section === section));
+    }
+    const steps = this.current().section?.steps.length ?? 0;
+    this.step = Math.max(0, Math.min(previous.step, steps - 1));
+    this.offset = previous.offset;
+    this.listOffset = previous.listOffset;
+    this.sidebar = previous.sidebar;
+    this.sideCursor = Math.max(0, Math.min(previous.sideCursor, this.rows.length - 1));
+    this.sideFocus = previous.sideFocus;
+    this.sideMode = previous.sideMode;
+    this.reveal = true;
+  }
 
   get position(): number {
     return this.cursor;
@@ -736,13 +759,13 @@ export class WalkthroughView implements Component {
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
     const pane = this.pane === null ? "" : k("C", "comments");
-    const keys = this.notice !== null
+    const keys = (this.opts.refreshable ? ` ${k("R", "refresh")}` : "") + (this.notice !== null
       ? ` ${C.add}${this.notice}`
       : this.sideFocus && this.sideMode === "comments"
       ? ` ${k("j/k", "comment")}${k("enter", "jump")}${k("E/d", "edit/delete")}${k("S", "submit all")}${k("C", "outline")}${k("tab/esc", "back")}`
       : this.sideFocus
       ? ` ${k("j/k", "move")}${k("enter", "read")}${pane}${k("tab/esc", "back")}`
-      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${this.commentKeys(k)}${pane}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`;
+      : ` ${k("↑/↓", "step")}${k("^↑/^↓", "section")}${k("j/k ⇧↑/⇧↓", "scroll")}${this.commentKeys(k)}${pane}${k("tab", "outline")}${k("t", "hide")}${k("e", "open")}${k("q", "quit")}`);
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const right = `${more}${this.stepStatus()}${C.dim}${this.cursor + 1}/${this.rows.length} `;
     const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
