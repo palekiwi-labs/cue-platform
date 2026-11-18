@@ -530,7 +530,6 @@ export class FeedbackTab implements TabScreen {
               `no GitHub feedback fetched for #${n} yet`,
               "",
               "R fetch review threads and PR comments from GitHub (read-only)",
-              `  or from a shell: station github-feedback ${n} --save`,
             ];
     return new NoticeView({ title: `github  #${n}`, subtitle: prContext(this.host.repoSlug, n), body, onQuit: this.host.onQuit, hints: "R fetch" });
   }

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
   feedbackCachePath,
-  feedbackCommand,
+  saveSnapshot,
   fetchFeedback,
   type Graphql,
   type GraphqlVars,
@@ -120,25 +120,16 @@ test("paginate fails on a repeated cursor and on a missing list", async () => {
   await assert.rejects(fetchFeedback(missing, "not a repo", 7), /owner>\/<name/);
 });
 
-test("snapshots round-trip through --out, and unreadable ones are rejected", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "station-feedback-cli-"));
+test("snapshots round-trip through the cache file, and unreadable ones are rejected", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "station-feedback-cache-"));
   try {
-    const out: string[] = [];
-    const deps = { gql: fakeGithub().gql, defaultRepo: () => "org/repo", stdout: (t: string) => out.push(t) };
     const file = join(dir, "s.json");
-    assert.equal(await feedbackCommand(["7", "--out", file], deps), 0);
-    assert.equal(out.join(""), `${file}\n`);
+    saveSnapshot(file, await fetchFeedback(fakeGithub().gql, "org/repo", 7));
     assert.equal(loadSnapshot(file)?.threads.length, 2);
-    await feedbackCommand(["7"], deps);
-    assert.equal(JSON.parse(out.at(-1)!).pr.number, 7);
-    await assert.rejects(feedbackCommand(["x"], deps), /usage: station github-feedback/);
-    await assert.rejects(feedbackCommand(["7", "--save", "--out", file], deps), /either/);
-    await assert.rejects(feedbackCommand(["7"], { ...deps, defaultRepo: () => null }), /--repo/);
     assert.equal(loadSnapshot(join(dir, "none.json")), null);
     writeFileSync(file, JSON.stringify({ schema: "other" }));
     assert.throws(() => loadSnapshot(file), /not a station\/github-feedback@1/);
     assert.match(feedbackCachePath("Org/Repo", 7), /github-feedback\/org-repo-pr-7\.json$/);
-    assert.ok(readFileSync(join(dir, "s.json"), "utf8").length > 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

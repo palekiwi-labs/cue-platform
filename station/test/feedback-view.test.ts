@@ -67,7 +67,6 @@ test("entering the tab never fetches; R fetches, saves and shows threads and con
     let resolve: (v: FeedbackSnapshot) => void = () => {};
     const ui = setup(f, { fetch: () => new Promise((r) => (resolve = r)) });
     assert.match(text(ui.tab), /no GitHub feedback fetched for #7 yet/);
-    assert.match(text(ui.tab), /station github-feedback 7 --save/);
     ui.tab.handleInput("R");
     assert.match(text(ui.tab), /fetching review threads/);
     ui.tab.handleInput("R");
