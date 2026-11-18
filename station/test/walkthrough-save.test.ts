@@ -75,7 +75,7 @@ test("preparerRun pins the head worktree and the review-pr context", () => {
   assert.equal(run.model, "9r/cc/claude-opus-5-5");
   assert.equal(run.agent.isolated, true);
   assert.ok(run.prompt.includes(saveCommand(["/nix/node", "/st/bin/station.js"], pr)));
-  assert.deepEqual(run.agent.extensions, ["npm:@gotgenes/pi-anthropic-auth"]);
+  assert.equal(run.agent.extensions, undefined);
   const other = preparerRun(["s"], pr, "m/x");
   assert.equal(other.model, "m/x");
   assert.equal(other.agent.extensions, undefined);
