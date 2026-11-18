@@ -54,6 +54,7 @@ export function list(service: GithubService, request: ListRequest): ListResult {
     prs: prs.slice(offset, offset + limit),
     total: prs.length,
     nextOffset: offset + limit < prs.length ? offset + limit : null,
+    pausedUntil: null,
   };
 }
 

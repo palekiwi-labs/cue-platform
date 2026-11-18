@@ -156,6 +156,7 @@ export class GithubService {
       createdAt: this.options.now(),
       completedAt: null,
       state: "pending",
+      pausedUntil: null,
       repositories: Object.fromEntries(
         repos.map((r) => [r, { state: "pending" }]),
       ),
