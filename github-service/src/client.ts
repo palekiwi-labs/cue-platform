@@ -2,6 +2,8 @@ import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SUBJECTS,
+  type FeedbackEvent,
+  type FeedbackResult,
   type ListRequest,
   type ListResult,
   type RefreshOperation,
@@ -21,6 +23,7 @@ export class GithubClientError extends Error {
 export class GithubClient {
   private connection?: Promise<NatsConnection>;
   private listeners = new Set<() => void>();
+  private feedbackListeners = new Set<(event: FeedbackEvent) => void>();
   private closed = false;
   private abort = new AbortController();
   private timer?: ReturnType<typeof setInterval>;
@@ -34,18 +37,38 @@ export class GithubClient {
     for (const listener of this.listeners) listener();
   }
 
+  private interval(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.hint();
+      if (this.feedbackListeners.size) void this.connected().catch(() => {});
+    }, 30_000);
+    this.timer.unref();
+  }
+
+  private idle(): void {
+    if (this.listeners.size || this.feedbackListeners.size || !this.timer)
+      return;
+    clearInterval(this.timer);
+    this.timer = undefined;
+  }
+
   watch(listener: () => void): () => void {
     this.listeners.add(listener);
-    if (!this.timer) {
-      this.timer = setInterval(() => this.hint(), 30_000);
-      this.timer.unref();
-    }
+    this.interval();
     return () => {
       this.listeners.delete(listener);
-      if (this.listeners.size === 0 && this.timer) {
-        clearInterval(this.timer);
-        this.timer = undefined;
-      }
+      this.idle();
+    };
+  }
+
+  onFeedback(listener: (event: FeedbackEvent) => void): () => void {
+    this.feedbackListeners.add(listener);
+    this.interval();
+    void this.connected().catch(() => {});
+    return () => {
+      this.feedbackListeners.delete(listener);
+      this.idle();
     };
   }
 
@@ -72,6 +95,22 @@ export class GithubClient {
             for await (const _message of subscription) this.hint();
           })().catch(() => this.hint());
         }
+        const feedback = nc.subscribe(SUBJECTS.feedbackChanged);
+        void (async () => {
+          for await (const message of feedback) {
+            let event: FeedbackEvent;
+            try {
+              event = message.json<FeedbackEvent>();
+            } catch {
+              continue;
+            }
+            for (const listener of this.feedbackListeners) {
+              try {
+                listener(event);
+              } catch {}
+            }
+          }
+        })().catch(() => {});
         void (async () => {
           for await (const status of nc.status()) {
             if (status.type === "reconnect" || status.type === "disconnect")
@@ -162,9 +201,27 @@ export class GithubClient {
   }
 
   async refresh(repo?: string): Promise<RefreshOperation> {
+    return this.track({ repo });
+  }
+
+  async refreshFeedback(
+    repo: string,
+    number: number,
+  ): Promise<RefreshOperation> {
+    return this.track({ repo, number });
+  }
+
+  async feedback(repo: string, number: number): Promise<FeedbackResult> {
+    return this.request<FeedbackResult>(SUBJECTS.feedback, { repo, number });
+  }
+
+  private async track(body: {
+    repo?: string;
+    number?: number;
+  }): Promise<RefreshOperation> {
     const { operationId } = await this.request<RefreshResult>(
       SUBJECTS.refresh,
-      { repo },
+      body,
     );
     while (!this.closed) {
       const operation = await this.request<RefreshOperation>(
@@ -183,6 +240,7 @@ export class GithubClient {
     this.abort.abort();
     if (this.timer) clearInterval(this.timer);
     this.listeners.clear();
+    this.feedbackListeners.clear();
     try {
       await (await this.connection)?.close();
     } catch {}
@@ -197,11 +255,16 @@ export function snapshotKey(snapshot: ListResult): string {
 }
 
 export function snapshotHealth(snapshot: ListResult): string[] {
-  return snapshot.repositories.flatMap((r) =>
+  const health = snapshot.repositories.flatMap((r) =>
     r.error
       ? [`${r.repo}: ${r.error}`]
       : r.fetchedAt === null
         ? [`${r.repo}: not fetched yet`]
         : [],
   );
+  if (snapshot.pausedUntil)
+    health.push(
+      `GitHub rate limited until ${new Date(snapshot.pausedUntil).toISOString()}`,
+    );
+  return health;
 }

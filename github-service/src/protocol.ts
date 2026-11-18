@@ -63,7 +63,7 @@ export interface ListResult {
   prs: Pr[];
   total: number;
   nextOffset: number | null;
-  pausedUntil: number | null;
+  pausedUntil?: number | null;
 }
 
 export interface RefreshRequest {
@@ -89,7 +89,7 @@ export interface RefreshOperation {
   state: "pending" | "complete";
   repositories: Record<string, RefreshOutcome>;
   feedback?: RefreshOutcome & { repo: string; number: number };
-  pausedUntil: number | null;
+  pausedUntil?: number | null;
 }
 
 export interface FeedbackAuthor {
