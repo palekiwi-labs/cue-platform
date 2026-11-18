@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type {
   ExtensionAPI,
   ExtensionToolContext,
@@ -80,6 +80,18 @@ async function runTool(
 }
 
 describe("cuePlugins registration", () => {
+  let saved: string | undefined
+
+  beforeEach(() => {
+    saved = process.env["CUE_DELEGATE_BACKEND"]
+    process.env["CUE_DELEGATE_BACKEND"] = "supervisor"
+  })
+
+  afterEach(() => {
+    if (saved !== undefined) process.env["CUE_DELEGATE_BACKEND"] = saved
+    else delete process.env["CUE_DELEGATE_BACKEND"]
+  })
+
   test("registers the cue tools, recall and delegate", () => {
     const { pi, tools } = makeMockPi()
     cuePlugins(pi)
