@@ -26,6 +26,7 @@ import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from
 import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
 import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { WalkthroughDrafts } from "./walkthrough-comments.js";
+import { feedbackCommand, ghGraphql } from "./github-feedback.js";
 import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
@@ -48,6 +49,8 @@ function usage(code: number): never {
   out("                                submit a walkthrough preparer run for a PR to the supervisor");
   out("       station walkthrough-save --repo <path> --pr <n> --base <sha> --head <sha> <file>");
   out("                                validate a walkthrough file and save it to review-pr-N");
+  out("       station github-feedback <number> [--repo <owner/name>] [--save | --out <file>]");
+  out("                                fetch review threads and PR comments as JSON (read-only)");
   out("");
   out("  --context <slug>   cue context for submitted comment rounds of non-PR reviews (default review-<branch-slug>; PR reviews always use review-pr-N)");
   process.exit(code);
@@ -493,9 +496,19 @@ async function prepareWalkthrough(args: string[]): Promise<void> {
 
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args[0] === "walkthrough-save" || args[0] === "prepare-walkthrough") {
+  if (args[0] === "walkthrough-save" || args[0] === "prepare-walkthrough" || args[0] === "github-feedback") {
     try {
       if (args[0] === "walkthrough-save") process.exit(await walkthroughSaveCommand(args.slice(1)));
+      if (args[0] === "github-feedback") {
+        process.exit(await feedbackCommand(args.slice(1), {
+          gql: ghGraphql(),
+          defaultRepo: () => {
+            const repo = prRepo(process.cwd());
+            return repo === null ? null : repoSlug(repo);
+          },
+          stdout: (text) => process.stdout.write(text),
+        }));
+      }
       await prepareWalkthrough(args.slice(1));
       process.exit(0);
     } catch (e) {
