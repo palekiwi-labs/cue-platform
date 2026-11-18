@@ -13,10 +13,21 @@ tab itself.
   (`github.api.v1.feedback`). This is a read from the service store; it
   makes no GitHub call.
 - `R` asks the service to refetch the feedback of this PR from GitHub
-  (`github.api.v1.refresh` with the repository and PR number), waits for
-  the operation and then reads the snapshot again.
+  (`github.api.v1.refresh` with the repository and PR number) and waits
+  for the operation. Its result arrives like any other change: when the
+  feedback event of the refresh was already applied the snapshot is not
+  read again, otherwise it is read once.
 - The service collects feedback on its own whenever a PR's `updatedAt`
   changes, so the snapshot is usually current without `R`.
+- A `github.evt.v1.feedback` event for this PR with a newer revision (or
+  from a reset service store) reloads the stored snapshot right away; it
+  makes no GitHub call. Events arriving during a reload coalesce into one
+  follow-up read, and a response older than the shown revision is
+  ignored.
+- After the NATS connection comes back (a reconnect, or a first
+  connection after the service was unreachable) the tab reads the
+  snapshot and replaces the shown data only if the revision differs,
+  since events may have been missed meanwhile.
 - The repository is the GitHub `origin` of the checkout, lowercased as in
   the service configuration. A PR that is not in the service's open list
   for a configured repository reports the service's `not_found` error.
@@ -43,16 +54,23 @@ The status bar (or the notice when there is no data yet) shows:
 - `last GitHub fetch failed: <error>` when the service's last fetch for
   the PR failed; the data shown is the last good snapshot.
 - `GitHub rate limited until <time>` while the service is paused.
-- `new feedback available · R refresh` when a `github.evt.v1.feedback`
-  event announces a newer revision (or a reset service store) for this
-  PR. The displayed data is not replaced until `R`, as in the PR list,
-  where the change indicator also points to the refresh key.
+- For a few seconds after new data was applied: `updated: <n> new
+  comments`, counted from the `newComments` of the feedback events the
+  new data covers, or `feedback updated` when no event reported new
+  comments (edits, resolved threads, a refresh whose event has not
+  arrived yet). An event that arrives after its data was applied still
+  reports its new comments.
 
 Without collected feedback yet the tab says so and offers `R`.
 
 ## The tab
 
 - Entering the tab reads the service snapshot only; it never refreshes.
+- New data from the service replaces the shown data in place. The
+  selection follows the selected thread or conversation entry by id; when
+  that item is gone its nearest surviving neighbour in the previous order
+  is selected. The sort, the sidebar state and the scroll of the detail
+  (while the selected item still exists) are kept.
 - `R` refreshes through the service. While it is pending the previous
   data stays visible; a failure keeps it and shows the error.
 - The sidebar lists code threads, then the general conversation. Each
@@ -70,7 +88,7 @@ Without collected feedback yet the tab says so and offers `R`.
   GitHub order, newest activity first, or file and line. General
   comments have no resolved state: they are listed newest first under
   the newest and unresolved sorts and oldest first otherwise. The sort,
-  the selection and the sidebar state are kept across `R`.
+  the selection and the sidebar state are kept across updates.
 - `y` copies the GitHub link of the selected thread (its first comment)
   or general comment to the clipboard (OSC 52, as elsewhere in station)
   and reports `link copied`. Links are kept in the snapshot but not

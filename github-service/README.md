@@ -254,31 +254,47 @@ and `source` are replaced by the service metadata.
 These are lossy core NATS hints. They are neither durable events nor proof
 of a consumer's state. No offline replay or JetStream outbox exists.
 The service retries initial connections and resubscribes after connection
-loss with capped backoff. Clients must list again after reconnect and
-periodically reconcile revisions even without a notification.
+loss with capped backoff. Clients must list again after reconnect.
+Within one connection core NATS may still drop messages to a slow
+consumer; a client that cannot accept that also reconciles periodically
+(pi's browser does, station relies on events and reconnects).
 
 ## Consumers and deployment
 
 Pi's PR browser and station read persisted snapshots on launch. Refresh
 requests go through the service; neither consumer falls back to a GitHub
-list fetch. Both retain displayed rows while refreshing and show an
-indicator when background data has changed. Station's `github` tab reads
-PR feedback from the service the same way (see
-`station/docs/github-feedback.md`); diffs still use their existing
+list fetch. Both retain displayed rows while refreshing. Pi's browser
+shows an indicator when background data has changed. Station applies
+changes automatically: a `changed` event for its repository with a newer
+revision, or a reconnect that finds a different stored revision, reloads
+the stored list (no GitHub call) keeping the selection by PR number, the
+scroll position, the sort and the tree layout; when the selected PR left
+the list its nearest neighbour is selected and a short note names it.
+`R` (or `r`) asks the service to fetch from GitHub; a refresh whose
+change event was already applied does not read the list again.
+Station's `github` tab reads PR feedback from the service the same way
+(see `station/docs/github-feedback.md`); diffs still use their existing
 on-demand fetching paths.
 
 The client also reads feedback (`feedback(repo, number)`), refreshes the
 feedback of one PR and waits for the operation (`refreshFeedback(repo,
 number, onProgress?)`, where `onProgress` receives each pending
 operation, including its `pausedUntil`), and passes feedback events to
-`onFeedback(listener)` callbacks until the returned function is called. `snapshotHealth` reports an
+`onFeedback(listener)` callbacks until the returned function is called.
+`onChanged(listener)` passes `github.evt.v1.changed` events the same
+way, and `onReconnect(listener)` is called whenever the connection comes
+back after a loss (a NATS reconnect, or a new connection after a failed
+or closed one), so consumers can compare revisions for events they may
+have missed. `snapshotHealth` reports an
 active rate-limit pause.
 
 The shared client collects all snapshot pages with revision guards and
 bounded conflict retries. It tracks refresh operations by polling, so
-completion does not depend on receiving a notification. Change/completion
-hints, reconnects, and a 30-second reconciliation interval prompt revision
-checks, not automatic replacement of the displayed rows. Closing a view
+completion does not depend on receiving a notification. For `watch`
+listeners (pi's browser), change/completion hints, reconnects, and a
+30-second reconciliation interval prompt revision checks, not automatic
+replacement of the displayed rows. While any listener is registered the
+same interval also retries a connection that failed or closed. Closing a view
 releases its client, subscriptions and timers. Expired operations report
 an error; another refresh rereads service state.
 
