@@ -20,8 +20,6 @@ import { NoticeView, type TabScreen } from "./tabs.js";
 const PROSE_WIDTH = 80;
 const HUNK_TAIL = 12;
 
-const EXCERPT_ROWS = 2;
-
 export type FeedbackItem = { kind: "thread"; thread: ReviewThread } | { kind: "entry"; entry: ConversationEntry };
 
 export type FeedbackSort = "github" | "newest" | "unresolved" | "file";
@@ -117,14 +115,14 @@ function threadTags(t: ReviewThread): string[] {
   return tags;
 }
 
-function excerpt(body: string, width: number): string[] {
-  const flat = body.replace(/\s+/g, " ").trim();
-  if (flat === "" || width <= 1) return [];
-  const rows = wrapTextWithAnsi(flat, width);
-  if (rows.length <= EXCERPT_ROWS) return rows;
-  const shown = rows.slice(0, EXCERPT_ROWS);
-  shown[EXCERPT_ROWS - 1] = `${truncateToWidth(shown[EXCERPT_ROWS - 1]!, width - 1, "")}…`;
-  return shown;
+export function entryLabel(e: ConversationEntry): string {
+  if (e.kind !== "review") return "PR comment";
+  const state = e.state?.toLowerCase().replace(/_/g, " ") ?? "";
+  return state === "" || state === "commented" ? "review" : `review ${state}`;
+}
+
+function countText(n: number): string {
+  return `${n} comment${n === 1 ? "" : "s"}`;
 }
 
 export interface FeedbackViewOptions {
@@ -359,14 +357,14 @@ export class FeedbackView implements Component {
     const header = (label: string, count: number): void => {
       rows.push({ text: C.barBg + fit(` ${C.text}${BOLD}${label}${RESET}${C.barBg} ${C.dim}${count}`, w) + RESET, item: null });
     };
-    const entry = (i: number, label: string, sub: string, body: string, dim: boolean): void => {
+    const entry = (i: number, label: string, tags: string[], author: string | null, count: number, dim: boolean): void => {
       const on = i === this.cursor;
       const base = on ? C.selBg : "";
       const marker = on ? `${C.accent}▎` : " ";
+      const tagText = tags.length === 0 ? "" : `${C.mod}${tags.join(" ")}  `;
+      const sub = `${tagText}${C.dim}${author === null ? "" : `${author} · `}${countText(count)}`;
       rows.push({ text: base + fit(`${marker}${dim ? C.faint : on ? `${C.text}${BOLD}` : C.text}${label}`, w) + RESET, item: i });
       rows.push({ text: base + fit(`${marker}${sub}`, w) + RESET, item: i });
-      for (const line of excerpt(body, w - 2)) rows.push({ text: base + fit(`${marker}${dim ? C.faint : C.dim}${line}`, w) + RESET, item: i });
-      rows.push({ text: " ".repeat(w), item: i });
     };
     header("Code threads", s.threads.length);
     if (s.threads.length === 0) rows.push({ text: ` ${C.faint}no review threads`, item: null });
@@ -374,18 +372,14 @@ export class FeedbackView implements Component {
       if (item.kind !== "thread") return;
       const t = item.thread;
       const first = t.comments[0];
-      const tags = threadTags(t);
-      const tagText = tags.length === 0 ? "" : `${C.mod}${tags.join(" ")}  `;
-      const sub = `${tagText}${C.dim}${first === undefined ? "" : login(first.author)} · ${t.comments.length}`;
-      entry(i, tailPath(threadLocation(t), w - 1), sub, first?.body ?? "", t.is_resolved);
+      entry(i, tailPath(threadLocation(t), w - 1), threadTags(t), first === undefined ? null : login(first.author), t.comments_total, t.is_resolved);
     });
     header("Conversation", s.conversation.length);
     if (s.conversation.length === 0) rows.push({ text: ` ${C.faint}no general comments`, item: null });
     this.items.forEach((item, i) => {
       if (item.kind !== "entry") return;
       const e = item.entry;
-      const kind = e.kind === "review" ? `review ${e.state?.toLowerCase().replace("_", " ") ?? ""}` : "comment";
-      entry(i, `${login(e.author)}  ${C.dim}${kind}`, `${C.dim}${when(e.created_at)}`, e.body, e.is_minimized);
+      entry(i, entryLabel(e), e.is_minimized ? ["hidden"] : [], login(e.author), 1, e.is_minimized);
     });
     const first = rows.findIndex((r) => r.item === this.cursor);
     if (first >= 0) {

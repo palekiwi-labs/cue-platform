@@ -7,7 +7,7 @@ import { FeedbackTab, type FeedbackTabDeps } from "../src/feedback-view.js";
 import type { ConversationEntry, FeedbackSnapshot } from "../src/github-feedback.js";
 import type { PopupContent } from "../src/popup.js";
 import type { PrTabHost } from "../src/pr-tabs.js";
-import { gitFixture, type GitFixture, LEFT_HUNK, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
+import { comment, gitFixture, type GitFixture, LEFT_HUNK, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
 
 const entry: ConversationEntry = {
   kind: "review", id: "R9", database_id: "9", author: { login: "carol", type: "User", association: "MEMBER" },
@@ -254,21 +254,32 @@ test("y copies the selected thread or comment link and reports failures", () => 
 });
 
 function sortable(f: GitFixture): FeedbackSnapshot {
-  const at = (id: string, t: string, body: string) => ({ id, created_at: t, body });
-  const older: ConversationEntry = { ...entry, id: "E1", kind: "comment", state: null, body: "first general", created_at: "2025-01-01T00:00:00Z" };
-  const newer: ConversationEntry = { ...entry, id: "E2", kind: "comment", state: null, body: "second general", created_at: "2025-01-05T00:00:00Z" };
+  const at = (id: string, t: string) => ({ id, created_at: t });
+  const by = (login: string) => ({ ...entry.author, login });
+  const older: ConversationEntry = { ...entry, id: "E1", kind: "comment", state: null, author: by("erin"), created_at: "2025-01-01T00:00:00Z" };
+  const newer: ConversationEntry = { ...entry, id: "E2", kind: "comment", state: null, author: by("frank"), created_at: "2025-01-05T00:00:00Z" };
   return snapshot(f, [
-    thread({ id: "A", path: "z.ts", line: 3, is_resolved: true }, at("a", "2025-01-04T00:00:00Z", "alpha")),
-    thread({ id: "B", path: "b.ts", line: 9 }, at("b", "2025-01-01T00:00:00Z", "bravo")),
-    thread({ id: "C", path: "b.ts", line: 2 }, at("c", "2025-01-03T00:00:00Z", "charlie")),
-    thread({ id: "D", path: "a.ts", line: 1, is_resolved: true }, at("d", "2025-01-06T00:00:00Z", "delta")),
+    thread({ id: "A", path: "z.ts", line: 3, is_resolved: true }, at("a", "2025-01-04T00:00:00Z")),
+    thread({ id: "B", path: "b.ts", line: 9 }, at("b", "2025-01-01T00:00:00Z")),
+    thread({ id: "C", path: "b.ts", line: 2 }, at("c", "2025-01-03T00:00:00Z")),
+    thread({ id: "D", path: "a.ts", line: 1, is_resolved: true }, at("d", "2025-01-06T00:00:00Z")),
   ], { conversation: [older, newer] });
 }
 
+function sideRows(tab: { render(w: number): string[] }, width = 200): string[] {
+  return tab.render(width).map(stripTerminalSequences).slice(2, -1).map((l) => l.slice(l.indexOf("│") + 1));
+}
+
+const ALPHA = "z.ts:3";
+const BRAVO = "b.ts:9";
+const CHARLIE = "b.ts:2";
+const DELTA = "a.ts:1";
+const FIRST = "erin";
+const SECOND = "frank";
+
 function order(tab: { render(w: number): string[] }): string[] {
-  const words = ["alpha", "bravo", "charlie", "delta", "first general", "second general"];
-  const side = tab.render(200).map(stripTerminalSequences).map((l) => l.slice(l.indexOf("│") + 1)).join("\n");
-  return words.map((w) => [side.indexOf(w), w] as const).sort((a, b) => a[0] - b[0]).map(([, w]) => w);
+  const side = sideRows(tab).join("\n");
+  return [ALPHA, BRAVO, CHARLIE, DELTA, FIRST, SECOND].map((w) => [side.indexOf(w), w] as const).sort((a, b) => a[0] - b[0]).map(([, w]) => w);
 }
 
 test("s picks a sort; the selection follows the item and the sort survives refresh", async () => {
@@ -276,7 +287,7 @@ test("s picks a sort; the selection follows the item and the sort survives refre
   try {
     const s = sortable(f);
     const ui = setup(f, { load: () => s, fetch: async () => s });
-    assert.deepEqual(order(ui.tab), ["alpha", "bravo", "charlie", "delta", "first general", "second general"]);
+    assert.deepEqual(order(ui.tab), [ALPHA, BRAVO, CHARLIE, DELTA, FIRST, SECOND]);
     assert.match(text(ui.tab), /s sort/);
     assert.match(text(ui.tab), /sort: GitHub order/);
     const pick = (key: string): void => {
@@ -288,38 +299,59 @@ test("s picks a sort; the selection follows the item and the sort survives refre
     };
     ui.tab.handleInput("j");
     pick("n");
-    assert.deepEqual(order(ui.tab), ["delta", "alpha", "charlie", "bravo", "second general", "first general"]);
+    assert.deepEqual(order(ui.tab), [DELTA, ALPHA, CHARLIE, BRAVO, SECOND, FIRST]);
     assert.match(text(ui.tab), /sort: newest  item 4\/6/);
-    assert.match(text(ui.tab), /bravo/);
+    assert.match(text(ui.tab), /^\s+b\.ts:9\s/m);
     pick("u");
-    assert.deepEqual(order(ui.tab), ["charlie", "bravo", "delta", "alpha", "second general", "first general"]);
+    assert.deepEqual(order(ui.tab), [CHARLIE, BRAVO, DELTA, ALPHA, SECOND, FIRST]);
     pick("f");
-    assert.deepEqual(order(ui.tab), ["delta", "charlie", "bravo", "alpha", "first general", "second general"]);
+    assert.deepEqual(order(ui.tab), [DELTA, CHARLIE, BRAVO, ALPHA, FIRST, SECOND]);
     ui.tab.handleInput("R");
     await tick();
     assert.match(text(ui.tab), /sort: file  item 3\/6/);
-    assert.deepEqual(order(ui.tab), ["delta", "charlie", "bravo", "alpha", "first general", "second general"]);
+    assert.deepEqual(order(ui.tab), [DELTA, CHARLIE, BRAVO, ALPHA, FIRST, SECOND]);
     pick("d");
-    assert.deepEqual(order(ui.tab), ["alpha", "bravo", "charlie", "delta", "first general", "second general"]);
+    assert.deepEqual(order(ui.tab), [ALPHA, BRAVO, CHARLIE, DELTA, FIRST, SECOND]);
   } finally {
     f.cleanup();
   }
 });
 
-test("sidebar entries wrap the comment over two rows and keep the path tail", () => {
+test("sidebar entries are two rows: location or type, then state, author and comment count", () => {
   const f = gitFixture();
   try {
-    const long = "This is a fairly long review comment that would never fit on a single sidebar row so it wraps and then ends with an ellipsis somewhere";
+    const long = "This is a fairly long review comment that must not show up in the sidebar list";
     const path = "deeply/nested/directory/structure/for/the/module/file.ts";
-    const s = snapshot(f, [thread({ id: "L", path, line: 4 }, { body: long })]);
+    const reply = comment({ id: "c2", author: { login: "dave", type: "User", association: "MEMBER" }, body: "agreed" });
+    const s = snapshot(f, [
+      thread({ id: "L", path, line: 4 }, { body: long }),
+      thread({ id: "R", path: "r.ts", line: 2, is_resolved: true, is_outdated: true, comments: [comment({ body: long }), reply] }),
+    ], {
+      conversation: [
+        entry,
+        { ...entry, id: "R10", state: "CHANGES_REQUESTED", body: long },
+        { ...entry, id: "R11", state: "COMMENTED" },
+        { ...entry, id: "C1", kind: "comment", state: null, author: { ...entry.author, login: "erin" }, is_minimized: true, minimized_reason: "OUTDATED" },
+      ],
+    });
+    s.threads[1]!.comments_total = 3;
     const ui = setup(f, { load: () => s });
-    const side = narrow(ui.tab).map((l) => l.slice(l.indexOf("│") + 1));
-    const at = side.findIndex((l) => l.includes("This is a fairly"));
-    assert.ok(at > 0);
-    assert.match(side[at + 1] ?? "", /\S/);
-    assert.match(side[at + 1] ?? "", /…\s*$/);
-    assert.doesNotMatch(side[at + 2] ?? "", /\S/);
-    assert.ok(side.some((l) => /….*module\/file\.ts:4/.test(l)));
+    const side = sideRows(ui.tab, 120).map((l) => l.trim());
+    assert.ok(side.every((l) => !/fairly long|Looks good|agreed/.test(l)));
+    const rowsOf = (label: RegExp): string[] => {
+      const at = side.findIndex((l) => label.test(l));
+      assert.ok(at >= 0, `missing ${label}`);
+      return side.slice(at, at + 3);
+    };
+    const [loc, sub, next] = rowsOf(/module\/file\.ts:4/);
+    assert.match(loc ?? "", /^▎?….*module\/file\.ts:4$/);
+    assert.equal(sub, "▎alice · 1 comment");
+    assert.equal(next, "r.ts:2");
+    assert.deepEqual(rowsOf(/^r\.ts:2$/).slice(0, 2), ["r.ts:2", "resolved outdated  alice · 3 comments"]);
+    assert.deepEqual(rowsOf(/^review approved$/), ["review approved", "carol · 1 comment", "review changes requested"]);
+    assert.deepEqual(rowsOf(/^review changes requested$/).slice(0, 2), ["review changes requested", "carol · 1 comment"]);
+    assert.deepEqual(rowsOf(/^review$/).slice(0, 2), ["review", "carol · 1 comment"]);
+    assert.deepEqual(rowsOf(/^PR comment$/).slice(0, 2), ["PR comment", "hidden  erin · 1 comment"]);
   } finally {
     f.cleanup();
   }
@@ -333,7 +365,7 @@ test("the sidebar scrolls to keep tall entries fully visible", () => {
     const sideOf = () => narrow(ui.tab).map((l) => l.slice(l.indexOf("│") + 1)).join("\n");
     for (let i = 0; i < 19; i++) ui.tab.handleInput("j");
     assert.match(sideOf(), /f19\.ts:1/);
-    assert.match(sideOf(), /comment 19 comment 19/);
+    assert.match(sideOf(), /▎f19\.ts:1\s*\n▎alice · 1 comment/);
     assert.doesNotMatch(sideOf(), /f0\.ts:1/);
     ui.tab.handleInput("g");
     assert.match(sideOf(), /Code threads 20/);

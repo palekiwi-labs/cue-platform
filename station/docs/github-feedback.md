@@ -58,9 +58,14 @@ written.
 - `R` fetches from GitHub and saves. While fetching the previous
   snapshot stays visible; a failed fetch keeps it and shows the error.
 - The sidebar lists code threads, then the general conversation. Each
-  entry shows its location or author, then the first comment wrapped
-  over up to two rows. `j`/`k`, arrows or `ctrl+up`/`ctrl+down`
-  select, `g`/`G` jump, scrolling keys as elsewhere.
+  entry takes two rows and shows no comment text. A thread shows its
+  file and line (long paths keep their tail), then its `resolved` /
+  `outdated` state, the first comment's author and the comment count.
+  A general entry shows its type (`PR comment`, `review`, `review
+  approved`, `review changes requested`, `review dismissed`), then
+  `hidden` when minimized, its author and the comment count.
+  `j`/`k`, arrows or `ctrl+up`/`ctrl+down` select, `g`/`G` jump,
+  scrolling keys as elsewhere.
 - `t` hides the sidebar so the detail uses the full width; `t` again
   shows it.
 - `s` picks a sort: GitHub order (default), newest activity first,
