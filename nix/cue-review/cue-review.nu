@@ -164,14 +164,16 @@ def slugify [name: string] {
   | str trim -c '-'
 }
 
-# Create the review context if missing; an existing one must keep its parent.
-def ensure-context [repo: path, slug: string, title: string, parent: any] {
+# Create the review context if missing. With strict, an existing context
+# must carry exactly the requested parent; otherwise a default parent is
+# only applied at creation and an existing context keeps its own parent.
+def ensure-context [repo: path, slug: string, title: string, parent: any, strict: bool] {
   let status = (do { ^cue status -C $repo --context $slug --json } | complete)
   if $status.exit_code == 0 {
     # cue has no reparent: refuse a parent the existing context lacks
     # rather than silently ignoring it.
     let current = ($status.stdout | from json | get -o parent)
-    if $parent != null and $parent != $current {
+    if $strict and $parent != null and $parent != $current {
       let under = if $current == null { "no parent" } else { $current }
       die $"context ($slug) exists under ($under), not ($parent); pass --context with another name"
     }
@@ -181,6 +183,19 @@ def ensure-context [repo: path, slug: string, title: string, parent: any] {
     if $created.exit_code != 0 { die $created.stderr }
     log $"created context ($slug)"
   }
+}
+
+# The standing parent for PR review contexts: `pr-reviews`, a coord
+# context in the repository's scope, created on first use.
+def default-parent [repo: path] {
+  let status = (do { ^cue status -C $repo --context pr-reviews --json } | complete)
+  if $status.exit_code == 0 { return ($status.stdout | from json | get address) }
+  let created = (do { ^cue context create pr-reviews --title "PR reviews" --kind coord -C $repo } | complete)
+  if $created.exit_code != 0 { die $created.stderr }
+  log "created context pr-reviews"
+  let again = (do { ^cue status -C $repo --context pr-reviews --json } | complete)
+  if $again.exit_code != 0 { die $again.stderr }
+  $again.stdout | from json | get address
 }
 
 # Set @<key> window options on a tmux window: the given target, else the
@@ -557,7 +572,7 @@ def sh-quote [s: string] {
 # fire a review tmux window. Detached success means accepted, not reviewed.
 # t: { kind, base_sha, head_sha, refs, context, title, window, pr? }
 def dispatch [repo: path, manifest: path, t: record, --foreground, --force] {
-  ensure-context $repo $t.context $t.title $t.parent
+  ensure-context $repo $t.context $t.title $t.parent ($t | get -o strict_parent | default false)
   if $foreground {
     exit (run-review $manifest $t.context $t.base_sha $t.head_sha $repo $t)
   }
@@ -631,7 +646,8 @@ def "main pr" [
     let base_sha = (merge-base-of $repo $"origin/($info.baseRefName)" $head_sha)
     dispatch $repo $manifest {
       kind: pr
-      parent: $resolved_parent
+      parent: (if $resolved_parent != null { $resolved_parent } else { default-parent $repo })
+      strict_parent: ($resolved_parent != null)
       pr: $pr
       subject: $"PR #($info.number)"
       base_sha: $base_sha
