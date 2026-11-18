@@ -42,6 +42,26 @@ run incomplete even if artifacts exist. No receipt does not imply an abort.
 A summary persistence failure fails the command. SIGINT/SIGKILL can leave
 only the last phase snapshot; `running` is not a liveness guarantee.
 
+## Grouped verification
+
+A manifest whose single `verifiers` entry sets `groups` (2 to 4) splits
+verification. The merger tags each candidate with a `group`; candidates
+without a valid one go to the smallest group. With at least 6 candidates
+in at least two groups, the runner writes one work list per group
+(`verify-group-<i>.json`, the merge artifact restricted to that group),
+runs one verifier per group in a single batch (`verify-part-<name>-<i>.json`),
+and collates the parts into `verifiers-<name>.json` in the usual verifier
+schema. Otherwise the entry runs ungrouped, as written.
+
+Collation keeps group order, renumbers finding ids, recomputes `summary`
+from the findings and unions `unreadable_inputs`. Verifier findings carry
+`candidate_id`; every candidate no report covers is added as an
+`unconfirmable` finding naming the verifier, and the run becomes
+`incomplete`. The verifiers phase record gains `grouping`: the merge
+artifact, the collated report, uncovered candidate ids, and each group's
+work list, report and candidate ids. Only the collated report matches
+`verifiers-*.json`.
+
 Agent findings retain stable IDs and `source_ids`
 (`<artifact address>#<finding>`). Resolve source artifact addresses
 against run entries for model attribution.
