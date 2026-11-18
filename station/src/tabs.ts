@@ -72,6 +72,7 @@ export interface NoticeOptions {
   title: string;
   subtitle: string;
   body: string[];
+  hints?: string;
   onQuit: () => void;
 }
 
@@ -92,7 +93,7 @@ export class NoticeView implements TabScreen {
     ];
     const body = ["", ...this.opts.body.map((l) => `  ${C.dim}${l}${RESET}`)];
     for (let i = 0; i < total - 3; i++) out.push(fit(body[i] ?? "", width));
-    out.push(C.barBg + fit(` ${C.text}q${C.dim} quit`, width) + RESET);
+    out.push(C.barBg + fit(` ${C.text}${this.opts.hints === undefined ? "" : `${this.opts.hints}  `}q${C.dim} quit`, width) + RESET);
     return out;
   }
 }

@@ -161,6 +161,7 @@ export interface FindingsOptions {
   run: FindingsRun;
   sources: Map<string, string | null>;
   onQuit: () => void;
+  refreshable?: boolean;
   onOpen: (file: string, line: number) => void;
 }
 
@@ -224,6 +225,14 @@ export class FindingsView implements Component {
   constructor(private readonly opts: FindingsOptions) {}
 
   invalidate(): void {}
+
+  restorePosition(previous: FindingsView): void {
+    const id = previous.current()?.id;
+    const index = this.opts.run.findings.findIndex((f) => f.id === id);
+    this.cursor = index >= 0 ? index : Math.max(0, Math.min(previous.cursor, this.count() - 1));
+    this.offset = previous.offset;
+    this.listOffset = previous.listOffset;
+  }
 
   private current(): Finding | undefined {
     return this.opts.run.findings[this.cursor];
@@ -414,7 +423,7 @@ export class FindingsView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
+    const keys = ` ${this.opts.refreshable ? k("R", "refresh") : ""}${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const pos = r.findings.length === 0 ? "" : `finding ${this.cursor + 1}/${r.findings.length} `;
     const right = `${more}${C.dim}${pos}`;
