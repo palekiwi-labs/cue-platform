@@ -17,6 +17,7 @@ import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkth
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
+import { LivePrs, sourceFeed } from "./prs-live.js";
 import { GithubClient } from "../../github-service/src/client.js";
 import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
@@ -336,36 +337,6 @@ function showPrs(repo: string): void {
   const router = new Router();
   let busy = false;
   const source = new PrsSource(repoSlug(repo).toLowerCase());
-  let revision = "";
-  let loading = false;
-  let checking = false;
-  const refresh = async (live = true): Promise<void> => {
-    if (loading) return;
-    loading = true;
-    list.setNote(live ? "refreshing through GitHub service…" : "loading snapshot…");
-    router.tui.requestRender();
-    try {
-      const data = await source.load(live);
-      revision = data.revision;
-      list.setPrs(data.prs, data.viewer);
-      list.setNote(data.note);
-    } catch (e) {
-      list.setNote(`GitHub service: ${errText(e)}`);
-    } finally {
-      loading = false;
-      router.tui.requestRender();
-    }
-  };
-  const unwatch = source.client.watch(() => {
-    if (loading || checking || !revision) return;
-    checking = true;
-    void source.load().then((data) => {
-      if (data.revision !== revision) list.setNote("new PR data available · r refresh");
-    }).catch((e) => list.setNote(`GitHub service: ${errText(e)}`)).finally(() => {
-      checking = false;
-      router.tui.requestRender();
-    });
-  });
   const toList = (): void => router.show(list);
   const chosen = new Map<string, string>();
   const open = async (pr: PrSummary): Promise<void> => {
@@ -417,7 +388,7 @@ function showPrs(repo: string): void {
   const list = new PrsView({
     repo: repoSlug(repo),
     onQuit: () => {
-      unwatch();
+      live.dispose();
       void source.client.close().finally(() => router.quit());
     },
     onOpen: (pr) => void open(pr),
@@ -433,7 +404,7 @@ function showPrs(repo: string): void {
         true,
         Object.fromEntries(LAUNCHES.map((l) => [l.key, () => void launch(pr, l.kind)])),
       ),
-    onRefresh: () => void refresh(),
+    onRefresh: () => void live.refresh(),
     onCopy: (text) => process.stdout.write(osc52(text)),
     onPickSort: (current, choose) =>
       router.showPopup(
@@ -442,9 +413,10 @@ function showPrs(repo: string): void {
         Object.fromEntries(PR_SORTS.map((s) => [s.key, () => choose(s.sort)])),
       ),
   });
+  const live = new LivePrs(list, sourceFeed(source), () => router.tui.requestRender());
   router.show(list);
   router.tui.start();
-  void refresh(false);
+  void live.start();
 }
 
 function showFindings(address: string): void {

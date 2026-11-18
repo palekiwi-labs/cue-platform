@@ -1,16 +1,35 @@
-import { GithubClient, snapshotHealth, snapshotKey } from "../../github-service/src/client.js";
+import { GithubClient, snapshotHealth } from "../../github-service/src/client.js";
+import type { RefreshOutcome } from "../../github-service/src/protocol.js";
 import type { PrSummary } from "./source.js";
+
+export interface PrsData {
+  prs: PrSummary[];
+  viewer: string;
+  storeId: string;
+  revision: number;
+  note: string;
+  healthy: boolean;
+}
 
 export class PrsSource {
   readonly client = new GithubClient();
 
   constructor(readonly repo: string) {}
 
-  async load(refresh = false): Promise<{ prs: PrSummary[]; viewer: string; revision: string; note: string; healthy: boolean }> {
-    if (refresh) await this.client.refresh(this.repo);
+  async load(refresh = false): Promise<PrsData> {
+    if (refresh) await this.refresh();
+    return this.read();
+  }
+
+  async refresh(): Promise<RefreshOutcome | undefined> {
+    return (await this.client.refresh(this.repo)).repositories[this.repo];
+  }
+
+  async read(): Promise<PrsData> {
     const data = await this.client.list(this.repo);
     const health = snapshotHealth(data);
-    const fetchedAt = data.repositories[0]?.fetchedAt;
+    const repository = data.repositories.find((r) => r.repo === this.repo) ?? data.repositories[0];
+    const fetchedAt = repository?.fetchedAt;
     return {
       prs: data.prs.map((p) => ({
         number: p.number,
@@ -26,8 +45,9 @@ export class PrsSource {
         reviewDecision: p.reviewDecision ?? "",
         requested: p.reviewers,
       })),
-      viewer: data.repositories[0]?.viewer ?? "",
-      revision: snapshotKey(data),
+      viewer: repository?.viewer ?? "",
+      storeId: data.storeId,
+      revision: repository?.revision ?? 0,
       note: health.length ? health.join("; ") : fetchedAt ? `fetched ${new Date(fetchedAt).toLocaleTimeString()}` : "not fetched yet",
       healthy: health.length === 0,
     };

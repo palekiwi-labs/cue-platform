@@ -1,6 +1,7 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { stackPrs } from "../../src/prs/stack.js";
+import { nearestSurvivor } from "./reload.js";
 import type { PrSummary } from "./source.js";
 
 export interface PrsOptions {
@@ -122,7 +123,7 @@ export class PrsView implements Component {
   private cursor = 0;
   private offset = 0;
   private lastHeight = 20;
-  private notice: { text: string; error: boolean } | null = null;
+  private notice: { text: string; error: boolean; until?: number } | null = null;
 
   constructor(opts: PrsOptions) {
     this.opts = opts;
@@ -134,10 +135,19 @@ export class PrsView implements Component {
     this.note = note;
   }
 
-  setPrs(prs: PrSummary[], me: string): void {
+  flash(text: string, ms = 4000): void {
+    this.notice = { text, error: false, until: Date.now() + ms };
+  }
+
+  /**
+   * Replaces the list keeping the selected PR and the scroll position. When
+   * the selected PR is gone its nearest surviving neighbour is selected and
+   * the gone PR is returned.
+   */
+  setPrs(prs: PrSummary[], me: string): PrSummary | undefined {
     this.me = me;
     this.loaded = true;
-    this.reorder(prs);
+    return this.reorder(prs);
   }
 
   sortBy(): PrSort {
@@ -158,12 +168,20 @@ export class PrsView implements Component {
     this.reorder(this.prs);
   }
 
-  private reorder(prs: PrSummary[]): void {
-    const selected = this.selected()?.number;
+  private reorder(prs: PrSummary[]): PrSummary | undefined {
+    const selected = this.selected();
+    const previous = this.rows;
     this.prs = prs;
     this.rows = layoutRows(prs, this.sort, this.layout);
-    const index = this.rows.findIndex((row) => row.pr.number === selected);
-    this.cursor = index >= 0 ? index : Math.min(this.cursor, Math.max(0, this.rows.length - 1));
+    const at = (row: PrRow): number => this.rows.findIndex((r) => r.pr.number === row.pr.number);
+    const index = selected === undefined ? -1 : this.rows.findIndex((row) => row.pr.number === selected.number);
+    if (index >= 0) {
+      this.cursor = index;
+      return undefined;
+    }
+    const neighbour = nearestSurvivor(previous, this.cursor, at);
+    this.cursor = neighbour >= 0 ? neighbour : Math.min(this.cursor, Math.max(0, this.rows.length - 1));
+    return selected;
   }
 
   selected(): PrSummary | undefined {
@@ -247,6 +265,7 @@ export class PrsView implements Component {
       case "\x1b[5~":
         this.move(this.cursor - Math.floor(this.lastHeight / 2));
         return;
+      case "R":
       case "r":
         this.opts.onRefresh();
         return;
@@ -301,10 +320,11 @@ export class PrsView implements Component {
     while (body.length < bodyH) body.push("");
     out.push(...body);
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}c${C.dim} checkout  ${C.text}L${C.dim} launch  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}r${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}c${C.dim} checkout  ${C.text}L${C.dim} launch  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}R${C.dim} refresh  ${C.text}q${C.dim} quit`;
     const pos = `${this.layout === "tree" ? "tree  " : ""}sort: ${sortLabel(this.sort)}  ` +
       (this.rows.length > 0 ? `${this.cursor + 1}/${this.rows.length} ` : "");
     const room = Math.max(1, width - pos.length - 2);
+    if (this.notice?.until !== undefined && this.notice.until <= now) this.notice = null;
     const left = this.notice === null
       ? keys
       : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, room, "…");
