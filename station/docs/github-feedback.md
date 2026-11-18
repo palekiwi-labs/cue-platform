@@ -74,7 +74,9 @@ written.
   the newest and unresolved sorts and oldest first otherwise. The sort,
   the selection and the sidebar state are kept across `R`.
 - `y` copies the GitHub link of the selected thread (its first comment)
-  or general comment to the clipboard (OSC 52, as elsewhere in station).
+  or general comment to the clipboard (OSC 52, as elsewhere in station)
+  and reports `link copied`. Links are kept in the snapshot but not
+  shown in the tab.
 - The detail shows the thread location, resolved and outdated state,
   the captured diff (commented lines marked) and every comment with
   author and time. The diff side is not shown; it is only used to open

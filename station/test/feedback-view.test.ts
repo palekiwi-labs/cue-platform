@@ -235,14 +235,18 @@ test("y copies the selected thread or comment link and reports failures", () => 
     ui.host.onCopy = (t) => void copied.push(t);
     ui.tab.handleInput("y");
     assert.deepEqual(copied, ["https://github.com/org/repo/pull/7#discussion_r1"]);
-    assert.match(text(ui.tab), /copied https:\/\/github\.com\/org\/repo\/pull\/7#discussion_r1/);
+    assert.match(text(ui.tab), /link copied/);
+    assert.doesNotMatch(text(ui.tab), /https?:\/\//);
     ui.tab.handleInput("j");
     assert.doesNotMatch(text(ui.tab), /copied/);
     ui.tab.handleInput("y");
     assert.match(text(ui.tab), /copy failed: no GitHub link for this item/);
     ui.tab.handleInput("G");
+    assert.doesNotMatch(text(ui.tab), /https?:\/\//);
     ui.tab.handleInput("y");
     assert.equal(copied.at(-1), entry.url);
+    assert.match(text(ui.tab), /link copied/);
+    assert.doesNotMatch(text(ui.tab), /https?:\/\//);
 
     ui.host.onCopy = () => {
       throw new Error("terminal refused");

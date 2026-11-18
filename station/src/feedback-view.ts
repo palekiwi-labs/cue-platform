@@ -205,7 +205,7 @@ export class FeedbackView implements Component {
     }
     try {
       this.opts.onCopy(url);
-      this.notice = { text: `copied ${url}`, error: false };
+      this.notice = { text: "link copied", error: false };
     } catch (e) {
       this.notice = { text: `copy failed: ${e instanceof Error ? e.message : String(e)}`, error: true };
     }
@@ -331,8 +331,6 @@ export class FeedbackView implements Component {
       out.push(...this.body(c.body, w));
       out.push("");
     });
-    const url = t.comments[0]?.url;
-    if (url != null) out.push(`${C.faint}${url}`);
     return out;
   }
 
@@ -349,7 +347,6 @@ export class FeedbackView implements Component {
     out.push("");
     out.push(...this.body(e.body, w));
     out.push("");
-    if (e.url !== null) out.push(`${C.faint}${e.url}`);
     return out;
   }
 
