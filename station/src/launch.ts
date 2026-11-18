@@ -1,4 +1,5 @@
 import { spawnAsync } from "./git.js";
+import { contextAddress } from "./round.js";
 import { preparerRun, submitToSupervisor } from "./prepare.js";
 import { resolvePr } from "./source.js";
 
@@ -17,10 +18,11 @@ export function reviewArgs(repo: string, number: number): string[] {
   return ["pr", String(number), "--manifest", "default", "-C", repo];
 }
 
-export async function launchReview(repo: string, number: number): Promise<string> {
+export async function launchReview(repo: string, number: number): Promise<{ text: string; address: string | null }> {
   const out = await spawnAsync("cue-review", reviewArgs(repo, number), repo);
   const last = out.trim().split("\n").filter(Boolean).pop() ?? "";
-  return `review of #${number} started in review-pr-${number}${last ? `\n${last}` : ""}`;
+  const address = await contextAddress(repo, `review-pr-${number}`);
+  return { text: `review of #${number} started in review-pr-${number}${last ? `\n${last}` : ""}`, address };
 }
 
 export async function launchWalkthrough(repo: string, number: number, station: string[]): Promise<string> {

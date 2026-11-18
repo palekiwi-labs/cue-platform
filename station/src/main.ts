@@ -387,8 +387,22 @@ function showPrs(repo: string): void {
     router.showPopup({ title, text: `launching ${kind} for ${pr.title}…`, footer: "ctrl+c quit" });
     try {
       const station = [process.execPath, process.argv[1] ?? "station"];
-      const text = kind === "review" ? await launchReview(repo, pr.number) : await launchWalkthrough(repo, pr.number, station);
-      router.showPopup({ title, text, footer: "any key" }, true);
+      if (kind === "review") {
+        const r = await launchReview(repo, pr.number);
+        if (r.address !== null) {
+          const address = r.address;
+          router.showPopup(
+            { title, text: r.text, footer: "y copy  any key close" },
+            true,
+            { y: () => process.stdout.write(osc52(address)) },
+          );
+        } else {
+          router.showPopup({ title, text: r.text, footer: "any key" }, true);
+        }
+      } else {
+        const text = await launchWalkthrough(repo, pr.number, station);
+        router.showPopup({ title, text, footer: "any key" }, true);
+      }
     } catch (e) {
       router.showPopup({ title, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
