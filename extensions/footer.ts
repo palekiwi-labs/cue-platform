@@ -11,7 +11,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { scopeOf, scopeOfRemote } from "../src/pi/browser/sessions";
 import { currentContext } from "../src/pi/lib/current-context";
 import { activeStyle, DEFAULT_STYLE } from "../src/pi/response-style";
-import { speechMarker } from "../src/pi/speech/footer";
+import { speechActive } from "../src/pi/speech/footer";
 import { SPEECH_STATUS_KEY } from "../src/pi/speech/settings";
 import type {
   ExtensionAPI,
@@ -172,7 +172,10 @@ export default function (pi: ExtensionAPI) {
           const address = currentContext(ctx.sessionManager.getBranch());
           const repo = address ? cwdScope(cwd) : undefined;
           const drifted = repo !== undefined && repo !== scopeOf(address!);
-          const left1 = (drifted ? theme.fg("error", pwd) : dim(pwd)) + dim(nameSuffix);
+          const speaking = speechActive(statuses.get(SPEECH_STATUS_KEY));
+          const left1 =
+            (drifted ? theme.fg("error", pwd) : dim(pwd)) +
+            (speaking && nameSuffix ? theme.fg("warning", nameSuffix) : dim(nameSuffix));
           // Marker sits in front of the (provider) model part.
           const pre = mcp ? `${mcp} ` : "";
           const right1 = pre + dim(withProvider);
@@ -210,11 +213,9 @@ export default function (pi: ExtensionAPI) {
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([k, t]) => styleStatus(k, sanitizeStatusText(t), theme));
           const right = statuses.get(RIGHT_STATUS_KEY) ?? "";
-          const speech = speechMarker(statuses.get(SPEECH_STATUS_KEY), theme);
 
           const build = (withCost: boolean) =>
             [
-              speech,
               tokenParts.length ? dim(tokenParts.join(" ")) : "",
               withCost && cost ? dim(cost) : "",
               ctxStr,

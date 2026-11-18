@@ -1,18 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { speechMarker } from "./footer"
+import { speechActive } from "./footer"
 
-describe("speech footer marker", () => {
-  const theme = { fg: (color: string, text: string) => `<${color}>${text}`, bold: (text: string) => `*${text}*` }
-
-  test("is bold and coloured while live", () => {
-    expect(speechMarker("speech: live", theme)).toBe("*<warning>speech: live*")
+describe("speech footer state", () => {
+  test("is active while live", () => {
+    expect(speechActive("speech: live")).toBe(true)
   })
 
-  test("is empty while speech is off", () => {
-    expect(speechMarker(undefined, theme)).toBe("")
-    expect(speechMarker("", theme)).toBe("")
-    expect(speechMarker("speech: off", theme)).toBe("")
-    expect(speechMarker("speech: message", theme)).toBe("")
-    expect(speechMarker("speech: shout", theme)).toBe("")
+  test("is inactive while speech is off or unknown", () => {
+    expect(speechActive(undefined)).toBe(false)
+    expect(speechActive("")).toBe(false)
+    expect(speechActive("speech: off")).toBe(false)
+    expect(speechActive("speech: message")).toBe(false)
   })
 })
