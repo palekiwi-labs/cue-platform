@@ -16,8 +16,9 @@
 # SIGINT before it can report). Progress on stderr, summary on stdout.
 
 const PHASES = [reviewers merge verifiers]
-const ENTRY_FIELDS = [name agent prompt model thinking system_prompt]
+const ENTRY_FIELDS = [name agent prompt model thinking system_prompt groups]
 const MAX_ENTRIES = 4
+const MIN_GROUPED_CANDIDATES = 6
 const DEFAULT_MANIFEST = "default"
 
 # Manifests are global only: <config>/cue/review/<name>.json, prompts
@@ -109,7 +110,16 @@ def load-manifest [file: path] {
         if ($e | get -o $k) == null { die $"manifest: ($at): missing ($k)" }
       }
       if ($e.name !~ '^[a-z0-9-]+$') { die $"manifest: ($at): name must match [a-z0-9-]+" }
+      let groups = ($e | get -o groups)
+      if $groups != null {
+        if $phase != "verifiers" { die $"manifest: ($at): groups is only valid on verifiers" }
+        if $n != 1 { die $"manifest: ($at): groups requires exactly one verifiers entry" }
+        if ($groups | describe) != "int" or $groups < 2 or $groups > $MAX_ENTRIES {
+          die $"manifest: ($at): groups must be an integer from 2 to ($MAX_ENTRIES)"
+        }
+      }
       {
+        groups: $groups
         name: $e.name
         agent: $e.agent
         prompt: (resolve-text $e.prompt $dir $"($at).prompt")
@@ -219,7 +229,7 @@ def running-for [context: string] {
   }
 }
 
-def input-block [ctx: record, phase: string, name: string, inputs: list<string>] {
+def input-block [ctx: record, phase: string, name: string, inputs: list<string>, file: string] {
   let input_lines = if ($inputs | is-empty) { ["inputs: []"] } else {
     ["inputs:"] ++ ($inputs | each {|p| $"  - ($p)" })
   }
@@ -238,13 +248,19 @@ def input-block [ctx: record, phase: string, name: string, inputs: list<string>]
     "output:"
     "  tool: cue-review"
     $"  context: ($ctx.slug)"
-    $"  filename: runs/($ctx.run_id)/($phase)-($name).json"
+    $"  filename: runs/($ctx.run_id)/($file).json"
     "</review-run>"
   ] | str join "\n"
 }
 
-def artifact-address [ctx: record, phase: string, name: string] {
-  $"($ctx.address)/review/runs/($ctx.run_id)/($phase)-($name).json"
+def artifact-address [ctx: record, file: string] {
+  $"($ctx.address)/review/runs/($ctx.run_id)/($file).json"
+}
+
+# Output stem of an entry: its own `file` when the engine set one, else
+# <phase>-<name>.
+def entry-file [phase: string, e: record] {
+  $e | get -o file | default $"($phase)-($e.name)"
 }
 
 # Keep receipt metrics, not response text or container-local logs. `model`
@@ -321,7 +337,9 @@ def save-run-record [path: path, record: record] {
 # Run one phase through cue-agent, returning artifacts and durable entry data.
 def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] {
   let tasks = ($entries | each {|e|
-    let prompt = $"($e.prompt | str trim --right)\n\n(input-block $ctx $phase $e.name $inputs)\n"
+    let ins = ($e | get -o inputs | default $inputs)
+    let block = (input-block $ctx $phase $e.name $ins (entry-file $phase $e))
+    let prompt = $"($e.prompt | str trim --right)\n\n($block)\n"
     mut t = {
       agent: $e.agent
       prompt: $prompt
@@ -383,7 +401,7 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
   let results = ($entries | enumerate | each {|it|
     let candidate = ($runs | get -o $it.index)
     let run = if ($candidate | describe | str starts-with "record") { $candidate } else { null }
-    let path = (artifact-address $ctx $phase $it.item.name)
+    let path = (artifact-address $ctx (entry-file $phase $it.item))
     let ok = ([$ctx.store $path] | path join | path exists)
     let outcome = ($run | get -o outcome | default "unknown")
     let secs = (($run | get -o duration_ms | default 0) / 1000 | math round)
@@ -400,7 +418,7 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
         name: $it.item.name
         agent: $it.item.agent
         requested_model: $it.item.model
-        inputs: $inputs
+        inputs: ($it.item | get -o inputs | default $inputs)
         artifact: $path
         artifact_present: $ok
         receipt_status: (if $run == null { "missing" } else { "available" })
@@ -427,6 +445,198 @@ def run-phase [ctx: record, phase: string, entries: list, inputs: list<string>] 
       harness_version: ($receipt | get -o harness_version)
       entries: ($results | get entry)
     }
+  }
+}
+
+def is-list [v: any] {
+  let d = ($v | describe)
+  ($d | str starts-with "list") or ($d | str starts-with "table")
+}
+
+def read-artifact [ctx: record, address: string] {
+  try { open --raw ([$ctx.store $address] | path join) | from json } catch { null }
+}
+
+# Write a review artifact into this run's directory; returns its address.
+def save-artifact [ctx: record, file: string, doc: record] {
+  let tmp = (mktemp -t cue-review-artifact.XXXXXX.json)
+  $doc | to json | save -f $tmp
+  let r = (do { ^cue add -C $ctx.repo --type review --context $ctx.slug --file $tmp $"runs/($ctx.run_id)/($file).json" } | complete)
+  rm -f $tmp
+  if $r.exit_code != 0 {
+    log $"cannot save ($file): ($r.stderr | str trim)"
+    return null
+  }
+  artifact-address $ctx $file
+}
+
+# Split candidates into n groups by their merger-assigned `group`;
+# candidates without a valid group go, one by one, to the smallest group.
+def partition-candidates [candidates: list, n: int] {
+  let valid = {|c|
+    let g = ($c | get -o group)
+    ($g | describe) == "int" and $g >= 1 and $g <= $n
+  }
+  mut groups = (1..$n | each {|g| $candidates | where {|c| (do $valid $c) and $c.group == $g } })
+  for c in ($candidates | where {|c| not (do $valid $c) }) {
+    let smallest = ($groups | enumerate | sort-by {|it| $it.item | length } | first | get index)
+    $groups = ($groups | enumerate | each {|it|
+      if $it.index == $smallest { $it.item | append $c } else { $it.item }
+    })
+  }
+  $groups
+}
+
+def uncovered-finding [c: record, reason: string] {
+  {
+    id: null
+    candidate_id: ($c | get -o id)
+    source_ids: ($c | get -o source_ids | default [])
+    title: ($c | get -o title)
+    category: ($c | get -o category)
+    severity: ($c | get -o severity)
+    confidence: ($c | get -o confidence)
+    status: "open"
+    file: ($c | get -o file)
+    line_start: ($c | get -o line_start)
+    line_end: ($c | get -o line_end)
+    snippet: ($c | get -o snippet)
+    message: ($c | get -o message)
+    suggested_fix: ($c | get -o suggested_fix)
+    verification: { verdict: "unconfirmable", reasoning: $"Not verified: ($reason)." }
+    dismiss_reason: null
+  }
+}
+
+# Join per-group verifier reports into one report in the verifier schema.
+# Findings keep group order and are renumbered; the summary is recomputed
+# from them; every candidate the reports do not cover is added as
+# unconfirmable so it is never silently dropped.
+def collate-verifiers [ctx: record, parts: list, total: int] {
+  mut findings = []
+  mut unreadable = []
+  mut uncovered = []
+  for p in $parts {
+    let doc = (read-artifact $ctx $p.part)
+    let ok = ($doc | describe | str starts-with "record")
+    let fs = if $ok and (is-list ($doc | get -o findings)) { $doc.findings } else { [] }
+    if $ok {
+      let u = ($doc | get -o analysis | default {} | get -o unreadable_inputs | default [])
+      if (is-list $u) { $unreadable = ($unreadable ++ $u) }
+    }
+    $findings = ($findings ++ $fs)
+    let covered = ($fs | each {|f| $f | get -o candidate_id } | compact)
+    let reason = if $ok {
+      $"verifier `($p.name)` returned no finding for this candidate"
+    } else {
+      $"verifier `($p.name)` produced no report"
+    }
+    for c in $p.candidates {
+      if ($c | get -o id) not-in $covered {
+        $findings = ($findings | append (uncovered-finding $c $reason))
+        $uncovered = ($uncovered | append ($c | get -o id))
+      }
+    }
+  }
+  let findings = ($findings | enumerate | each {|it| $it.item | upsert id $"finding-($it.index + 1)" })
+  let verdict = {|v| $findings | where {|f| ($f | get -o verification | default {} | get -o verdict) == $v } | length }
+  let open = ($findings | where {|f| ($f | get -o status) == "open" })
+  let sev = {|s| $open | where {|f| ($f | get -o severity) == $s } | length }
+  {
+    doc: {
+      analysis: { unreadable_inputs: ($unreadable | uniq) }
+      summary: {
+        total_candidates: $total
+        verified: (do $verdict verified)
+        refuted: (do $verdict refuted)
+        unconfirmable: (do $verdict unconfirmable)
+        by_severity: {
+          critical: (do $sev critical), high: (do $sev high)
+          medium: (do $sev medium), low: (do $sev low)
+        }
+      }
+      findings: $findings
+    }
+    uncovered: $uncovered
+  }
+}
+
+# The verifiers phase. A single entry with `groups` fans out: the merge
+# candidates are split by group, one verifier runs per group in one batch,
+# and the partial reports are collated into verifiers-<name>.json. Any
+# other shape, or too few candidates, runs the phase as written.
+def run-verifiers [ctx: record, entries: list, inputs: list<string>] {
+  let e = ($entries | first)
+  let n = ($e | get -o groups)
+  if $n == null { return (run-phase $ctx verifiers $entries $inputs) }
+  let merges = ($inputs | where {|a| ($a | path basename) =~ '^merge-.+\.json$' })
+  if ($merges | length) != 1 {
+    log "verifiers: grouping needs exactly one merge artifact; running ungrouped"
+    return (run-phase $ctx verifiers $entries $inputs)
+  }
+  let merge_addr = ($merges | first)
+  let merge = (read-artifact $ctx $merge_addr)
+  let candidates = ($merge | get -o candidates)
+  if not (is-list $candidates) {
+    log "verifiers: merge artifact has no candidates list; running ungrouped"
+    return (run-phase $ctx verifiers $entries $inputs)
+  }
+  if ($candidates | length) < $MIN_GROUPED_CANDIDATES {
+    log $"verifiers: ($candidates | length) candidates, below ($MIN_GROUPED_CANDIDATES); running ungrouped"
+    return (run-phase $ctx verifiers $entries $inputs)
+  }
+  let groups = (partition-candidates $candidates $n | where {|g| $g | is-not-empty })
+  if ($groups | length) < 2 {
+    log "verifiers: candidates fall in one group; running ungrouped"
+    return (run-phase $ctx verifiers $entries $inputs)
+  }
+
+  let others = ($inputs | where {|a| $a != $merge_addr })
+  mut parts = []
+  for g in ($groups | enumerate) {
+    let i = $g.index + 1
+    let doc = ($merge | upsert candidates $g.item | upsert group { index: $i, of: ($groups | length), source: $merge_addr })
+    let addr = (save-artifact $ctx $"verify-group-($i)" $doc)
+    if $addr == null {
+      log "verifiers: cannot write group work lists; running ungrouped"
+      return (run-phase $ctx verifiers $entries $inputs)
+    }
+    $parts = ($parts | append {
+      name: $"($e.name)-($i)"
+      group: $addr
+      file: $"verify-part-($e.name)-($i)"
+      candidates: $g.item
+    })
+  }
+  let tasks = ($parts | each {|p|
+    $e | reject groups | merge { name: $p.name, file: $p.file, inputs: ($others | append $p.group) }
+  })
+  log $"verifiers: ($candidates | length) candidates in groups of ($parts | each {|p| $p.candidates | length } | str join '/')"
+  let r = (run-phase $ctx verifiers $tasks $inputs)
+  if $r.interrupted or ($r.produced | is-empty) { return $r }
+
+  let parts = ($parts | each {|p| $p | insert part (artifact-address $ctx $p.file) })
+  let c = (collate-verifiers $ctx $parts ($candidates | length))
+  let final = (save-artifact $ctx $"verifiers-($e.name)" $c.doc)
+  if ($c.uncovered | is-not-empty) {
+    log $"verifiers: ($c.uncovered | length) candidate\(s\) not verified, recorded as unconfirmable: ($c.uncovered | str join ', ')"
+  }
+  let grouping = {
+    merge: $merge_addr
+    collated: $final
+    uncovered: $c.uncovered
+    groups: ($parts | each {|p| {
+      name: $p.name, work_list: $p.group, report: $p.part
+      candidates: ($p.candidates | each {|x| $x | get -o id })
+    } })
+  }
+  {
+    produced: (if $final == null { [] } else { [$final] })
+    missing: ($r.missing + (if $final == null { 1 } else { 0 }))
+    interrupted: false
+    receipt_missing: $r.receipt_missing
+    incomplete: ($c.uncovered | is-not-empty)
+    provenance: ($r.provenance | insert grouping $grouping)
   }
 }
 
@@ -512,6 +722,7 @@ def run-review [
   mut summary = []
   mut missing = 0
   mut receipt_missing = false
+  mut uncovered = false
   for phase in $PHASES {
     let entries = ($m | get $phase)
     if ($entries | is-empty) {
@@ -520,8 +731,13 @@ def run-review [
       })
       continue
     }
-    let r = (run-phase $ctx $phase $entries $inputs)
+    let r = if $phase == "verifiers" {
+      run-verifiers $ctx $entries $inputs
+    } else {
+      run-phase $ctx $phase $entries $inputs
+    }
     $receipt_missing = ($receipt_missing or $r.receipt_missing)
+    $uncovered = ($uncovered or ($r | get -o incomplete | default false))
     $record.phases = ($record.phases | each {|p|
       if $p.phase == $phase { $r.provenance } else { $p }
     })
@@ -547,10 +763,11 @@ def run-review [
     $inputs = ($inputs ++ $r.produced)
   }
 
-  $record.state = (if $missing > 0 or $receipt_missing { "incomplete" } else { "completed" })
+  let incomplete = ($missing > 0 or $receipt_missing or $uncovered)
+  $record.state = (if $incomplete { "incomplete" } else { "completed" })
   save-run-record $record_path $record
   print-summary $ctx $summary
-  return (if $missing > 0 or $receipt_missing { 1 } else { 0 })
+  return (if $incomplete { 1 } else { 0 })
 }
 
 # The lineage a run records: what was asked for, not how it was dispatched.
