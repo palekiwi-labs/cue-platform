@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type ActivityFilters, DETACHED, type GitEvent, groupActivity, parseEvent, repoLabel } from "../src/activity.js";
 
-const all: ActivityFilters = { repo: null, hideCheckouts: false, hideTmp: false, agentsOnly: false };
+const all: ActivityFilters = { repo: null, hideCheckouts: false, agentsOnly: false };
 
 let n = 0;
 function ev(over: Partial<GitEvent>): GitEvent {
@@ -52,7 +52,7 @@ test("groupActivity groups by repo and branch, newest first, with counts", () =>
   assert.deepEqual(dev.events.map((e) => e.hook), ["post-rewrite", "post-commit"]);
 });
 
-test("filters apply scope, checkouts, tmp repos and agents", () => {
+test("tmp repos are always dropped; filters apply scope, checkouts and agents", () => {
   const tmp = { common_dir: "/tmp/t/.git" };
   const events = [
     ev({ actor: { pi_session: "s1" } }),
@@ -60,8 +60,8 @@ test("filters apply scope, checkouts, tmp repos and agents", () => {
     ev({ repo: tmp, branch: "master" }),
   ];
   const branches = (f: Partial<ActivityFilters>): string[] => groupActivity(events, { ...all, ...f }).map((g) => g.branch);
-  assert.deepEqual(branches({ repo: "/tmp/t/.git" }), ["master"]);
-  assert.deepEqual(branches({ hideCheckouts: true }), ["master", "dev"]);
-  assert.deepEqual(branches({ hideTmp: true }), ["side", "dev"]);
+  assert.deepEqual(branches({ repo: "/tmp/t/.git" }), []);
+  assert.deepEqual(branches({ hideCheckouts: true }), ["dev"]);
+  assert.deepEqual(branches({}), ["side", "dev"]);
   assert.deepEqual(branches({ agentsOnly: true }), ["dev"]);
 });

@@ -37,7 +37,6 @@ export interface ActivityFilters {
   /** Common git dir of the repo to keep; null keeps all repos. */
   repo: string | null;
   hideCheckouts: boolean;
-  hideTmp: boolean;
   agentsOnly: boolean;
 }
 
@@ -88,7 +87,7 @@ export function isTmp(e: GitEvent): boolean {
 export function keep(e: GitEvent, f: ActivityFilters): boolean {
   if (f.repo !== null && e.repo.common_dir !== f.repo) return false;
   if (f.hideCheckouts && e.hook === "post-checkout") return false;
-  if (f.hideTmp && isTmp(e)) return false;
+  if (isTmp(e)) return false;
   if (f.agentsOnly && !isAgent(e)) return false;
   return true;
 }
