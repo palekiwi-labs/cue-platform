@@ -50,7 +50,7 @@ interface Producer<E extends { address: string }> {
   folder: string;
   list(): E[];
   pickerText(entries: E[]): string;
-  view(address: string, open: (head: string, file: string, line: number, base?: string) => void): TabScreen;
+  view(address: string, open: (head: string, file: string, line: number, base?: string) => void, previous?: TabScreen): TabScreen;
 }
 
 /**
@@ -61,17 +61,32 @@ interface Producer<E extends { address: string }> {
 class ProducerTab<E extends { address: string }> implements TabScreen {
   private inner: TabScreen;
   private loaded = false;
+  private address: string | undefined;
 
   constructor(
     private readonly host: PrTabHost,
     private readonly producer: Producer<E>,
   ) {
     this.inner = this.notice([]);
-    const entries = producer.list();
-    const remembered = host.chosen.get(this.key);
-    if (remembered !== undefined && entries.some((e) => e.address === remembered)) this.load(remembered);
-    else if (entries.length === 1) this.load(entries[0]!.address);
-    else this.pick(entries);
+    this.discover();
+  }
+
+  private discover(): void {
+    try {
+      const entries = this.producer.list();
+      const remembered = this.host.chosen.get(this.key);
+      if (remembered !== undefined && entries.some((e) => e.address === remembered)) this.load(remembered);
+      else if (entries.length === 1) this.load(entries[0]!.address);
+      else this.pick(entries);
+    } catch (e) {
+      this.failure(e);
+    }
+  }
+
+  private failure(e: unknown): void {
+    const text = e instanceof Error ? e.message : String(e);
+    if (!this.loaded) this.inner = this.notice([text, "", "P pick one"]);
+    this.host.showPopup({ title: "reload", text, error: true, footer: "any key" }, true);
   }
 
   private get key(): string {
@@ -84,6 +99,7 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
       subtitle: prContext(this.host.repoSlug, this.host.pr),
       body,
       onQuit: this.host.onQuit,
+      hints: "P pick  R refresh",
     });
   }
 
@@ -100,13 +116,16 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
     this.host.showPopup({ title: this.producer.name, text: this.producer.pickerText(entries), footer: "any other key cancel" }, true, keys);
   }
 
-  private load(address: string): void {
+  private load(address: string, refresh = false): void {
+    if (!this.loaded) this.address = address;
     try {
-      this.inner = this.producer.view(address, (head, file, line, base) => void this.open(head, file, line, base));
+      const next = this.producer.view(address, (head, file, line, base) => void this.open(head, file, line, base), refresh ? this.inner : undefined);
+      this.inner = next;
+      this.address = address;
       this.loaded = true;
       this.host.chosen.set(this.key, address);
     } catch (e) {
-      this.inner = this.notice([e instanceof Error ? e.message : String(e), "", "P pick one"]);
+      this.failure(e);
     }
   }
 
@@ -124,8 +143,16 @@ class ProducerTab<E extends { address: string }> implements TabScreen {
   }
 
   handleInput(data: string): void {
-    if (data === "P") this.pick();
-    else this.inner.handleInput(data);
+    if (data === "R") {
+      if (this.address === undefined) this.discover();
+      else this.load(this.address, true);
+    } else if (data === "P") {
+      try {
+        this.pick();
+      } catch (e) {
+        this.failure(e);
+      }
+    } else this.inner.handleInput(data);
   }
 
   handleEscape(): boolean {
@@ -147,16 +174,19 @@ export function findingsTab(host: PrTabHost): TabScreen {
     folder: "runs",
     list: () => listRuns(host.repoSlug, host.pr),
     pickerText: runPickerText,
-    view: (address, open) => {
+    view: (address, open, previous) => {
       const run = loadRun(address);
       requireHead(host.repo, run.head);
       const files = run.findings.flatMap((f) => (f.file === null ? [] : [f.file]));
-      return new FindingsView({
+      const view = new FindingsView({
         run,
         sources: loadSources(host.repo, run.head, files),
         onQuit: host.onQuit,
         onOpen: (file, line) => open(run.head, file, line, run.base),
+        refreshable: true,
       });
+      if (previous instanceof FindingsView) view.restorePosition(previous);
+      return view;
     },
   });
 }
@@ -178,19 +208,23 @@ export function walkthroughTab(host: PrTabHost): TabScreen {
     folder: "walkthrough",
     list: () => listWalkthroughs(host.repoSlug, host.pr),
     pickerText: walkthroughPickerText,
-    view: (address, open) => {
+    view: (address, open, previous) => {
       const walkthrough = loadWalkthrough(address);
       requireHead(host.repo, walkthrough.head);
-      host.walkthroughDrafts?.use(walkthrough);
-      return new WalkthroughView({
+      const sources = loadWalkthroughSources(host.repo, walkthrough);
+      const view = new WalkthroughView({
         walkthrough,
-        sources: loadWalkthroughSources(host.repo, walkthrough),
+        sources,
         subtitle: prContext(host.repoSlug, host.pr),
         onQuit: host.onQuit,
         onOpen: (rev, file, line) => open(rev, file, line, walkthrough.base),
         drafts: host.walkthroughDrafts,
         comments: host.drafts,
+        refreshable: true,
       });
+      if (previous instanceof WalkthroughView) view.restorePosition(previous);
+      host.walkthroughDrafts?.use(walkthrough);
+      return view;
     },
   });
 }
