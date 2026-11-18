@@ -401,3 +401,34 @@ test("the navigator lists walkthrough drafts under their own group", () => {
   assert.match(screen(v), /Comments 1/);
   assert.doesNotMatch(screen(v), /Walkthrough 1/);
 });
+
+test("moving down scrolls minimally instead of jumping the chunk to the top", () => {
+  const hunks: string[] = [];
+  for (let i = 0; i < 30; i++) hunks.push(`@@ -${i * 10 + 1},2 +${i * 10 + 1},2 @@`, " ctx", `-old${i}`, `+new${i}`);
+  const big = ["diff --git a/z.ts b/z.ts", "index 1111111..2222222 100644", "--- a/z.ts", "+++ b/z.ts", ...hunks].join("\n");
+  const packet = buildPacketFromDiff(big, {
+    repoPath: "/tmp/r", branch: "b", baseSha: "a".repeat(40), headSha: "b".repeat(40), subject: "s", now: 0,
+  });
+  const v = new ChangesView({
+    title: "t", subtitle: "sub", packet, folds: emptyFolds(), comments: emptyComments(), headMatches: true,
+    onQuit: () => {}, onFolds: () => {}, onComments: () => {}, onCompose: (_r, done) => done(null),
+    onOpen: () => {}, drafts: new Drafts((_rc, done) => done(true)), onCopy: () => {},
+  });
+  const offset = (): number => (v as unknown as { offset: number }).offset;
+  v.render(100);
+  let prev = offset();
+  for (let i = 0; i < 29; i++) {
+    v.handleInput("j");
+    v.render(100);
+    assert.ok(offset() >= prev && offset() - prev <= 5, `step ${i}: ${prev} -> ${offset()}`);
+    assert.match(v.render(100).map(stripTerminalSequences).join("\n"), new RegExp(`\\+ new${i + 1}\\b`));
+    prev = offset();
+  }
+  for (let i = 0; i < 29; i++) {
+    v.handleInput("k");
+    v.render(100);
+    assert.ok(offset() <= prev && prev - offset() <= 5, `up ${i}: ${prev} -> ${offset()}`);
+    prev = offset();
+  }
+  assert.equal(offset(), 0);
+});
