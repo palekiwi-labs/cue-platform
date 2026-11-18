@@ -27,6 +27,7 @@ export interface PrTabHost {
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
   walkthroughDrafts?: WalkthroughDrafts;
   drafts?: Drafts;
+  requestRender?: () => void;
 }
 
 export type FindingsTabHost = PrTabHost;

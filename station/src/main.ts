@@ -26,6 +26,7 @@ import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from
 import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
 import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { WalkthroughDrafts } from "./walkthrough-comments.js";
+import { githubTab } from "./feedback-view.js";
 import { feedbackCommand, ghGraphql } from "./github-feedback.js";
 import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
@@ -263,11 +264,13 @@ function prTabs(
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
     walkthroughDrafts,
     drafts,
+    requestRender: () => router.tui.requestRender(),
   };
   return new TabsScreen([
     { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, drafts) },
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
+    { label: "github", screen: () => githubTab(host) },
   ]);
 }
 
