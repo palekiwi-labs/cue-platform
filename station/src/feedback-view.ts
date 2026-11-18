@@ -31,6 +31,8 @@ export const FEEDBACK_SORTS: readonly { sort: FeedbackSort; key: string; label: 
   { sort: "file", key: "f", label: "file and line (comments oldest first)", short: "file" },
 ];
 
+export const DEFAULT_FEEDBACK_SORT: FeedbackSort = "unresolved";
+
 export function feedbackSortPickerText(current: FeedbackSort): string {
   return FEEDBACK_SORTS.map((s) => `${s.sort === current ? `${C.accent}●` : " "} ${C.text}${s.key}${C.dim}  ${s.label}`).join("\n");
 }
@@ -70,7 +72,7 @@ function sortConversation(entries: readonly ConversationEntry[], sort: FeedbackS
   return out;
 }
 
-export function feedbackItems(s: FeedbackSnapshot, sort: FeedbackSort = "github"): FeedbackItem[] {
+export function feedbackItems(s: FeedbackSnapshot, sort: FeedbackSort = DEFAULT_FEEDBACK_SORT): FeedbackItem[] {
   return [
     ...sortThreads(s.threads, sort).map((thread) => ({ kind: "thread" as const, thread })),
     ...sortConversation(s.conversation, sort).map((entry) => ({ kind: "entry" as const, entry })),
@@ -141,7 +143,7 @@ export class FeedbackView implements Component {
   private listOffset = 0;
   private lastHeight = 20;
   private items: FeedbackItem[];
-  private sort: FeedbackSort = "github";
+  private sort: FeedbackSort = DEFAULT_FEEDBACK_SORT;
   private sidebar = true;
   private notice: { text: string; error: boolean } | null = null;
   note = "";

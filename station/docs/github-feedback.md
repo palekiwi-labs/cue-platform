@@ -68,8 +68,8 @@ written.
   scrolling keys as elsewhere.
 - `t` hides the sidebar so the detail uses the full width; `t` again
   shows it.
-- `s` picks a sort: GitHub order (default), newest activity first,
-  unresolved threads first (then newest), or file and line. General
+- `s` picks a sort: unresolved threads first, then newest (default),
+  GitHub order, newest activity first, or file and line. General
   comments have no resolved state: they are listed newest first under
   the newest and unresolved sorts and oldest first otherwise. The sort,
   the selection and the sidebar state are kept across `R`.

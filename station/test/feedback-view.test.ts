@@ -80,10 +80,10 @@ test("entering the tab never fetches; R fetches, saves and shows threads and con
     assert.match(out, /Code threads 3/);
     assert.match(out, /Conversation 1/);
     assert.match(out, /a\.ts:7/);
-    assert.match(out, /resolved by bob/);
+    assert.match(out, /state unresolved/);
     assert.match(out, /Captured diff/);
-    assert.match(out, /\+changed5/);
-    assert.match(out, /rename this/);
+    assert.match(out, /-l8/);
+    assert.match(out, /why delete\?/);
     assert.ok(ui.renders() > 0);
   } finally {
     f.cleanup();
@@ -119,6 +119,8 @@ test("refresh keeps the selected item by id", async () => {
     const s = feedback(f);
     const reordered = { ...s, threads: [s.threads[2]!, s.threads[0]!, s.threads[1]!] };
     const ui = setup(f, { load: () => s, fetch: async () => reordered });
+    ui.tab.handleInput("s");
+    ui.popups.at(-1)?.keys?.d?.();
     ui.tab.handleInput("G");
     assert.match(text(ui.tab), /item 4\/4/);
     ui.tab.handleInput("k");
@@ -138,7 +140,9 @@ test("e opens resolved thread locations and explains what it cannot open", async
     const ui = setup(f, { load: () => feedback(f), fetchCommits: async (shas) => void fetched.push(shas) });
     ui.tab.handleInput("e");
     await until(() => ui.opened.length === 1);
-    assert.deepEqual(ui.opened, [`pr|a.ts:7|${f.base}`]);
+    const worktree = join(f.repo, "worktrees", "review", "pr-7-findings");
+    assert.deepEqual(ui.opened, [`${worktree}|a.ts:8|-`]);
+    assert.equal(f.git("-C", worktree, "rev-parse", "HEAD"), f.base);
 
     ui.tab.handleInput("j");
     ui.tab.handleInput("e");
@@ -149,9 +153,7 @@ test("e opens resolved thread locations and explains what it cannot open", async
     ui.tab.handleInput("j");
     ui.tab.handleInput("e");
     await until(() => ui.opened.length === 2);
-    const worktree = join(f.repo, "worktrees", "review", "pr-7-findings");
-    assert.equal(ui.opened.at(-1), `${worktree}|a.ts:8|-`);
-    assert.equal(f.git("-C", worktree, "rev-parse", "HEAD"), f.base);
+    assert.equal(ui.opened.at(-1), `pr|a.ts:7|${f.base}`);
 
     ui.tab.handleInput("j");
     ui.tab.handleInput("e");
@@ -206,12 +208,15 @@ test("no diff side label is shown and general comments carry no open hint", () =
   try {
     const ui = setup(f, { load: () => feedback(f) });
     let out = text(ui.tab);
-    assert.match(out, /state resolved by bob/);
+    assert.match(out, /state unresolved/);
     assert.doesNotMatch(out, SIDE_LABEL);
-    ui.tab.handleInput("G");
-    ui.tab.handleInput("k");
+    ui.tab.handleInput("j");
     out = text(ui.tab);
     assert.match(out, /outdated/);
+    assert.doesNotMatch(out, SIDE_LABEL);
+    ui.tab.handleInput("j");
+    out = text(ui.tab);
+    assert.match(out, /state resolved by bob/);
     assert.doesNotMatch(out, SIDE_LABEL);
     ui.tab.handleInput("G");
     out = text(ui.tab);
@@ -287,9 +292,9 @@ test("s picks a sort; the selection follows the item and the sort survives refre
   try {
     const s = sortable(f);
     const ui = setup(f, { load: () => s, fetch: async () => s });
-    assert.deepEqual(order(ui.tab), [ALPHA, BRAVO, CHARLIE, DELTA, FIRST, SECOND]);
+    assert.deepEqual(order(ui.tab), [CHARLIE, BRAVO, DELTA, ALPHA, SECOND, FIRST]);
     assert.match(text(ui.tab), /s sort/);
-    assert.match(text(ui.tab), /sort: GitHub order/);
+    assert.match(text(ui.tab), /sort: unresolved first/);
     const pick = (key: string): void => {
       ui.tab.handleInput("s");
       const popup = ui.popups.at(-1)!;
@@ -302,6 +307,8 @@ test("s picks a sort; the selection follows the item and the sort survives refre
     assert.deepEqual(order(ui.tab), [DELTA, ALPHA, CHARLIE, BRAVO, SECOND, FIRST]);
     assert.match(text(ui.tab), /sort: newest  item 4\/6/);
     assert.match(text(ui.tab), /^\s+b\.ts:9\s/m);
+    pick("d");
+    assert.deepEqual(order(ui.tab), [ALPHA, BRAVO, CHARLIE, DELTA, FIRST, SECOND]);
     pick("u");
     assert.deepEqual(order(ui.tab), [CHARLIE, BRAVO, DELTA, ALPHA, SECOND, FIRST]);
     pick("f");
@@ -406,7 +413,7 @@ test("t hides the sidebar for a full-width detail and survives refresh", async (
     assert.doesNotMatch(out, /│/);
     assert.doesNotMatch(out, /Code threads/);
     assert.match(out, /t show list/);
-    assert.match(out, /rename this/);
+    assert.match(out, /why delete\?/);
     ui.tab.handleInput("j");
     assert.match(text(ui.tab), /item 2\/4/);
     ui.tab.handleInput("R");
