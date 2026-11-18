@@ -314,7 +314,9 @@ export class ChangesView implements Component {
     if (start >= this.offset && end < this.offset + h) return;
     if (start >= this.offset && start < this.offset + h && end - start >= h) return;
     const before = this.rows[start - 1]?.kind === "file" ? 2 : 1;
-    this.offset = Math.max(0, start - before);
+    const top = Math.max(0, start - before);
+    if (top < this.offset) this.offset = top;
+    else this.offset = Math.min(top, end - h + 1);
   }
 
   private moveTo(i: number): void {
