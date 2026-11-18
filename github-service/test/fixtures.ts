@@ -1,4 +1,4 @@
-import type { Pr } from "../src/protocol.js";
+import type { FeedbackThreadComment, Pr, PrFeedback } from "../src/protocol.js";
 
 export const repo = "example/project";
 export const pr: Pr = {
@@ -209,4 +209,91 @@ export function feedbackPages(
       ]),
     });
   throw new Error("unexpected query");
+}
+
+export function threadComment(
+  id: string,
+  state = "SUBMITTED",
+): FeedbackThreadComment {
+  return {
+    id,
+    databaseId: null,
+    author: { login: "bob", type: "User", association: "MEMBER" },
+    body: `body ${id}`,
+    state,
+    createdAt: "2026-01-02T00:00:00Z",
+    updatedAt: null,
+    lastEditedAt: null,
+    url: null,
+    isMinimized: false,
+    minimizedReason: null,
+    replyTo: null,
+    reviewId: null,
+    reviewState: null,
+    path: "src/a.ts",
+    commit: "head",
+    originalCommit: "head",
+    line: 1,
+    originalLine: 1,
+    startLine: null,
+    originalStartLine: null,
+    outdated: false,
+  };
+}
+export function prFeedback(
+  threadComments: FeedbackThreadComment[] = [threadComment("C1")],
+  conversation: string[] = [],
+  number = 1,
+): PrFeedback {
+  return {
+    repo,
+    pr: {
+      number,
+      title: "A change",
+      url: null,
+      state: "OPEN",
+      isDraft: false,
+      author: "alice",
+      headRef: "feature",
+      baseRef: "main",
+      headSha: "head",
+      baseSha: "base",
+    },
+    threads: [
+      {
+        id: "T1",
+        path: "src/a.ts",
+        subjectType: "LINE",
+        diffSide: "RIGHT",
+        startDiffSide: null,
+        line: 1,
+        startLine: null,
+        originalLine: 1,
+        originalStartLine: null,
+        isResolved: false,
+        isOutdated: false,
+        isCollapsed: false,
+        resolvedBy: null,
+        commentsTotal: threadComments.length,
+        diffHunk: "@@ -1 +1 @@",
+        comments: threadComments,
+      },
+    ],
+    conversation: conversation.map((id) => ({
+      kind: "comment" as const,
+      id,
+      databaseId: null,
+      author: { login: "carol", type: "User", association: "MEMBER" },
+      body: `body ${id}`,
+      state: null,
+      createdAt: "2026-01-03T00:00:00Z",
+      updatedAt: null,
+      lastEditedAt: null,
+      url: null,
+      commit: null,
+      isMinimized: false,
+      minimizedReason: null,
+    })),
+    omittedReviews: 0,
+  };
 }
