@@ -70,11 +70,10 @@ written.
   the selection and the sidebar state are kept across `R`.
 - `y` copies the GitHub link of the selected thread (its first comment)
   or general comment to the clipboard (OSC 52, as elsewhere in station).
-- The detail shows the thread location, which version of the file the
-  comment is on (`diff: PR version` for the PR's changed side,
-  `diff: base version` for the base side of the diff), resolved and
-  outdated state, the captured diff (commented lines marked) and every
-  comment with author and time.
+- The detail shows the thread location, resolved and outdated state,
+  the captured diff (commented lines marked) and every comment with
+  author and time. The diff side is not shown; it is only used to open
+  the thread at the right revision.
 
 ## Opening a thread (`e`)
 

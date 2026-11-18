@@ -199,20 +199,20 @@ function narrow(tab: { render(w: number): string[] }, width = 120): string[] {
   return tab.render(width).map(stripTerminalSequences);
 }
 
-test("the diff side reads as PR or base version and general comments carry no open hint", () => {
+const SIDE_LABEL = /PR version|base version|unknown side|diff:|new \(head\)|old \(base\)|side new|old side/;
+
+test("no diff side label is shown and general comments carry no open hint", () => {
   const f = gitFixture();
   try {
     const ui = setup(f, { load: () => feedback(f) });
     let out = text(ui.tab);
-    assert.match(out, /diff: PR version/);
-    assert.doesNotMatch(out, /new \(head\)|side new/);
-    assert.match(out, /outdated base version/);
-    assert.doesNotMatch(out, /old side/);
+    assert.match(out, /state resolved by bob/);
+    assert.doesNotMatch(out, SIDE_LABEL);
     ui.tab.handleInput("G");
     ui.tab.handleInput("k");
     out = text(ui.tab);
-    assert.match(out, /diff: base version/);
-    assert.doesNotMatch(out, /old \(base\)/);
+    assert.match(out, /outdated/);
+    assert.doesNotMatch(out, SIDE_LABEL);
     ui.tab.handleInput("G");
     out = text(ui.tab);
     assert.match(out, /Looks good overall/);

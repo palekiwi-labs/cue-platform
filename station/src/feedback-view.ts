@@ -114,7 +114,6 @@ function threadTags(t: ReviewThread): string[] {
   const tags: string[] = [];
   if (t.is_resolved) tags.push("resolved");
   if (t.is_outdated) tags.push("outdated");
-  if (t.diff_side === "LEFT") tags.push("base version");
   return tags;
 }
 
@@ -126,10 +125,6 @@ function excerpt(body: string, width: number): string[] {
   const shown = rows.slice(0, EXCERPT_ROWS);
   shown[EXCERPT_ROWS - 1] = `${truncateToWidth(shown[EXCERPT_ROWS - 1]!, width - 1, "")}…`;
   return shown;
-}
-
-export function diffSide(side: ReviewThread["diff_side"]): string {
-  return side === "LEFT" ? "base version" : side === "RIGHT" ? "PR version" : "unknown side";
 }
 
 export interface FeedbackViewOptions {
@@ -311,8 +306,7 @@ export class FeedbackView implements Component {
     out.push("");
     const tag = (label: string, value: string, color = C.text): string => `${C.dim}${label} ${color}${value}${RESET}   `;
     out.push(
-      tag("diff:", diffSide(t.diff_side), t.diff_side === "LEFT" ? C.del : C.add) +
-        tag("state", t.is_resolved ? `resolved${t.resolved_by === null ? "" : ` by ${t.resolved_by}`}` : "unresolved", t.is_resolved ? C.dim : C.mod) +
+      tag("state", t.is_resolved ? `resolved${t.resolved_by === null ? "" : ` by ${t.resolved_by}`}` : "unresolved", t.is_resolved ? C.dim : C.mod) +
         (t.is_outdated ? tag("", "outdated", C.mod) : "") +
         (t.subject_type === "FILE" ? tag("", "file comment") : ""),
     );
