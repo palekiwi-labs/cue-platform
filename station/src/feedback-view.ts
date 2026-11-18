@@ -13,6 +13,7 @@ import { runAsync } from "./git.js";
 import { markdownRows } from "./markdown.js";
 import { findingsWorktree, prContext } from "./pr-review.js";
 import type { PrTabHost } from "./pr-tabs.js";
+import { nearestSurvivor, newer, type Revision, Reloader } from "./reload.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
 
 const PROSE_WIDTH = 80;
@@ -186,8 +187,10 @@ export class FeedbackView implements Component {
       this.items = feedbackItems(this.opts.feedback, this.sort);
     }
     const prev = previous.current();
-    const index = prev === undefined ? -1 : this.items.findIndex((i) => itemId(i) === itemId(prev));
-    this.cursor = index >= 0 ? index : Math.max(0, Math.min(previous.cursor, this.items.length - 1));
+    const find = (item: FeedbackItem): number => this.items.findIndex((i) => itemId(i) === itemId(item));
+    const index = prev === undefined ? -1 : find(prev);
+    const neighbour = index >= 0 ? index : nearestSurvivor(previous.items, previous.cursor, find);
+    this.cursor = neighbour >= 0 ? neighbour : Math.max(0, Math.min(previous.cursor, this.items.length - 1));
     if (index >= 0) this.offset = previous.offset;
     this.listOffset = previous.listOffset;
   }
@@ -454,6 +457,7 @@ export interface FeedbackTabDeps {
   read: () => Promise<FeedbackResult>;
   refresh: (onProgress: (operation: RefreshOperation) => void) => Promise<RefreshOperation>;
   watch: (listener: (event: FeedbackEvent) => void) => () => void;
+  reconnect: (listener: () => void) => () => void;
   fetchCommits: (shas: string[]) => Promise<void>;
 }
 
@@ -467,6 +471,7 @@ export function defaultFeedbackDeps(host: PrTabHost): FeedbackTabDeps {
     read: () => host.github.feedback(repo, host.pr),
     refresh: (onProgress) => host.github.refreshFeedback(repo, host.pr, onProgress),
     watch: (listener) => host.github.onFeedback(listener),
+    reconnect: (listener) => host.github.onReconnect(listener),
     fetchCommits: async (shas) => {
       await runAsync(host.repo, ["fetch", "-q", "--no-tags", "origin", ...shas]);
     },
@@ -479,10 +484,17 @@ function errText(e: unknown): string {
 
 type Phase = { kind: "loading" } | { kind: "refreshing"; pausedUntil: number | null } | { kind: "idle" };
 
+const FLASH_MS = 4000;
+
+export function updateText(events: readonly FeedbackEvent[]): string {
+  const n = new Set(events.flatMap((e) => e.newComments.map((c) => c.id))).size;
+  return n === 0 ? "feedback updated" : `updated: ${n} new comment${n === 1 ? "" : "s"}`;
+}
+
 /**
  * The github tab of a PR: shows the PR feedback snapshot of the GitHub
- * service and asks the service to refetch it from GitHub only on R. Feedback
- * events for the PR mark the shown data as stale without replacing it.
+ * service. Feedback events for the PR and reconnects reload the stored
+ * snapshot in place; R asks the service to refetch it from GitHub first.
  * Opening a thread resolves its revision and side-specific line first and
  * refuses locations it cannot verify.
  */
@@ -490,37 +502,77 @@ export class FeedbackTab implements TabScreen {
   private view: FeedbackView | null = null;
   private result: FeedbackResult | null = null;
   private phase: Phase = { kind: "loading" };
-  private error: string | null = null;
-  private latest: { storeId: string; revision: number } | null = null;
+  private refreshError: string | null = null;
+  private readError: string | null = null;
   private progress = "";
+  private flashed: { text: string; until: number } | null = null;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private heard: FeedbackEvent[] = [];
+  private announced: Revision | null = null;
   private opening = false;
   private closed = false;
   private readonly repo: string;
-  private readonly unwatch: () => void;
+  private readonly reloader: Reloader<FeedbackResult>;
+  private readonly off: (() => void)[];
 
   constructor(
     private readonly host: PrTabHost,
     private readonly deps: FeedbackTabDeps = defaultFeedbackDeps(host),
   ) {
     this.repo = serviceRepo(host);
-    this.unwatch = deps.watch((event) => this.onEvent(event));
-    void this.load().then((failure) => this.finish(failure));
+    this.reloader = new Reloader<FeedbackResult>({
+      read: () => deps.read(),
+      revision: (result) => ({ storeId: result.storeId, revision: result.revision }),
+      apply: (result, changed, previous) => this.apply(result, changed, previous),
+      fail: (e) => {
+        this.readError = `GitHub service: ${errText(e)}`;
+        this.changed();
+      },
+    });
+    this.off = [deps.watch((event) => this.onEvent(event)), deps.reconnect(() => void this.reloader.reconcile())];
+    void this.reloader.reload().then(() => {
+      if (this.closed || this.phase.kind !== "loading") return;
+      this.phase = { kind: "idle" };
+      this.changed();
+    });
   }
 
   private onEvent(event: FeedbackEvent): void {
     if (this.closed || event.repo !== this.repo || event.number !== this.host.pr) return;
-    const latest = this.latest;
-    if (latest === null || latest.storeId !== event.storeId || event.revision > latest.revision) {
-      this.latest = { storeId: event.storeId, revision: event.revision };
+    const shown = this.reloader.shown;
+    if (newer(event, shown)) {
+      this.heard.push(event);
+      void this.reloader.notify(event);
+      return;
+    }
+    if (shown?.storeId === event.storeId && newer(event, this.announced)) {
+      this.announced = { storeId: event.storeId, revision: event.revision };
+      this.flash(updateText([event]));
+      this.changed();
+    }
+  }
+
+  private apply(result: FeedbackResult, changed: boolean, previous: Revision | null): void {
+    this.use(result);
+    this.readError = null;
+    if (changed) {
+      const covered = this.heard.filter((e) =>
+        e.storeId === result.storeId && e.revision <= result.revision && (previous === null || newer(e, previous)),
+      );
+      this.heard = this.heard.filter((e) => e.storeId === result.storeId && e.revision > result.revision);
+      if (previous === null || covered.length > 0) {
+        this.announced = { storeId: result.storeId, revision: result.revision };
+      }
+      if (previous !== null) this.flash(updateText(covered));
     }
     this.changed();
   }
 
-  get stale(): boolean {
-    const latest = this.latest;
-    if (latest === null) return false;
-    const shown = this.result;
-    return shown === null || shown.storeId !== latest.storeId || latest.revision > shown.revision;
+  private flash(text: string): void {
+    this.flashed = { text, until: Date.now() + FLASH_MS };
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.changed(), FLASH_MS + 50);
+    this.timer.unref?.();
   }
 
   private paused(pausedUntil: number | null | undefined): string | null {
@@ -533,14 +585,15 @@ export class FeedbackTab implements TabScreen {
       const paused = this.paused(this.phase.pausedUntil);
       out.push({ text: paused === null ? "refreshing through GitHub service…" : `refresh waiting: ${paused}`, error: false });
     }
-    if (this.error !== null) out.push({ text: this.error, error: true });
+    if (this.refreshError !== null) out.push({ text: this.refreshError, error: true });
+    if (this.readError !== null && this.readError !== this.refreshError) out.push({ text: this.readError, error: true });
     if (this.result?.error != null) out.push({ text: `last GitHub fetch failed: ${this.result.error}`, error: true });
     if (this.phase.kind !== "refreshing") {
       const paused = this.paused(this.result?.pausedUntil);
       if (paused !== null) out.push({ text: paused, error: true });
     }
-    if (this.stale) out.push({ text: "new feedback available · R refresh", error: false });
     if (this.progress !== "") out.push({ text: this.progress, error: false });
+    if (this.flashed !== null && this.flashed.until > Date.now()) out.push({ text: this.flashed.text, error: false });
     return out;
   }
 
@@ -589,26 +642,6 @@ export class FeedbackTab implements TabScreen {
     this.view = next;
   }
 
-  private async load(): Promise<string | null> {
-    try {
-      const result = await this.deps.read();
-      if (!this.closed) this.use(result);
-      return null;
-    } catch (e) {
-      return `GitHub service: ${errText(e)}`;
-    }
-  }
-
-  private finish(failure: string | null): void {
-    if (this.closed) return;
-    this.phase = { kind: "idle" };
-    this.error = failure;
-    if (failure !== null && this.view !== null) {
-      this.host.showPopup({ title: "github", text: failure, error: true, footer: "any key" }, true);
-    }
-    this.changed();
-  }
-
   private notice(): TabScreen {
     const n = this.host.pr;
     const status = this.status().map((s) => s.text);
@@ -628,21 +661,35 @@ export class FeedbackTab implements TabScreen {
     if (this.phase.kind !== "idle" || this.closed) return;
     const phase = { kind: "refreshing" as const, pausedUntil: null as number | null };
     this.phase = phase;
-    this.error = null;
+    this.refreshError = null;
+    this.readError = null;
     this.changed();
     let failure: string | null = null;
+    let target: Revision | null = null;
     try {
       const operation = await this.deps.refresh((op) => {
         phase.pausedUntil = op.pausedUntil ?? null;
         this.changed();
       });
       const outcome = operation.feedback;
+      const shown = this.reloader.shown;
       if (outcome?.state === "error") failure = `refresh failed: ${outcome.error ?? "unknown error"}`;
+      else if (outcome?.state === "success" && outcome.changed === true && outcome.revision !== undefined && shown !== null) {
+        target = { storeId: shown.storeId, revision: outcome.revision };
+      }
     } catch (e) {
       failure = `GitHub service: ${errText(e)}`;
     }
-    const reload = await this.load();
-    this.finish(failure ?? reload);
+    if (this.closed) return;
+    await (target === null ? this.reloader.reload() : this.reloader.notify(target));
+    if (this.closed) return;
+    this.phase = { kind: "idle" };
+    this.refreshError = failure;
+    const shown = failure ?? this.readError;
+    if (shown !== null && this.view !== null) {
+      this.host.showPopup({ title: "github", text: shown, error: true, footer: "any key" }, true);
+    }
+    this.changed();
   }
 
   async open(thread: FeedbackThread, feedback: PrFeedback): Promise<void> {
@@ -708,7 +755,9 @@ export class FeedbackTab implements TabScreen {
   dispose(): void {
     if (this.closed) return;
     this.closed = true;
-    this.unwatch();
+    for (const off of this.off) off();
+    this.reloader.close();
+    if (this.timer !== undefined) clearTimeout(this.timer);
   }
 
   handleInput(data: string): void {

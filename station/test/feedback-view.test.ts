@@ -60,6 +60,7 @@ async function setup(f: GitFixture, o: SetupOptions = {}) {
   };
   const calls = { read: 0, refresh: 0 };
   const listeners = new Set<(event: FeedbackEvent) => void>();
+  const reconnects = new Set<() => void>();
   const deps: FeedbackTabDeps = {
     read: async () => {
       calls.read++;
@@ -76,6 +77,10 @@ async function setup(f: GitFixture, o: SetupOptions = {}) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    reconnect: (listener) => {
+      reconnects.add(listener);
+      return () => reconnects.delete(listener);
+    },
     fetchCommits: o.fetchCommits ?? (async () => {}),
   };
   const tab = new FeedbackTab(host, deps);
@@ -83,7 +88,8 @@ async function setup(f: GitFixture, o: SetupOptions = {}) {
   const emit = (event: Partial<FeedbackEvent>): void => {
     for (const l of listeners) l({ storeId: "store", repo: "org/repo", number: 7, revision: 2, newComments: [], ...event });
   };
-  return { host, tab, popups, opened, calls, listeners, emit, renders: () => renders };
+  const reconnect = (): void => reconnects.forEach((l) => l());
+  return { host, tab, popups, opened, calls, listeners, reconnects, emit, reconnect, renders: () => renders };
 }
 
 function text(tab: { render(w: number): string[] }): string {
@@ -210,7 +216,7 @@ test("service unavailability, collection errors and rate-limit pauses are shown"
     let read: () => Promise<FeedbackResult> = async () => {
       throw new GithubClientError("unavailable", "GitHub service connection unavailable");
     };
-    const ui = await setup(f, { read: () => read() });
+    const ui = await setup(f, { read: () => read(), refresh: async () => done({ changed: false }) });
     assert.match(text(ui.tab), /GitHub service: GitHub service connection unavailable/);
     assert.match(text(ui.tab), /R refresh through the GitHub service/);
     assert.equal(ui.popups.length, 0);
@@ -240,46 +246,168 @@ test("service unavailability, collection errors and rate-limit pauses are shown"
   }
 });
 
-test("a feedback event for the open PR marks newer data without replacing it", async () => {
+function body(tab: { render(w: number): string[] }): string[] {
+  return tab.render(200).map(stripTerminalSequences).slice(2, -1);
+}
+
+test("a feedback event for the open PR reloads it in place keeping selection, sidebar and scroll", async () => {
   const f = gitFixture();
+  const rows = process.stdout.rows;
+  process.stdout.rows = 10;
   try {
     const s = feedback(f);
-    const more = { ...s, conversation: [...s.conversation, { ...entry, id: "R10", body: "one more thing" }] };
-    const ui = await setup(f, { data: s, next: more });
-    const before = ui.renders();
+    let current = result(s);
+    const ui = await setup(f, { read: async () => current });
+    ui.tab.handleInput("t");
+    const top = body(ui.tab);
+    ui.tab.handleInput("J");
+    const before = body(ui.tab);
+    assert.notDeepEqual(before, top);
+    assert.match(text(ui.tab), /1 conversation/);
+    current = result({ ...s, conversation: [{ ...entry, id: "R10", body: "one more thing" }, ...s.conversation] }, { revision: 2 });
     ui.emit({ number: 8 });
     ui.emit({ repo: "org/other" });
     ui.emit({ revision: 1 });
-    assert.doesNotMatch(text(ui.tab), /new feedback/);
-    ui.emit({ revision: 2, newComments: [{ id: "R10", kind: "review", author: "carol", createdAt: "2025-01-04T00:00:00Z" }] });
-    assert.ok(ui.renders() > before);
-    assert.match(text(ui.tab), /new feedback available · R refresh/);
-    assert.match(text(ui.tab), /Conversation 1/);
-    assert.equal(ui.calls.read, 1);
-    ui.tab.handleInput("R");
     await tick();
-    assert.equal(ui.calls.refresh, 1);
-    assert.match(text(ui.tab), /Conversation 2/);
-    assert.doesNotMatch(text(ui.tab), /new feedback/);
+    assert.equal(ui.calls.read, 1);
+    const renders = ui.renders();
+    ui.emit({ revision: 2, newComments: [{ id: "R10", kind: "review", author: "carol", createdAt: "2025-01-04T00:00:00Z" }] });
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.equal(ui.calls.refresh, 0);
+    assert.ok(ui.renders() > renders);
+    const out = text(ui.tab);
+    assert.match(out, /2 conversation/);
+    assert.match(out, /updated: 1 new comment/);
+    assert.doesNotMatch(out, /new feedback available/);
+    assert.deepEqual(body(ui.tab), before);
     ui.emit({ revision: 2 });
-    assert.doesNotMatch(text(ui.tab), /new feedback/);
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    current = result(s, { storeId: "reset", revision: 1 });
     ui.emit({ storeId: "reset", revision: 1 });
-    assert.match(text(ui.tab), /new feedback available/);
-
+    await tick();
+    assert.equal(ui.calls.read, 3);
+    assert.match(text(ui.tab), /1 conversation/);
+    assert.match(text(ui.tab), /feedback updated/);
     ui.tab.dispose();
     assert.equal(ui.listeners.size, 0);
+    assert.equal(ui.reconnects.size, 0);
+  } finally {
+    process.stdout.rows = rows;
+    f.cleanup();
+  }
+});
+
+test("a vanished selected item selects its nearest neighbour", async () => {
+  const f = gitFixture();
+  try {
+    const s = feedback(f);
+    let current = result(s);
+    const ui = await setup(f, { read: async () => current });
+    ui.tab.handleInput("s");
+    ui.popups.at(-1)?.keys?.d?.();
+    ui.tab.handleInput("g");
+    ui.tab.handleInput("j");
+    assert.match(text(ui.tab), /item 2\/4/);
+    current = result({ ...s, threads: [s.threads[0]!, s.threads[2]!] }, { revision: 2 });
+    ui.emit({ revision: 2 });
+    await tick();
+    const out = text(ui.tab);
+    assert.match(out, /item 2\/3/);
+    assert.match(out, /why delete\?/);
+    assert.match(out, /sort: GitHub order/);
   } finally {
     f.cleanup();
   }
 });
 
-test("an event before any feedback was collected is shown in the notice", async () => {
+test("events that arrive during one reload coalesce and report their new comments together", async () => {
   const f = gitFixture();
   try {
-    const ui = await setup(f);
-    ui.emit({ revision: 1 });
+    const s = feedback(f);
+    let current = result(s);
+    const ui = await setup(f, { read: async () => current });
+    current = result(s, { revision: 3 });
+    const c = (id: string) => ({ id, kind: "comment" as const, author: "carol", createdAt: "2025-01-04T00:00:00Z" });
+    ui.emit({ revision: 2, newComments: [c("A")] });
+    ui.emit({ revision: 3, newComments: [c("B")] });
+    await tick();
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.match(text(ui.tab), /updated: 2 new comments/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("an event before any feedback was collected loads it", async () => {
+  const f = gitFixture();
+  try {
+    const ui = await setup(f, { next: feedback(f) });
     assert.match(text(ui.tab), /no GitHub feedback collected for #7 yet/);
-    assert.match(text(ui.tab), /new feedback available · R refresh/);
+    ui.emit({ revision: 2 });
+    await tick();
+    assert.match(text(ui.tab), /Code threads 3/);
+    assert.match(text(ui.tab), /feedback updated/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("R whose feedback event arrives first reloads once", async () => {
+  const f = gitFixture();
+  try {
+    let finish!: (op: RefreshOperation) => void;
+    const ui = await setup(f, { data: feedback(f), next: feedback(f), refresh: () => new Promise((r) => (finish = r)) });
+    ui.tab.handleInput("R");
+    ui.emit({ revision: 2, newComments: [{ id: "X", kind: "comment", author: "carol", createdAt: "2025-01-04T00:00:00Z" }] });
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    finish(done());
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.equal(ui.calls.refresh, 1);
+    assert.doesNotMatch(text(ui.tab), /refreshing/);
+    assert.match(text(ui.tab), /updated: 1 new comment/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("R whose feedback event arrives late reloads once and reports the new comments", async () => {
+  const f = gitFixture();
+  try {
+    const ui = await setup(f, { data: feedback(f), next: feedback(f) });
+    ui.tab.handleInput("R");
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.match(text(ui.tab), /feedback updated/);
+    ui.emit({ revision: 2, newComments: [{ id: "X", kind: "thread", author: "carol", createdAt: "2025-01-04T00:00:00Z", threadId: "T1" }] });
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.match(text(ui.tab), /updated: 1 new comment/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a reconnect reloads only when the stored revision differs from the shown one", async () => {
+  const f = gitFixture();
+  try {
+    const s = feedback(f);
+    let current = result(s);
+    const ui = await setup(f, { read: async () => current });
+    ui.reconnect();
+    await tick();
+    assert.equal(ui.calls.read, 2);
+    assert.doesNotMatch(text(ui.tab), /updated/);
+    current = result({ ...s, conversation: [] }, { revision: 2 });
+    ui.reconnect();
+    await tick();
+    assert.equal(ui.calls.read, 3);
+    assert.match(text(ui.tab), /0 conversation/);
+    assert.match(text(ui.tab), /feedback updated/);
   } finally {
     f.cleanup();
   }
