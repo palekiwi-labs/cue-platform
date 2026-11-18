@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { storeRoot, isDismissed, loadRun } from "./findings.js";
 import { listRuns } from "./pr-review.js";
 import { listWalkthroughs } from "./walkthrough.js";
@@ -29,18 +30,26 @@ export interface ReviewWindow {
   context: string;
   run: string;
   state: string;
-  command: string;
+  busy: boolean;
 }
 
 export type Windows = { ok: true; windows: ReviewWindow[] } | { ok: false };
 
-const SHELLS = new Set(["bash", "sh", "zsh", "fish"]);
-const FIELDS = ["@review_context", "@review_run", "@review_state", "pane_current_command"];
+const FIELDS = ["@review_context", "@review_run", "@review_state", "pane_pid"];
 
-export function parseWindows(stdout: string): ReviewWindow[] {
-  return stdout.split("\n").filter((l) => l !== "").map((line) => {
-    const [context = "", run = "", state = "", command = ""] = line.split("\t");
-    return { context, run, state, command };
+export function hasChildren(pid: string): boolean {
+  try {
+    return readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim() !== "";
+  } catch {
+    return true;
+  }
+}
+
+export function parseWindows(stdout: string, busy: (pid: string) => boolean = hasChildren): ReviewWindow[] {
+  return stdout.split("\n").filter((l) => l !== "").flatMap((line) => {
+    const [context = "", run = "", state = "", pid = ""] = line.split("\t");
+    if (context === "") return [];
+    return [{ context, run, state, busy: busy(pid) }];
   });
 }
 
@@ -53,7 +62,7 @@ export function tmuxWindows(): Windows {
 }
 
 function live(w: ReviewWindow): boolean {
-  return (w.state === "running" || w.state === "") && !SHELLS.has(w.command);
+  return (w.state === "running" || w.state === "") && w.busy;
 }
 
 function contextName(address: string): string {

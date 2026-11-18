@@ -16,7 +16,7 @@ import {
 import { previewLines, PrsView, STATUS_WIDTH, statusSlot } from "../src/prs.js";
 import type { PrSummary } from "../src/source.js";
 
-const win = (context: string, run: string, state: string, command = "nu") => ({ context, run, state, command });
+const win = (context: string, run: string, state: string, busy = true) => ({ context, run, state, busy });
 
 const input = (over: Partial<StatusInput>): StatusInput => ({
   context: "review-pr-7",
@@ -27,10 +27,11 @@ const input = (over: Partial<StatusInput>): StatusInput => ({
   ...over,
 });
 
-test("parseWindows splits tmux format lines", () => {
-  assert.deepEqual(parseWindows("review-pr-7\t100\trunning\tnu\n\t\t\tpi\n"), [
+test("parseWindows keeps review windows and asks whether each pane runs a child", () => {
+  const busy = (pid: string) => pid === "11";
+  assert.deepEqual(parseWindows("review-pr-7\t100\trunning\t11\nreview-pr-8\t200\t\t12\n\t\t\t13\n", busy), [
     win("review-pr-7", "100", "running"),
-    win("", "", "", "pi"),
+    win("review-pr-8", "200", "", false),
   ]);
 });
 
@@ -51,12 +52,13 @@ test("a running run without a live window is interrupted", () => {
   assert.equal(s.latest, "interrupted");
 });
 
-test("a window that fell back to the shell is not live", () => {
+test("a window whose pane runs no child is not live", () => {
   const s = deriveStatus(input({
-    runs: [{ runId: "100", state: "running", verified: false }],
-    windows: { ok: true, windows: [win("review-pr-7", "100", "running", "bash")] },
+    runs: [{ runId: "100", state: "completed", verified: false }],
+    windows: { ok: true, windows: [win("review-pr-7", "100", "", false)] },
   }));
-  assert.equal(s.runs[0]?.state, "interrupted");
+  assert.equal(s.inProgress, false);
+  assert.equal(s.runs[0]?.state, "completed");
 });
 
 test("an unreadable tmux leaves running runs unknown", () => {
