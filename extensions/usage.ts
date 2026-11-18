@@ -41,7 +41,15 @@ const PROVIDER_LABELS: Record<string, string> = {
 	gemini: "Gemini",
 };
 
-const WINDOW_WIDTH = 56;
+const PROVIDER_ORDER = ["claude", "codex", "glm", "gemini"];
+
+const TEXT_WIDTH = 76;
+const PAD_X = 2;
+const CHROME_X = 2 + 2 * PAD_X;
+
+export function overlayWidth(cols: number): number {
+	return Math.max(CHROME_X + 1, Math.min(TEXT_WIDTH + CHROME_X, cols));
+}
 
 function config(): { baseUrl: string; password: string | undefined } {
 	return {
@@ -78,7 +86,13 @@ export async function fetchSnapshot(): Promise<Snapshot> {
 		api<{ connections: Connection[] }>(baseUrl, cookie, "/api/providers"),
 		api<UsageStats>(baseUrl, cookie, "/api/usage/stats"),
 	]);
-	const active = connections.filter((c) => c.isActive !== false);
+	const active = connections
+		.filter((c) => c.isActive !== false)
+		.sort((a, b) => {
+			const pa = PROVIDER_ORDER.indexOf(a.provider);
+			const pb = PROVIDER_ORDER.indexOf(b.provider);
+			return (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb) || (a.name ?? "").localeCompare(b.name ?? "");
+		});
 	const accounts = await Promise.all(
 		active.map(async (c) => {
 			const label = `${PROVIDER_LABELS[c.provider] ?? c.provider} · ${c.name ?? c.email ?? c.id}`;
@@ -150,16 +164,15 @@ export class UsageOverlay {
 
 	render(width: number): string[] {
 		const th = this.theme;
-		const innerW = Math.min(width, WINDOW_WIDTH) - 2;
-		const lines: string[] = [];
-		const pad = (s: string) => (s ? ` ${s}` : "");
+		const inner = Math.max(1, width - CHROME_X);
+		const body: string[] = [];
 
 		for (const account of this.snapshot.accounts) {
 			const plan = account.plan ? th.fg("dim", ` (${account.plan})`) : "";
-			lines.push(th.fg("accent", pad(account.label)) + plan);
+			body.push(th.fg("accent", account.label) + plan);
 			if (account.error) {
-				lines.push(pad(th.fg("error", `error: ${account.error}`)));
-				lines.push("");
+				body.push(th.fg("error", `error: ${account.error}`));
+				body.push("");
 				continue;
 			}
 			const quotas = Object.entries(account.usage?.quotas ?? {});
@@ -173,45 +186,41 @@ export class UsageOverlay {
 				const shown = quota.unlimited
 					? th.fg("success", "unlimited")
 					: `${bar(pct, th)} ${Math.round(pct)}% used`;
-				const reset = th.fg("dim", fmtReset(quota.resetAt, this.fetchedAt));
-				lines.push(pad(`  ${name}  ${shown}`));
-				lines.push(pad(`  ${reset}`));
+				body.push(`  ${name}  ${shown}`);
+				body.push(th.fg("dim", `  ${fmtReset(quota.resetAt, this.fetchedAt)}`));
 			}
 			if (quotas.length === 0) {
-				lines.push(pad(th.fg("dim", "  no quota data")));
+				body.push(th.fg("dim", "  no quota data"));
 			}
 			const credits = account.usage?.resetCredits?.availableCount;
 			if (credits !== undefined && credits !== null) {
-				lines.push(pad(th.fg("dim", `  reset credits: ${credits} available`)));
+				body.push(th.fg("dim", `  reset credits: ${credits} available`));
 			}
-			lines.push("");
+			body.push("");
 		}
 		if (this.snapshot.today.length > 0) {
-			lines.push(pad(th.fg("dim", `today: ${this.snapshot.today.join(" · ")}`)));
-			lines.push("");
+			body.push(th.fg("dim", `today: ${this.snapshot.today.join(" · ")}`));
 		}
-		lines.push(th.fg("dim", pad("esc/q to close")));
-		return this.box(lines, innerW + 2, "9router usage");
-	}
 
-	private box(lines: string[], width: number, title: string): string[] {
-		const th = this.theme;
-		const innerW = Math.max(1, width - 2);
-		const result: string[] = [];
-		const titleStr = truncateToWidth(` ${title} `, innerW);
-		const titleW = visibleWidth(titleStr);
-		const left = "─".repeat(Math.floor((innerW - titleW) / 2));
-		const right = "─".repeat(Math.max(0, innerW - titleW - left.length));
-		result.push(
-			th.fg("border", `╭${left}`) + th.fg("accent", titleStr) + th.fg("border", `${right}╮`),
-		);
-		for (const line of lines) {
-			result.push(
-				th.fg("border", "│") + truncateToWidth(line, innerW, "…", true) + th.fg("border", "│"),
-			);
-		}
-		result.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
-		return result;
+		const border = (s: string) => th.fg("borderMuted", s);
+		const stamp = this.fetchedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+		const head = ` 9router usage · ${stamp} `;
+		const foot = " esc/q to close ";
+		const top =
+			border("╭─") +
+			th.fg("accent", th.bold(head)) +
+			border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮");
+		const bottom =
+			border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
+			th.fg("dim", foot) +
+			border("─╯");
+		const pad = " ".repeat(PAD_X);
+		const row = (s: string) => {
+			const cut = truncateToWidth(s, inner, "…");
+			const fill = " ".repeat(Math.max(0, inner - visibleWidth(cut)));
+			return border("│") + pad + cut + fill + pad + border("│");
+		};
+		return [top, ...body.map(row), bottom].map((l) => truncateToWidth(l, width));
 	}
 
 	invalidate(): void {}
@@ -233,7 +242,10 @@ export default function (pi: ExtensionAPI) {
 				(_tui, theme, _kb, done) => new UsageOverlay(theme, snapshot, done),
 				{
 					overlay: true,
-					overlayOptions: { anchor: "center", width: WINDOW_WIDTH },
+					overlayOptions: () => ({
+						anchor: "center",
+						width: overlayWidth(process.stdout.columns || 80),
+					}),
 				},
 			);
 		},
