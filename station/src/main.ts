@@ -12,6 +12,8 @@ import {
 import { ChangesView, type ComposeRequest } from "./changes.js";
 import { run } from "./git.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
+import { createNatsClient } from "../../src/nats/client.js";
+import { chooseFindingStatus } from "./finding-status.js";
 import { checkoutPr } from "./checkout.js";
 import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkthrough } from "./launch.js";
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
@@ -149,12 +151,15 @@ interface Screen extends Component {
 }
 
 class Router {
+  readonly publisher = createNatsClient({ name: "review station operator events" });
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
   private popup: { handles: OverlayHandle[]; dismissable: boolean; keys: Record<string, () => void> } | null = null;
   private composing: { box: ComposeBox; handle: OverlayHandle; done: (text: string | null) => void } | null = null;
 
   constructor() {
+    this.publisher.start();
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(signal, () => this.quit());
     setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, {
       "tui.altScreen.pageUp": [],
       "tui.altScreen.pageDown": [],
@@ -224,9 +229,9 @@ class Router {
     this.tui.requestRender();
   }
 
-  quit(): never {
+  quit(): void {
     this.tui.stop({ preserveScreen: true });
-    process.exit(0);
+    void this.publisher.close().finally(() => process.exit(0));
   }
 }
 
@@ -260,6 +265,7 @@ function prTabs(
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
     walkthroughDrafts,
     drafts,
+    publishFindingStatus: router.publisher.publish,
   };
   return new TabsScreen([
     { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, drafts) },
@@ -452,6 +458,7 @@ function showFindings(address: string): void {
   const router = new Router();
   router.show(new FindingsView({ run: findingsRun, sources: loadSources(repoPath, findingsRun.head, files),
     onQuit: () => router.quit(),
+    onStatus: (finding) => chooseFindingStatus(findingsRun, finding, router.showPopup.bind(router), router.publisher.publish),
     onOpen: (file, line) => openPath(router.tui, repoPath, file, line, findingsRun.base),
   }));
   router.tui.start();

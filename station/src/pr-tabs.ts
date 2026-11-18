@@ -1,4 +1,5 @@
 import type { PopupContent } from "./popup.js";
+import { chooseFindingStatus, type PublishFindingStatus } from "./finding-status.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
 import { findingsWorktree, listRuns, prContext, type RunEntry } from "./pr-review.js";
 import { NoticeView, type TabScreen } from "./tabs.js";
@@ -25,6 +26,7 @@ export interface PrTabHost {
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
+  publishFindingStatus?: PublishFindingStatus;
   walkthroughDrafts?: WalkthroughDrafts;
   drafts?: Drafts;
 }
@@ -184,6 +186,7 @@ export function findingsTab(host: PrTabHost): TabScreen {
         onQuit: host.onQuit,
         onOpen: (file, line) => open(run.head, file, line, run.base),
         refreshable: true,
+        onStatus: (finding) => chooseFindingStatus(run, finding, host.showPopup, host.publishFindingStatus ?? (() => false)),
       });
       if (previous instanceof FindingsView) view.restorePosition(previous);
       return view;
