@@ -14,7 +14,7 @@ export function launchPickerText(): string {
 }
 
 export function reviewArgs(repo: string, number: number): string[] {
-  return ["pr", String(number), "--manifest", "default", "--context", `review-pr-${number}`, "-C", repo];
+  return ["pr", String(number), "--manifest", "default", "-C", repo];
 }
 
 export async function launchReview(repo: string, number: number): Promise<string> {
