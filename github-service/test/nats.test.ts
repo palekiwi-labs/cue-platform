@@ -285,18 +285,21 @@ test(
     store.replace(repo, "viewer", [pr, { ...pr, number: 2 }], 1);
     let now = 1000;
     let ids = ["C1"];
+    let gate: Promise<void> = Promise.resolve();
     const service = new GithubService(
       store,
       async () => ({ viewer: "viewer", prs: [pr, { ...pr, number: 2 }] }),
       { now: () => now, cooldownMs: 10, pollMs: 100_000 },
-      async (_, number) =>
-        number === 2
+      async (_, number) => {
+        await gate;
+        return number === 2
           ? prFeedback(
               [{ ...threadComment("C9"), body: "x".repeat(70_000) }],
               [],
               2,
             )
-          : prFeedback(ids.map((id) => threadComment(id))),
+          : prFeedback(ids.map((id) => threadComment(id)));
+      },
     );
     const abort = new AbortController();
     const ui = new GithubClient(url);
@@ -339,6 +342,16 @@ test(
         events[1].newComments.map((c) => c.id),
         ["C2"],
       );
+      let release!: () => void;
+      gate = new Promise((r) => (release = r));
+      now += 10;
+      const progress: string[] = [];
+      const held = await ui.refreshFeedback(repo, 1, (op) => {
+        progress.push(op.feedback?.state ?? "none");
+        release();
+      });
+      assert.equal(held.feedback?.state, "success");
+      assert.equal(progress[0], "pending");
       off();
       await ui.refreshFeedback(repo, 2);
       await assert.rejects(ui.feedback(repo, 2), {

@@ -207,18 +207,22 @@ export class GithubClient {
   async refreshFeedback(
     repo: string,
     number: number,
+    onProgress?: (operation: RefreshOperation) => void,
   ): Promise<RefreshOperation> {
-    return this.track({ repo, number });
+    return this.track({ repo, number }, onProgress);
   }
 
   async feedback(repo: string, number: number): Promise<FeedbackResult> {
     return this.request<FeedbackResult>(SUBJECTS.feedback, { repo, number });
   }
 
-  private async track(body: {
-    repo?: string;
-    number?: number;
-  }): Promise<RefreshOperation> {
+  private async track(
+    body: {
+      repo?: string;
+      number?: number;
+    },
+    onProgress?: (operation: RefreshOperation) => void,
+  ): Promise<RefreshOperation> {
     const { operationId } = await this.request<RefreshResult>(
       SUBJECTS.refresh,
       body,
@@ -229,6 +233,7 @@ export class GithubClient {
         { operationId },
       );
       if (operation.state === "complete") return operation;
+      onProgress?.(operation);
       await sleep(500, undefined, { signal: this.abort.signal });
     }
     throw new GithubClientError("closed", "GitHub client is closed");
