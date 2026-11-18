@@ -3,44 +3,175 @@ import type { Checks, Pr, ReviewDecision } from "./protocol.js";
 
 export type Graphql = (
   query: string,
-  variables: Record<string, string>,
+  variables: Record<string, string | number>,
   signal?: AbortSignal,
 ) => Promise<unknown>;
 
-export const ghGraphql: Graphql = (query, variables, signal) =>
-  new Promise((resolve, reject) => {
-    const args = [
-      "api",
-      "graphql",
-      "--hostname",
-      "github.com",
-      "-f",
-      `query=${query}`,
-    ];
-    for (const [key, value] of Object.entries(variables)) {
-      if (key !== "credentialOwner") args.push("-f", `${key}=${value}`);
+export class RateLimitError extends Error {
+  constructor(readonly until: number) {
+    super("GitHub rate limited");
+  }
+}
+
+export const LOW_REMAINING = 100;
+const SECONDARY_PAUSE_MS = 60_000;
+const PRIMARY_PAUSE_MS = 300_000;
+const MAX_PAUSE_MS = 7_200_000;
+
+export interface GhResponse {
+  status: number | null;
+  headers: Map<string, string>;
+  body: string;
+}
+
+export function parseIncluded(stdout: string): GhResponse {
+  const headers = new Map<string, string>();
+  if (!stdout.startsWith("HTTP/"))
+    return { status: null, headers, body: stdout };
+  const split = /\r?\n\r?\n/.exec(stdout);
+  const head = split ? stdout.slice(0, split.index) : stdout;
+  const body = split ? stdout.slice(split.index + split[0].length) : "";
+  const [statusLine, ...lines] = head.split(/\r?\n/);
+  const status = Number(/^HTTP\/\S+\s+(\d{3})/.exec(statusLine)?.[1]);
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon > 0)
+      headers.set(
+        line.slice(0, colon).trim().toLowerCase(),
+        line.slice(colon + 1).trim(),
+      );
+  }
+  return { status: Number.isInteger(status) ? status : null, headers, body };
+}
+
+function headerInteger(
+  headers: Map<string, string>,
+  name: string,
+): number | null {
+  const value = headers.get(name);
+  return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+}
+
+function retryAfter(headers: Map<string, string>, now: number): number | null {
+  const value = headers.get("retry-after");
+  if (value === undefined) return null;
+  if (/^\d+$/.test(value)) return now + Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? null : date;
+}
+
+function bodyErrors(body: string): { types: string[]; messages: string[] } {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const errors = Array.isArray(parsed?.errors) ? parsed.errors : [];
+    const types: string[] = [];
+    const messages: string[] = [];
+    for (const e of errors) {
+      if (typeof e?.type === "string") types.push(e.type);
+      if (typeof e?.message === "string") messages.push(e.message);
     }
-    const env = { ...process.env, GH_PROMPT_DISABLED: "1" };
-    if (
-      variables.owner?.toLowerCase() === "spabreaks" ||
-      variables.credentialOwner?.toLowerCase() === "spabreaks"
-    ) {
-      Object.assign(env, { GH_TOKEN: "PLACEHOLDER-gh-spabreaks" });
-    }
-    execFile(
-      "gh",
-      args,
-      { env, signal, timeout: 60_000, maxBuffer: 32 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) return reject(new Error("GitHub subprocess failed"));
-        try {
-          resolve(JSON.parse(stdout));
-        } catch {
-          reject(new Error("Invalid GitHub JSON"));
-        }
-      },
-    );
-  });
+    if (typeof parsed?.message === "string") messages.push(parsed.message);
+    return { types, messages };
+  } catch {
+    return { types: [], messages: [] };
+  }
+}
+
+export function rateLimitUntil(
+  response: GhResponse,
+  stderr: string,
+  now: number,
+): number | null {
+  const { status, headers } = response;
+  const errors = bodyErrors(response.body);
+  const text = [stderr, ...errors.messages].join("\n");
+  const remaining = headerInteger(headers, "x-ratelimit-remaining");
+  const reset = headerInteger(headers, "x-ratelimit-reset");
+  const retry = retryAfter(headers, now);
+  const limited =
+    status === 429 ||
+    /\bHTTP 429\b/.test(stderr) ||
+    errors.types.includes("RATE_LIMITED") ||
+    /rate limit/i.test(text) ||
+    (status === 403 && (remaining === 0 || retry !== null));
+  if (!limited) return null;
+  let until: number;
+  if (retry !== null) until = retry;
+  else if (remaining === 0 && reset !== null) until = reset * 1000 + 1000;
+  else if (
+    /secondary/i.test(text) ||
+    status === 429 ||
+    /\bHTTP 429\b/.test(stderr)
+  )
+    until = now + SECONDARY_PAUSE_MS;
+  else until = now + PRIMARY_PAUSE_MS;
+  return Math.min(Math.max(until, now + 1000), now + MAX_PAUSE_MS);
+}
+
+export function lowRemainingUntil(response: GhResponse): number | null {
+  const remaining = headerInteger(response.headers, "x-ratelimit-remaining");
+  const reset = headerInteger(response.headers, "x-ratelimit-reset");
+  return remaining !== null && reset !== null && remaining < LOW_REMAINING
+    ? reset * 1000 + 1000
+    : null;
+}
+
+export function createGhGraphql(
+  onLowRemaining: (until: number) => void = () => {},
+  now: () => number = Date.now,
+): Graphql {
+  return (query, variables, signal) =>
+    new Promise((resolve, reject) => {
+      const args = [
+        "api",
+        "graphql",
+        "--include",
+        "--hostname",
+        "github.com",
+        "-f",
+        `query=${query}`,
+      ];
+      for (const [key, value] of Object.entries(variables)) {
+        if (key === "credentialOwner") continue;
+        args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
+      }
+      const env = { ...process.env, GH_PROMPT_DISABLED: "1" };
+      if (
+        String(variables.owner ?? "").toLowerCase() === "spabreaks" ||
+        String(variables.credentialOwner ?? "").toLowerCase() === "spabreaks"
+      ) {
+        Object.assign(env, { GH_TOKEN: "PLACEHOLDER-gh-spabreaks" });
+      }
+      execFile(
+        "gh",
+        args,
+        { env, signal, timeout: 60_000, maxBuffer: 32 * 1024 * 1024 },
+        (error, stdout, stderr) => {
+          const response = parseIncluded(String(stdout ?? ""));
+          if (error) {
+            const until =
+              signal?.aborted || error.killed
+                ? null
+                : rateLimitUntil(response, String(stderr ?? ""), now());
+            return reject(
+              until === null
+                ? new Error("GitHub subprocess failed")
+                : new RateLimitError(until),
+            );
+          }
+          const low = lowRemainingUntil(response);
+          if (low !== null) onLowRemaining(low);
+          try {
+            resolve(JSON.parse(response.body));
+          } catch {
+            reject(new Error("Invalid GitHub JSON"));
+          }
+        },
+      );
+    });
+}
+
+export const ghGraphql: Graphql = createGhGraphql();
 
 const connectionFields = "pageInfo { hasNextPage endCursor } totalCount";
 export const PR_QUERY = `query($owner:String!,$name:String!,$cursor:String) {
@@ -60,12 +191,12 @@ export const PR_QUERY = `query($owner:String!,$name:String!,$cursor:String) {
   }
 }`;
 
-function object(value: unknown): Record<string, any> {
+export function object(value: unknown): Record<string, any> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Expected object");
   return value as Record<string, any>;
 }
-function text(value: unknown): string {
+export function text(value: unknown): string {
   if (typeof value !== "string" || !value) throw new Error("Expected string");
   return value;
 }
@@ -74,7 +205,7 @@ function integer(value: unknown): number {
     throw new Error("Expected integer");
   return value as number;
 }
-function data(value: unknown): Record<string, any> {
+export function data(value: unknown): Record<string, any> {
   const envelope = object(value);
   if (
     envelope.errors !== undefined &&
