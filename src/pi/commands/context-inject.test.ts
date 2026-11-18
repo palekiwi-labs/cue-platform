@@ -76,6 +76,7 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
   const names: string[] = []
   const calls: string[][] = []
   const pi = {
+    events: { emit() {} },
     registerCommand: (_n: string, o: { handler: typeof handler }) => {
       handler = o.handler
     },

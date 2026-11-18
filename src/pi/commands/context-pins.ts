@@ -60,6 +60,7 @@ export async function injectContext(
     display: true,
     details,
   })
+  pi.events.emit("cue:context-linked", { address })
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "inject",
@@ -83,6 +84,7 @@ export async function linkContext(
 ): Promise<void> {
   const data: CueContextDetails = { address }
   pi.appendEntry(CUE_CONTEXT_TYPE, data)
+  pi.events.emit("cue:context-linked", { address })
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "link",

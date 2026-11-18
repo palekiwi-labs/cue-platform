@@ -17,7 +17,9 @@ export function operatorSubject(context: string, kind = "finding_status_changed"
 }
 
 export function isContextAddress(value: unknown): value is string {
-  return typeof value === "string" && /^[^/\s.]+\/[^/\s.]+\/[^/\s.]+$/.test(value)
+  return typeof value === "string" && value.length <= 512
+    && /^[\p{L}\p{N}_.-]+\/[\p{L}\p{N}_.-]+\/[\p{L}\p{N}_.-]+$/u.test(value)
+    && value.split("/").every(p => p !== "." && p !== "..")
 }
 
 export function isFindingStatus(value: unknown): value is FindingStatus {
@@ -31,7 +33,7 @@ export function parseOperatorEvent(value: unknown, context: string): FindingStat
   if (typeof e.ts !== "string" || !/^\d{4}-\d\d-\d\dT/.test(e.ts) || !Number.isFinite(Date.parse(e.ts))) return
   if (typeof e.artifact_address !== "string" || !e.artifact_address.startsWith(`${context}/review/`)
     || e.artifact_address.length > 1024 || e.artifact_address.split("/").some(p => !p || p === "." || p === "..")
-    || /[\s\x00-\x1f\x7f]/.test(e.artifact_address)) return
+    || !/^[\p{L}\p{N}_./-]+$/u.test(e.artifact_address)) return
   if (typeof e.finding_id !== "string" || !/^[\w.-]{1,128}$/.test(e.finding_id)) return
   if (e.old_status !== null && (typeof e.old_status !== "string" || !/^[\w-]{1,32}$/.test(e.old_status))) return
   if (!isFindingStatus(e.new_status)) return

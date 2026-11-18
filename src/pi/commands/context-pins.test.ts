@@ -25,8 +25,10 @@ describe("linkContext", () => {
     const names: string[] = []
     const entries: string[] = []
     const releases: (() => void)[] = []
+    const links: unknown[] = []
     const ok = { stdout: "", stderr: "", code: 0, killed: false }
     const pi = {
+      events: { emit: (name: string, data: unknown) => links.push({ name, data }) },
       setSessionName: (n: string) => names.push(n),
       appendEntry: (_t: string, d: { address: string }) =>
         entries.push(d.address),
@@ -42,6 +44,10 @@ describe("linkContext", () => {
     releases[0]!()
     await Promise.all([first, second])
     expect(entries).toEqual(["a/b/one", "a/b/two"])
+    expect(links).toEqual([
+      { name: "cue:context-linked", data: { address: "a/b/one" } },
+      { name: "cue:context-linked", data: { address: "a/b/two" } },
+    ])
     expect(names[names.length - 1]).toBe("two")
   })
 })
@@ -188,6 +194,7 @@ function setup(opts: {
   let failActivity = false
   let selectCalls = 0
   const pi = {
+    events: { emit() {} },
     registerShortcut: () => {},
     registerCommand: (_n: string, o: { handler: typeof handler }) => {
       handler = o.handler
