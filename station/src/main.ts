@@ -29,6 +29,9 @@ import { WalkthroughDrafts } from "./walkthrough-comments.js";
 import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
+import { ActivityView } from "./activity-view.js";
+import { type ActivityFeed, followActivity } from "./activity-source.js";
+import { repoLabel } from "./activity.js";
 import { loadWalkthrough, loadWalkthroughSources, WalkthroughView } from "./walkthrough.js";
 
 let contextOverride: string | null = null;
@@ -49,6 +52,8 @@ function usage(code: number): never {
   out("       station walkthrough-save --repo <path> --pr <n> --base <sha> --head <sha> <file>");
   out("                                validate a walkthrough file and save it to review-pr-N");
   out("");
+  out("  --activity         start the home screen on the git activity tab");
+  out("  --all-repos        show git activity of all repositories, not only this one");
   out("  --context <slug>   cue context for submitted comment rounds of non-PR reviews (default review-<branch-slug>; PR reviews always use review-pr-N)");
   process.exit(code);
 }
@@ -317,7 +322,63 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function showPrs(repo: string): void {
+interface HomeOptions {
+  activity: boolean;
+  allRepos: boolean;
+}
+
+function commonDir(cwd: string): string {
+  return run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim();
+}
+
+interface ActivityTab {
+  view: ActivityView;
+  close: () => Promise<void>;
+}
+
+function activityTab(router: Router, cwd: string, name: string | null, allRepos: boolean, onQuit: () => void): ActivityTab {
+  const repoDir = commonDir(cwd);
+  const view = new ActivityView({
+    repoDir,
+    repoName: name ?? repoLabel({ common_dir: repoDir }),
+    allRepos,
+    onQuit,
+    onCopy: (text) => process.stdout.write(osc52(text)),
+  });
+  let feed: ActivityFeed | null = null;
+  let closed = false;
+  const started = followActivity({
+    onEvent: (e) => {
+      view.add(e);
+      router.tui.requestRender();
+    },
+    onError: (text) => {
+      view.setNote(`GIT_ACTIVITY: ${text}`);
+      router.tui.requestRender();
+    },
+  }).then((f) => {
+    feed = f;
+    view.setNote("");
+    if (closed) void f.close();
+  }).catch((e) => view.setNote(errText(e))).finally(() => router.tui.requestRender());
+  return {
+    view,
+    close: async () => {
+      closed = true;
+      await started;
+      await (feed as ActivityFeed | null)?.close();
+    },
+  };
+}
+
+function showActivity(cwd: string, allRepos: boolean): void {
+  const router = new Router();
+  const tab: ActivityTab = activityTab(router, cwd, null, allRepos, () => void tab.close().finally(() => router.quit()));
+  router.show(tab.view);
+  router.tui.start();
+}
+
+function showPrs(repo: string, home: HomeOptions): void {
   const router = new Router();
   let busy = false;
   const source = new PrsSource(repoSlug(repo).toLowerCase());
@@ -351,7 +412,7 @@ function showPrs(repo: string): void {
       router.tui.requestRender();
     });
   });
-  const toList = (): void => router.show(list);
+  const toList = (): void => router.show(tabs);
   const chosen = new Map<string, string>();
   const open = async (pr: PrSummary): Promise<void> => {
     if (busy) return;
@@ -411,10 +472,7 @@ function showPrs(repo: string): void {
   };
   const list = new PrsView({
     repo: repoSlug(repo),
-    onQuit: () => {
-      unwatch();
-      void source.client.close().finally(() => router.quit());
-    },
+    onQuit: () => quit(),
     onOpen: (pr) => void open(pr),
     onCheckout: (pr) =>
       router.showPopup(
@@ -437,7 +495,23 @@ function showPrs(repo: string): void {
         Object.fromEntries(PR_SORTS.map((s) => [s.key, () => choose(s.sort)])),
       ),
   });
-  router.show(list);
+  let activity: ActivityTab | null = null;
+  const quit = (): void => {
+    unwatch();
+    void Promise.allSettled([source.client.close(), activity?.close()]).finally(() => router.quit());
+  };
+  const tabs = new TabsScreen([
+    { label: "prs", screen: () => list },
+    {
+      label: "activity",
+      screen: () => {
+        activity = activityTab(router, repo, repoSlug(repo), home.allRepos, quit);
+        return activity.view;
+      },
+    },
+  ]);
+  if (home.activity) tabs.select(1);
+  router.show(tabs);
   router.tui.start();
   void refresh(false);
 }
@@ -457,15 +531,18 @@ function showFindings(address: string): void {
   router.tui.start();
 }
 
-type Target = Review | { prs: string } | { findings: string } | { walkthrough: string };
+type Target = Review | { prs: string } | { activity: string } | { findings: string } | { walkthrough: string };
 
-async function resolve(args: string[]): Promise<Target> {
+async function resolve(args: string[], home: HomeOptions): Promise<Target> {
   const [cmd, arg, extra] = args;
   if (extra !== undefined) usage(2);
+  const homeFlags = home.activity || home.allRepos;
   if (cmd === undefined) {
     const repo = prRepo(process.cwd());
-    return repo !== null ? { prs: repo } : fromRange(process.cwd(), undefined);
+    if (repo !== null) return { prs: repo };
+    return homeFlags ? { activity: process.cwd() } : fromRange(process.cwd(), undefined);
   }
+  if (homeFlags && (cmd !== "prs" || arg !== undefined)) usage(2);
   if (cmd === "branch" && arg === undefined) return fromRange(process.cwd(), undefined);
   if (cmd === "prs" && arg === undefined) {
     const repo = prRepo(process.cwd());
@@ -525,9 +602,16 @@ export async function main(): Promise<void> {
     args.splice(flag, 2);
   }
   if (args[0] === "--help" || args[0] === "-h") usage(0);
+  const takeSwitch = (name: string): boolean => {
+    const i = args.indexOf(name);
+    if (i === -1) return false;
+    args.splice(i, 1);
+    return true;
+  };
+  const home: HomeOptions = { activity: takeSwitch("--activity"), allRepos: takeSwitch("--all-repos") };
   let target: Target;
   try {
-    target = await resolve(args);
+    target = await resolve(args, home);
     if (contextOverride !== null && ("prs" in target || ("pr" in target && target.pr !== null))) {
       throw new Error("--context is not allowed for PR reviews; rounds go to review-pr-N");
     }
@@ -543,6 +627,7 @@ export async function main(): Promise<void> {
     console.error(`station: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
   }
-  if ("prs" in target) showPrs(target.prs);
+  if ("activity" in target) showActivity(target.activity, home.allRepos);
+  else if ("prs" in target) showPrs(target.prs, home);
   else showReview(target);
 }
