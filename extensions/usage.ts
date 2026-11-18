@@ -46,6 +46,7 @@ const PROVIDER_ORDER = ["claude", "codex", "glm", "gemini"];
 const TEXT_WIDTH = 76;
 const PAD_X = 2;
 const CHROME_X = 2 + 2 * PAD_X;
+const MAX_HEIGHT = 0.75;
 
 export function overlayWidth(cols: number): number {
 	return Math.max(CHROME_X + 1, Math.min(TEXT_WIDTH + CHROME_X, cols));
@@ -140,32 +141,52 @@ function bar(usedPct: number, theme: Theme): string {
 
 export class UsageOverlay {
 	private theme: Theme;
-	private snapshot: Snapshot;
-	private fetchedAt: Date;
+	private snapshot: Snapshot | null = null;
+	private error: string | null = null;
+	private fetchedAt: Date | null = null;
+	private rows: () => number;
+	private onReady: () => void;
 	private done: () => void;
+	private offset = 0;
 
-	constructor(theme: Theme, snapshot: Snapshot, done: () => void) {
+	constructor(
+		theme: Theme,
+		rows: () => number,
+		onReady: () => void,
+		done: () => void,
+		fetching: Promise<Snapshot>,
+	) {
 		this.theme = theme;
-		this.snapshot = snapshot;
-		this.fetchedAt = new Date();
+		this.rows = rows;
+		this.onReady = onReady;
 		this.done = done;
+		fetching.then(
+			(snapshot) => {
+				this.snapshot = snapshot;
+				this.fetchedAt = new Date();
+				this.onReady();
+			},
+			(err) => {
+				this.error = err instanceof Error ? err.message : String(err);
+				this.onReady();
+			},
+		);
 	}
 
-	handleInput(data: string): void {
-		if (
-			matchesKey(data, "escape") ||
-			matchesKey(data, "ctrl+c") ||
-			matchesKey(data, "return") ||
-			matchesKey(data, "q")
-		) {
-			this.done();
-		}
+	private viewport(): number {
+		return Math.max(1, Math.min(Math.floor(this.rows() * MAX_HEIGHT), this.rows() - 2) - 2);
 	}
 
-	render(width: number): string[] {
+	private maxOffset(): number {
+		return Math.max(0, this.body().length - this.viewport());
+	}
+
+	private body(): string[] {
 		const th = this.theme;
-		const inner = Math.max(1, width - CHROME_X);
+		if (this.error !== null) return [th.fg("error", `error: ${this.error}`)];
+		if (this.snapshot === null) return [th.fg("dim", "loading…")];
 		const body: string[] = [];
+		const fetchedAt = this.fetchedAt ?? new Date();
 
 		for (const account of this.snapshot.accounts) {
 			const plan = account.plan ? th.fg("dim", ` (${account.plan})`) : "";
@@ -187,7 +208,7 @@ export class UsageOverlay {
 					? th.fg("success", "unlimited")
 					: `${bar(pct, th)} ${Math.round(pct)}% used`;
 				body.push(`  ${name}  ${shown}`);
-				body.push(th.fg("dim", `  ${fmtReset(quota.resetAt, this.fetchedAt)}`));
+				body.push(th.fg("dim", `  ${fmtReset(quota.resetAt, fetchedAt)}`));
 			}
 			if (quotas.length === 0) {
 				body.push(th.fg("dim", "  no quota data"));
@@ -201,11 +222,44 @@ export class UsageOverlay {
 		if (this.snapshot.today.length > 0) {
 			body.push(th.fg("dim", `today: ${this.snapshot.today.join(" · ")}`));
 		}
+		return body;
+	}
+
+	handleInput(data: string): void {
+		if (
+			matchesKey(data, "escape") ||
+			matchesKey(data, "ctrl+c") ||
+			matchesKey(data, "return") ||
+			data === "q"
+		) {
+			this.done();
+			return;
+		}
+		const max = this.maxOffset();
+		if (matchesKey(data, "up") || data === "k") this.offset = Math.max(0, this.offset - 1);
+		else if (matchesKey(data, "down") || data === "j") this.offset = Math.min(max, this.offset + 1);
+		else if (matchesKey(data, "pageUp")) this.offset = Math.max(0, this.offset - this.viewport());
+		else if (matchesKey(data, "pageDown")) this.offset = Math.min(max, this.offset + this.viewport());
+		else if (data === "g") this.offset = 0;
+		else if (data === "G") this.offset = max;
+	}
+
+	render(width: number): string[] {
+		const th = this.theme;
+		const inner = Math.max(1, width - CHROME_X);
+		const body = this.body();
+		const viewport = this.viewport();
+		this.offset = Math.min(this.offset, Math.max(0, body.length - viewport));
+		const shown = body.slice(this.offset, this.offset + viewport);
 
 		const border = (s: string) => th.fg("borderMuted", s);
-		const stamp = this.fetchedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+		const stamp = this.fetchedAt
+			? this.fetchedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+			: "loading";
 		const head = ` 9router usage · ${stamp} `;
-		const foot = " esc/q to close ";
+		const scrolls = body.length > viewport;
+		const pos = scrolls ? `${this.offset + 1}-${this.offset + viewport}/${body.length}` : "";
+		const foot = ` esc/q to close${pos ? ` · ${pos}` : ""} `;
 		const top =
 			border("╭─") +
 			th.fg("accent", th.bold(head)) +
@@ -220,7 +274,7 @@ export class UsageOverlay {
 			const fill = " ".repeat(Math.max(0, inner - visibleWidth(cut)));
 			return border("│") + pad + cut + fill + pad + border("│");
 		};
-		return [top, ...body.map(row), bottom].map((l) => truncateToWidth(l, width));
+		return [top, ...shown.map(row), bottom].map((l) => truncateToWidth(l, width));
 	}
 
 	invalidate(): void {}
@@ -231,20 +285,27 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("usage", {
 		description: "Show 9router subscription usage in an overlay",
 		handler: async (_args: string, ctx) => {
-			let snapshot: Snapshot;
-			try {
-				snapshot = await fetchSnapshot();
-			} catch (err) {
-				ctx.ui.notify(`usage: ${err instanceof Error ? err.message : String(err)}`, "error");
-				return;
-			}
 			await ctx.ui.custom<void>(
-				(_tui, theme, _kb, done) => new UsageOverlay(theme, snapshot, done),
+				(tui, theme, _kb, done) => {
+					const backdrop = tui.showOverlay(
+						{
+							render: (width) => Array(tui.terminal.rows).fill(" ".repeat(width)),
+							invalidate: () => {},
+						},
+						{ anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
+					);
+					const close = () => {
+						backdrop.hide();
+						done();
+					};
+					return new UsageOverlay(theme, () => tui.terminal.rows, () => tui.requestRender(), close, fetchSnapshot());
+				},
 				{
 					overlay: true,
 					overlayOptions: () => ({
 						anchor: "center",
 						width: overlayWidth(process.stdout.columns || 80),
+						margin: { top: 1, bottom: 1 },
 					}),
 				},
 			);
