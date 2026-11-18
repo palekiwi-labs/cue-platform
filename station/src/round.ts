@@ -130,6 +130,16 @@ export async function submitRound(dir: string, context: string, round: Round): P
   return `${address}/review/${name}`;
 }
 
+/** The context's canonical address, or null when it does not resolve. */
+export async function contextAddress(dir: string, context: string): Promise<string | null> {
+  try {
+    const status = await spawnAsync("cue", ["status", "-C", dir, "--context", context, "--json"], dir);
+    return (JSON.parse(status) as { address: string }).address;
+  } catch {
+    return null;
+  }
+}
+
 export function osc52(text: string): string {
   return `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
 }
