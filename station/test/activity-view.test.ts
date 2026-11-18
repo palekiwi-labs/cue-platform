@@ -40,7 +40,6 @@ test("checkouts are hidden by default and f cycles filters", () => {
   v.add(ev({ hook: "post-checkout", branch: "side", commit: undefined }));
   assert.equal(v.rows().length, 0);
   v.handleInput("f");
-  v.handleInput("f");
   assert.deepEqual(v.rows().map((g) => g.branch), ["side"]);
 });
 
@@ -86,6 +85,7 @@ test("eventRows shows subject, actor and rewrite maps", () => {
   assert.match(rows, /rebase/);
   assert.match(rows, /commit \d+/);
   assert.match(rows, /opus {2}review-station/);
+  assert.doesNotMatch(eventRows(ev({}), 200).join("\n"), /human|agent/);
   assert.match(rows, /aaaaaaaaaa → bbbbbbbbbb/);
 });
 
