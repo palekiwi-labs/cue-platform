@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { type ActivityFilters, type BranchActivity, type GitEvent, groupActivity, isAgent, repoLabel } from "./activity.js";
+import { type ActivityFilters, type BranchActivity, type GitEvent, groupActivity, repoLabel } from "./activity.js";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { age } from "./prs.js";
 import type { TabScreen } from "./tabs.js";
@@ -21,7 +21,6 @@ export interface FilterPreset {
 
 export const FILTER_PRESETS: readonly FilterPreset[] = [
   { label: "no checkouts", hideCheckouts: true, agentsOnly: false },
-  { label: "agents, no checkouts", hideCheckouts: true, agentsOnly: true },
   { label: "all events", hideCheckouts: false, agentsOnly: false },
 ];
 
@@ -53,9 +52,7 @@ function hookLabel(e: GitEvent): string {
 
 function actorLabel(e: GitEvent): string {
   const a = e.actor;
-  if (a?.pi_session === undefined) return "human";
-  const parts = [a.pi_model ?? "agent", a.cue_context].filter((p): p is string => p !== undefined && p !== "");
-  return parts.join("  ");
+  return [a?.pi_model, a?.cue_context].filter((p): p is string => p !== undefined && p !== "").join("  ");
 }
 
 export function eventRows(e: GitEvent, width: number): string[] {
@@ -64,7 +61,8 @@ export function eventRows(e: GitEvent, width: number): string[] {
   const out = [head];
   const subject = e.commit?.subject ?? e.reflog_action;
   if (subject !== undefined && subject !== "") out.push(`    ${C.text}${subject}`);
-  out.push(`    ${isAgent(e) ? C.mod : C.dim}${actorLabel(e)}${e.worktree !== undefined ? `${C.faint}  ${e.worktree}` : ""}`);
+  const who = [actorLabel(e), e.worktree ?? ""].filter((p) => p !== "").join("  ");
+  if (who !== "") out.push(`    ${C.dim}${who}`);
   for (const r of e.rewrites ?? []) out.push(`    ${C.faint}${r.old.slice(0, 10)} → ${r.new.slice(0, 10)}`);
   return out.map((l) => truncateToWidth(l, width, "…"));
 }
@@ -219,9 +217,8 @@ export class ActivityView implements TabScreen {
   private sideRow(g: BranchActivity, on: boolean, w: number, now: number): string[] {
     const marker = on ? `${this.detailFocus ? C.dim : C.accent}▎` : " ";
     const base = on ? C.selBg : "";
-    const who = isAgent(g.last) ? `${C.mod}agent` : `${C.dim}human`;
     const counts = `${C.dim}${g.commits}c${g.rewrites > 0 ? ` ${g.rewrites}r` : ""}`;
-    const right = `${counts} ${who} ${C.dim}${age(g.last.ts, now).padStart(3)} `;
+    const right = `${counts} ${C.dim}${age(g.last.ts, now).padStart(3)} `;
     const top = this.allRepos ? `${C.dim}${g.repoLabel} ${C.text}${g.branch}` : `${C.text}${g.branch}`;
     const leftW = Math.max(0, w - visibleWidth(right) - 1);
     const line = `${base}${fit(`${marker}${base}${top}`, leftW)}${base} ${right}`;
