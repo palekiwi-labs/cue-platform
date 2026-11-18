@@ -2,6 +2,7 @@ import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SUBJECTS,
+  type ChangedEvent,
   type FeedbackEvent,
   type FeedbackResult,
   type ListRequest,
@@ -24,6 +25,9 @@ export class GithubClient {
   private connection?: Promise<NatsConnection>;
   private listeners = new Set<() => void>();
   private feedbackListeners = new Set<(event: FeedbackEvent) => void>();
+  private changeListeners = new Set<(event: ChangedEvent) => void>();
+  private reconnectListeners = new Set<() => void>();
+  private lost = false;
   private closed = false;
   private abort = new AbortController();
   private timer?: ReturnType<typeof setInterval>;
@@ -37,20 +41,47 @@ export class GithubClient {
     for (const listener of this.listeners) listener();
   }
 
+  private reconnected(): void {
+    if (this.closed) return;
+    for (const listener of this.reconnectListeners) {
+      try {
+        listener();
+      } catch {}
+    }
+  }
+
+  private get subscribed(): boolean {
+    return (
+      this.feedbackListeners.size +
+        this.changeListeners.size +
+        this.reconnectListeners.size >
+      0
+    );
+  }
+
   private interval(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.hint();
-      if (this.feedbackListeners.size) void this.connected().catch(() => {});
+      if (this.subscribed) void this.connected().catch(() => {});
     }, 30_000);
     this.timer.unref();
   }
 
   private idle(): void {
-    if (this.listeners.size || this.feedbackListeners.size || !this.timer)
-      return;
+    if (this.listeners.size || this.subscribed || !this.timer) return;
     clearInterval(this.timer);
     this.timer = undefined;
+  }
+
+  private subscribe<T>(set: Set<T>, listener: T): () => void {
+    set.add(listener);
+    this.interval();
+    void this.connected().catch(() => {});
+    return () => {
+      set.delete(listener);
+      this.idle();
+    };
   }
 
   watch(listener: () => void): () => void {
@@ -63,13 +94,21 @@ export class GithubClient {
   }
 
   onFeedback(listener: (event: FeedbackEvent) => void): () => void {
-    this.feedbackListeners.add(listener);
-    this.interval();
-    void this.connected().catch(() => {});
-    return () => {
-      this.feedbackListeners.delete(listener);
-      this.idle();
-    };
+    return this.subscribe(this.feedbackListeners, listener);
+  }
+
+  /** Calls `listener` with each `github.evt.v1.changed` event. */
+  onChanged(listener: (event: ChangedEvent) => void): () => void {
+    return this.subscribe(this.changeListeners, listener);
+  }
+
+  /**
+   * Calls `listener` whenever the connection comes back after a loss: a NATS
+   * reconnect, or a new connection after a failed or closed one. Events may
+   * have been missed meanwhile, so listeners should compare revisions.
+   */
+  onReconnect(listener: () => void): () => void {
+    return this.subscribe(this.reconnectListeners, listener);
   }
 
   private async connected(): Promise<NatsConnection> {
@@ -89,12 +128,27 @@ export class GithubClient {
           await nc.close();
           throw new GithubClientError("closed", "GitHub client is closed");
         }
-        for (const subject of [SUBJECTS.changed, SUBJECTS.completed]) {
-          const subscription = nc.subscribe(subject);
-          void (async () => {
-            for await (const _message of subscription) this.hint();
-          })().catch(() => this.hint());
-        }
+        const completed = nc.subscribe(SUBJECTS.completed);
+        void (async () => {
+          for await (const _message of completed) this.hint();
+        })().catch(() => this.hint());
+        const changed = nc.subscribe(SUBJECTS.changed);
+        void (async () => {
+          for await (const message of changed) {
+            this.hint();
+            let event: ChangedEvent;
+            try {
+              event = message.json<ChangedEvent>();
+            } catch {
+              continue;
+            }
+            for (const listener of this.changeListeners) {
+              try {
+                listener(event);
+              } catch {}
+            }
+          }
+        })().catch(() => this.hint());
         const feedback = nc.subscribe(SUBJECTS.feedbackChanged);
         void (async () => {
           for await (const message of feedback) {
@@ -115,16 +169,23 @@ export class GithubClient {
           for await (const status of nc.status()) {
             if (status.type === "reconnect" || status.type === "disconnect")
               this.hint();
+            if (status.type === "reconnect") this.reconnected();
           }
         })().catch(() => this.hint());
         void nc.closed().then(() => {
           if (this.connection === pending) this.connection = undefined;
+          this.lost = true;
           this.hint();
         });
         await nc.flush();
+        if (this.lost) {
+          this.lost = false;
+          this.reconnected();
+        }
         return nc;
       } catch {
         if (this.connection === pending) this.connection = undefined;
+        this.lost = true;
         throw new GithubClientError(
           "unavailable",
           "GitHub service connection unavailable",
@@ -246,6 +307,8 @@ export class GithubClient {
     if (this.timer) clearInterval(this.timer);
     this.listeners.clear();
     this.feedbackListeners.clear();
+    this.changeListeners.clear();
+    this.reconnectListeners.clear();
     try {
       await (await this.connection)?.close();
     } catch {}

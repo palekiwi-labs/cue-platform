@@ -14,6 +14,7 @@ import { GithubService } from "../src/service.js";
 import { SnapshotStore } from "../src/store.js";
 import {
   SUBJECTS,
+  type ChangedEvent,
   type FeedbackEvent,
   type ListResult,
   type RefreshOperation,
@@ -179,6 +180,10 @@ test(
       assert.equal((await ui.list(repo)).prs[0].title, "version 1");
       let hints = 0;
       const unwatch = ui.watch(() => hints++);
+      const changes: ChangedEvent[] = [];
+      let reconnects = 0;
+      const offChanged = ui.onChanged((event) => changes.push(event));
+      const offReconnect = ui.onReconnect(() => reconnects++);
       const completed = nc.subscribe(SUBJECTS.completed);
       const changed = nc.subscribe(SUBJECTS.changed);
       const completionEvents: unknown[] = [];
@@ -218,6 +223,16 @@ test(
         async () => hints,
         (n) => n > 0,
       );
+      await eventually(
+        async () => changes.length,
+        (n) => n === 1,
+      );
+      assert.deepEqual(changes[0], {
+        storeId: store.storeId,
+        repo,
+        revision: 2,
+      });
+      assert.equal(reconnects, 0);
       now += 10;
       assert.equal((await ui.refresh(repo)).repositories[repo].changed, false);
       unwatch();
@@ -251,6 +266,12 @@ test(
         (data) => data.repositories[0].revision === 3,
       );
       assert.equal(recovered.prs[0].title, "version 3");
+      await eventually(
+        async () => reconnects,
+        (n) => n === 1,
+      );
+      offChanged();
+      offReconnect();
       assert.equal(
         after.ok && initial.ok && after.data.storeId,
         initial.ok && initial.data.storeId,
@@ -369,6 +390,37 @@ test(
       await service.close();
       store.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "UI client reports a connection that succeeds after a failed attempt",
+  { timeout: 10_000 },
+  async () => {
+    const port = await unusedPort();
+    const url = `nats://127.0.0.1:${port}`;
+    const ui = new GithubClient(url);
+    let server: ChildProcess | undefined;
+    try {
+      let reconnects = 0;
+      const off = ui.onReconnect(() => reconnects++);
+      await assert.rejects(ui.list(repo));
+      assert.equal(reconnects, 0);
+      server = spawn("nats-server", ["-a", "127.0.0.1", "-p", String(port)], {
+        stdio: "ignore",
+      });
+      await eventually(
+        async () => {
+          await ui.list(repo).catch(() => {});
+          return reconnects;
+        },
+        (n) => n === 1,
+      );
+      off();
+    } finally {
+      await ui.close();
+      if (server) await stop(server);
     }
   },
 );
