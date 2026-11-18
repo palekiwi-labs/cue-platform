@@ -262,6 +262,7 @@ function prTabs(
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+    onCopy: (text) => process.stdout.write(osc52(text)),
     walkthroughDrafts,
     drafts,
     requestRender: () => router.tui.requestRender(),

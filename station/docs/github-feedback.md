@@ -57,11 +57,24 @@ written.
 - Entering the tab loads the saved snapshot only; it never fetches.
 - `R` fetches from GitHub and saves. While fetching the previous
   snapshot stays visible; a failed fetch keeps it and shows the error.
-- The sidebar lists code threads, then the general conversation;
-  `j`/`k` or arrows select, `g`/`G` jump, scrolling keys as elsewhere.
-- The detail shows the thread location, side, resolved and outdated
-  state, the captured diff (commented lines marked) and every comment
-  with author and time.
+- The sidebar lists code threads, then the general conversation. Each
+  entry shows its location or author, then the first comment wrapped
+  over up to two rows. `j`/`k`, arrows or `ctrl+up`/`ctrl+down`
+  select, `g`/`G` jump, scrolling keys as elsewhere.
+- `t` hides the sidebar so the detail uses the full width; `t` again
+  shows it.
+- `s` picks a sort: GitHub order (default), newest activity first,
+  unresolved threads first (then newest), or file and line. General
+  comments have no resolved state: they are listed newest first under
+  the newest and unresolved sorts and oldest first otherwise. The sort,
+  the selection and the sidebar state are kept across `R`.
+- `y` copies the GitHub link of the selected thread (its first comment)
+  or general comment to the clipboard (OSC 52, as elsewhere in station).
+- The detail shows the thread location, which version of the file the
+  comment is on (`diff: PR version` for the PR's changed side,
+  `diff: base version` for the base side of the diff), resolved and
+  outdated state, the captured diff (commented lines marked) and every
+  comment with author and time.
 
 ## Opening a thread (`e`)
 

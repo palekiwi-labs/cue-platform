@@ -1,5 +1,5 @@
 import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { BOLD, C, fit, RESET } from "./changes.js";
+import { BOLD, C, fit, RESET, tailPath } from "./changes.js";
 import { localGit, parseHunk, requiredCommits, resolveThread, type Located } from "./feedback-location.js";
 import { runAsync } from "./git.js";
 import {
@@ -20,13 +20,67 @@ import { NoticeView, type TabScreen } from "./tabs.js";
 const PROSE_WIDTH = 80;
 const HUNK_TAIL = 12;
 
+const EXCERPT_ROWS = 2;
+
 export type FeedbackItem = { kind: "thread"; thread: ReviewThread } | { kind: "entry"; entry: ConversationEntry };
 
-export function feedbackItems(s: FeedbackSnapshot): FeedbackItem[] {
+export type FeedbackSort = "github" | "newest" | "unresolved" | "file";
+
+export const FEEDBACK_SORTS: readonly { sort: FeedbackSort; key: string; label: string; short: string }[] = [
+  { sort: "github", key: "d", label: "GitHub order (comments oldest first)", short: "GitHub order" },
+  { sort: "newest", key: "n", label: "newest activity first", short: "newest" },
+  { sort: "unresolved", key: "u", label: "unresolved threads first, then newest", short: "unresolved first" },
+  { sort: "file", key: "f", label: "file and line (comments oldest first)", short: "file" },
+];
+
+export function feedbackSortPickerText(current: FeedbackSort): string {
+  return FEEDBACK_SORTS.map((s) => `${s.sort === current ? `${C.accent}●` : " "} ${C.text}${s.key}${C.dim}  ${s.label}`).join("\n");
+}
+
+function time(iso: string | null | undefined): number {
+  const t = iso == null ? NaN : Date.parse(iso);
+  return Number.isNaN(t) ? -Infinity : t;
+}
+
+function threadActivity(t: ReviewThread): number {
+  return t.comments.reduce((m, c) => Math.max(m, time(c.created_at)), -Infinity);
+}
+
+function newestFirst(a: number, b: number): number {
+  return a === b ? 0 : a > b ? -1 : 1;
+}
+
+function threadStart(t: ReviewThread): number {
+  if (t.subject_type === "FILE") return 0;
+  return (t.line !== null ? (t.start_line ?? t.line) : (t.original_start_line ?? t.original_line)) ?? 0;
+}
+
+function sortThreads(threads: readonly ReviewThread[], sort: FeedbackSort): ReviewThread[] {
+  const out = [...threads];
+  if (sort === "newest") out.sort((a, b) => newestFirst(threadActivity(a), threadActivity(b)));
+  else if (sort === "unresolved") {
+    out.sort((a, b) => Number(a.is_resolved) - Number(b.is_resolved) || newestFirst(threadActivity(a), threadActivity(b)));
+  } else if (sort === "file") {
+    out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || threadStart(a) - threadStart(b));
+  }
+  return out;
+}
+
+function sortConversation(entries: readonly ConversationEntry[], sort: FeedbackSort): ConversationEntry[] {
+  const out = [...entries];
+  if (sort === "newest" || sort === "unresolved") out.sort((a, b) => newestFirst(time(a.created_at), time(b.created_at)));
+  return out;
+}
+
+export function feedbackItems(s: FeedbackSnapshot, sort: FeedbackSort = "github"): FeedbackItem[] {
   return [
-    ...s.threads.map((thread) => ({ kind: "thread" as const, thread })),
-    ...s.conversation.map((entry) => ({ kind: "entry" as const, entry })),
+    ...sortThreads(s.threads, sort).map((thread) => ({ kind: "thread" as const, thread })),
+    ...sortConversation(s.conversation, sort).map((entry) => ({ kind: "entry" as const, entry })),
   ];
+}
+
+export function itemUrl(item: FeedbackItem): string | null {
+  return item.kind === "thread" ? (item.thread.comments[0]?.url ?? null) : item.entry.url;
 }
 
 function itemId(item: FeedbackItem): string {
@@ -60,12 +114,22 @@ function threadTags(t: ReviewThread): string[] {
   const tags: string[] = [];
   if (t.is_resolved) tags.push("resolved");
   if (t.is_outdated) tags.push("outdated");
-  if (t.diff_side === "LEFT") tags.push("old side");
+  if (t.diff_side === "LEFT") tags.push("base version");
   return tags;
 }
 
-function firstLine(body: string): string {
-  return body.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+function excerpt(body: string, width: number): string[] {
+  const flat = body.replace(/\s+/g, " ").trim();
+  if (flat === "" || width <= 1) return [];
+  const rows = wrapTextWithAnsi(flat, width);
+  if (rows.length <= EXCERPT_ROWS) return rows;
+  const shown = rows.slice(0, EXCERPT_ROWS);
+  shown[EXCERPT_ROWS - 1] = `${truncateToWidth(shown[EXCERPT_ROWS - 1]!, width - 1, "")}…`;
+  return shown;
+}
+
+export function diffSide(side: ReviewThread["diff_side"]): string {
+  return side === "LEFT" ? "base version" : side === "RIGHT" ? "PR version" : "unknown side";
 }
 
 export interface FeedbackViewOptions {
@@ -73,6 +137,8 @@ export interface FeedbackViewOptions {
   onQuit: () => void;
   onOpen: (thread: ReviewThread) => void;
   onGeneral: () => void;
+  onCopy: (text: string) => void;
+  onPickSort: (current: FeedbackSort, choose: (sort: FeedbackSort) => void) => void;
   prHead?: string;
 }
 
@@ -81,11 +147,27 @@ export class FeedbackView implements Component {
   private offset = 0;
   private listOffset = 0;
   private lastHeight = 20;
-  private readonly items: FeedbackItem[];
+  private items: FeedbackItem[];
+  private sort: FeedbackSort = "github";
+  private sidebar = true;
+  private notice: { text: string; error: boolean } | null = null;
   note = "";
 
   constructor(private readonly opts: FeedbackViewOptions) {
     this.items = feedbackItems(opts.snapshot);
+  }
+
+  sortBy(): FeedbackSort {
+    return this.sort;
+  }
+
+  setSort(sort: FeedbackSort): void {
+    const keep = this.current();
+    this.sort = sort;
+    this.items = feedbackItems(this.opts.snapshot, sort);
+    const index = keep === undefined ? -1 : this.items.findIndex((i) => itemId(i) === itemId(keep));
+    this.cursor = Math.max(0, index);
+    if (index < 0) this.offset = 0;
   }
 
   invalidate(): void {}
@@ -99,6 +181,11 @@ export class FeedbackView implements Component {
   }
 
   restorePosition(previous: FeedbackView): void {
+    this.sidebar = previous.sidebar;
+    if (previous.sort !== this.sort) {
+      this.sort = previous.sort;
+      this.items = feedbackItems(this.opts.snapshot, this.sort);
+    }
     const prev = previous.current();
     const index = prev === undefined ? -1 : this.items.findIndex((i) => itemId(i) === itemId(prev));
     this.cursor = index >= 0 ? index : Math.max(0, Math.min(previous.cursor, this.items.length - 1));
@@ -113,9 +200,27 @@ export class FeedbackView implements Component {
     this.offset = 0;
   }
 
+  private copyLink(): void {
+    const item = this.current();
+    const url = item === undefined ? null : itemUrl(item);
+    if (url === null || url === "") {
+      this.notice = { text: `copy failed: ${item === undefined ? "nothing selected" : "no GitHub link for this item"}`, error: true };
+      return;
+    }
+    try {
+      this.opts.onCopy(url);
+      this.notice = { text: `copied ${url}`, error: false };
+    } catch (e) {
+      this.notice = { text: `copy failed: ${e instanceof Error ? e.message : String(e)}`, error: true };
+    }
+  }
+
   handleInput(data: string): void {
+    this.notice = null;
     const h = this.lastHeight;
-    if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+d")) this.offset += Math.floor(h / 2);
+    if (matchesKey(data, "ctrl+down") || matchesKey(data, "down")) this.move(1);
+    else if (matchesKey(data, "ctrl+up") || matchesKey(data, "up")) this.move(-1);
+    else if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+d")) this.offset += Math.floor(h / 2);
     else if (matchesKey(data, "pageUp") || matchesKey(data, "ctrl+u")) this.offset -= Math.floor(h / 2);
     else if (matchesKey(data, "shift+down")) this.offset += 3;
     else if (matchesKey(data, "shift+up")) this.offset -= 3;
@@ -126,12 +231,19 @@ export class FeedbackView implements Component {
           this.opts.onQuit();
           return;
         case "j":
-        case "\x1b[B":
           this.move(1);
           return;
         case "k":
-        case "\x1b[A":
           this.move(-1);
+          return;
+        case "y":
+          this.copyLink();
+          return;
+        case "s":
+          this.opts.onPickSort(this.sort, (sort) => this.setSort(sort));
+          return;
+        case "t":
+          this.sidebar = !this.sidebar;
           return;
         case "g":
           this.cursor = 0;
@@ -198,9 +310,8 @@ export class FeedbackView implements Component {
     const out = wrapTextWithAnsi(`${C.text}${BOLD}${threadLocation(t)}`, Math.min(w, PROSE_WIDTH));
     out.push("");
     const tag = (label: string, value: string, color = C.text): string => `${C.dim}${label} ${color}${value}${RESET}   `;
-    const sideName = t.diff_side === "LEFT" ? "old (base)" : t.diff_side === "RIGHT" ? "new (head)" : "unknown";
     out.push(
-      tag("side", sideName, t.diff_side === "LEFT" ? C.del : C.add) +
+      tag("diff:", diffSide(t.diff_side), t.diff_side === "LEFT" ? C.del : C.add) +
         tag("state", t.is_resolved ? `resolved${t.resolved_by === null ? "" : ` by ${t.resolved_by}`}` : "unresolved", t.is_resolved ? C.dim : C.mod) +
         (t.is_outdated ? tag("", "outdated", C.mod) : "") +
         (t.subject_type === "FILE" ? tag("", "file comment") : ""),
@@ -244,7 +355,6 @@ export class FeedbackView implements Component {
     out.push(...this.body(e.body, w));
     out.push("");
     if (e.url !== null) out.push(`${C.faint}${e.url}`);
-    out.push(`${C.faint}general comment: no code location to open`);
     return out;
   }
 
@@ -255,12 +365,13 @@ export class FeedbackView implements Component {
     const header = (label: string, count: number): void => {
       rows.push({ text: C.barBg + fit(` ${C.text}${BOLD}${label}${RESET}${C.barBg} ${C.dim}${count}`, w) + RESET, item: null });
     };
-    const entry = (i: number, label: string, sub: string, dim: boolean): void => {
+    const entry = (i: number, label: string, sub: string, body: string, dim: boolean): void => {
       const on = i === this.cursor;
       const base = on ? C.selBg : "";
       const marker = on ? `${C.accent}▎` : " ";
       rows.push({ text: base + fit(`${marker}${dim ? C.faint : on ? `${C.text}${BOLD}` : C.text}${label}`, w) + RESET, item: i });
       rows.push({ text: base + fit(`${marker}${sub}`, w) + RESET, item: i });
+      for (const line of excerpt(body, w - 2)) rows.push({ text: base + fit(`${marker}${dim ? C.faint : C.dim}${line}`, w) + RESET, item: i });
       rows.push({ text: " ".repeat(w), item: i });
     };
     header("Code threads", s.threads.length);
@@ -271,8 +382,8 @@ export class FeedbackView implements Component {
       const first = t.comments[0];
       const tags = threadTags(t);
       const tagText = tags.length === 0 ? "" : `${C.mod}${tags.join(" ")}  `;
-      const sub = `${tagText}${C.dim}${first === undefined ? "" : login(first.author)} · ${t.comments.length}  ${firstLine(first?.body ?? "")}`;
-      entry(i, threadLocation(t), sub, t.is_resolved);
+      const sub = `${tagText}${C.dim}${first === undefined ? "" : login(first.author)} · ${t.comments.length}`;
+      entry(i, tailPath(threadLocation(t), w - 1), sub, first?.body ?? "", t.is_resolved);
     });
     header("Conversation", s.conversation.length);
     if (s.conversation.length === 0) rows.push({ text: ` ${C.faint}no general comments`, item: null });
@@ -280,13 +391,15 @@ export class FeedbackView implements Component {
       if (item.kind !== "entry") return;
       const e = item.entry;
       const kind = e.kind === "review" ? `review ${e.state?.toLowerCase().replace("_", " ") ?? ""}` : "comment";
-      entry(i, `${login(e.author)}  ${C.dim}${kind}`, `${C.dim}${when(e.created_at)}  ${firstLine(e.body)}`, e.is_minimized);
+      entry(i, `${login(e.author)}  ${C.dim}${kind}`, `${C.dim}${when(e.created_at)}`, e.body, e.is_minimized);
     });
     const first = rows.findIndex((r) => r.item === this.cursor);
     if (first >= 0) {
+      let last = first;
+      while (rows[last + 1]?.item === this.cursor) last++;
+      if (last + 1 > this.listOffset + height) this.listOffset = last + 1 - height;
       const top = rows[first - 1]?.item === null ? first - 1 : first;
       if (top < this.listOffset) this.listOffset = top;
-      if (first + 3 > this.listOffset + height) this.listOffset = first + 3 - height;
     }
     this.listOffset = Math.max(0, Math.min(this.listOffset, Math.max(0, rows.length - height)));
     const out = rows.slice(this.listOffset, this.listOffset + height).map((r) => r.text);
@@ -314,8 +427,8 @@ export class FeedbackView implements Component {
         ) +
         RESET,
     );
-    const sideW = Math.min(56, Math.max(28, Math.floor(width * 0.34)));
-    const mainW = width - sideW - 1;
+    const sideW = this.sidebar ? Math.min(56, Math.max(28, Math.floor(width * 0.34))) : 0;
+    const mainW = this.sidebar ? width - sideW - 1 : width;
     const pad = 2;
     const item = this.current();
     const rows =
@@ -325,18 +438,23 @@ export class FeedbackView implements Component {
           ? this.threadRows(item.thread, mainW - pad)
           : this.entryRows(item.entry, mainW - pad);
     this.offset = Math.max(0, Math.min(this.offset, Math.max(0, rows.length - bodyH)));
-    const side = this.renderList(bodyH, sideW);
+    const side = this.sidebar ? this.renderList(bodyH, sideW) : [];
     for (let i = 0; i < bodyH; i++) {
       const row = rows[this.offset + i] ?? "";
-      out.push(`${fit(" ".repeat(pad) + truncateToWidth(row, mainW - pad, ""), mainW)}${RESET}${C.faint}│${RESET}${side[i] ?? ""}`);
+      const main = fit(" ".repeat(pad) + truncateToWidth(row, mainW - pad, ""), mainW);
+      out.push(this.sidebar ? `${main}${RESET}${C.faint}│${RESET}${side[i] ?? ""}` : `${main}${RESET}`);
     }
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${k("R", "fetch")}${k("↑/↓", "item")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
-    const pos = this.items.length === 0 ? "" : `item ${this.cursor + 1}/${this.items.length} `;
+    const sort = FEEDBACK_SORTS.find((x) => x.sort === this.sort)?.short ?? this.sort;
+    const pos = this.items.length === 0 ? "" : `sort: ${sort}  item ${this.cursor + 1}/${this.items.length} `;
     const right = `${more}${C.dim}${pos}`;
-    const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(right));
-    out.push(C.barBg + fit(`${keys}${" ".repeat(gap)}${right}`, width) + RESET);
+    const left = this.notice === null
+      ? ` ${k("R", "fetch")}${k("↑/↓ ^↑/^↓", "item")}${k("⇧↑/⇧↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("y", "copy link")}` +
+        `${k("s", "sort")}${k("t", this.sidebar ? "hide list" : "show list")}${k("q", "quit")}`
+      : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, Math.max(1, width - visibleWidth(right) - 2), "…");
+    const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
+    out.push(C.barBg + fit(`${left}${" ".repeat(gap)}${right}`, width) + RESET);
     return out;
   }
 }
@@ -394,6 +512,19 @@ export class FeedbackTab implements TabScreen {
       onOpen: (t) => void this.open(t, snapshot),
       onGeneral: () =>
         this.host.showPopup({ title: "open", text: "general PR comments have no code location to open", footer: "any key" }, true),
+      onCopy: (text) => {
+        if (this.host.onCopy === undefined) throw new Error("no clipboard available");
+        this.host.onCopy(text);
+      },
+      onPickSort: (current, choose) =>
+        this.host.showPopup(
+          { title: "sort", text: feedbackSortPickerText(current), footer: "any other key cancel" },
+          true,
+          Object.fromEntries(FEEDBACK_SORTS.map((s) => [s.key, () => {
+            choose(s.sort);
+            this.host.requestRender?.();
+          }])),
+        ),
       prHead: this.host.prHead,
     });
     if (this.view !== null) next.restorePosition(this.view);

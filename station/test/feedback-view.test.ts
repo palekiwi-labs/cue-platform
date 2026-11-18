@@ -191,3 +191,198 @@ test("e fetches missing commits first and asks before opening a file with local 
     f.cleanup();
   }
 });
+
+const CTRL_DOWN = "\x1b[1;5B";
+const CTRL_UP = "\x1b[1;5A";
+
+function narrow(tab: { render(w: number): string[] }, width = 120): string[] {
+  return tab.render(width).map(stripTerminalSequences);
+}
+
+test("the diff side reads as PR or base version and general comments carry no open hint", () => {
+  const f = gitFixture();
+  try {
+    const ui = setup(f, { load: () => feedback(f) });
+    let out = text(ui.tab);
+    assert.match(out, /diff: PR version/);
+    assert.doesNotMatch(out, /new \(head\)|side new/);
+    assert.match(out, /outdated base version/);
+    assert.doesNotMatch(out, /old side/);
+    ui.tab.handleInput("G");
+    ui.tab.handleInput("k");
+    out = text(ui.tab);
+    assert.match(out, /diff: base version/);
+    assert.doesNotMatch(out, /old \(base\)/);
+    ui.tab.handleInput("G");
+    out = text(ui.tab);
+    assert.match(out, /Looks good overall/);
+    assert.doesNotMatch(out, /no code location to open/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("y copies the selected thread or comment link and reports failures", () => {
+  const f = gitFixture();
+  try {
+    const copied: string[] = [];
+    const ui = setup(f, { load: () => feedback(f) });
+    ui.host.onCopy = (t) => void copied.push(t);
+    ui.tab.handleInput("y");
+    assert.deepEqual(copied, ["https://github.com/org/repo/pull/7#discussion_r1"]);
+    assert.match(text(ui.tab), /copied https:\/\/github\.com\/org\/repo\/pull\/7#discussion_r1/);
+    ui.tab.handleInput("j");
+    assert.doesNotMatch(text(ui.tab), /copied/);
+    ui.tab.handleInput("y");
+    assert.match(text(ui.tab), /copy failed: no GitHub link for this item/);
+    ui.tab.handleInput("G");
+    ui.tab.handleInput("y");
+    assert.equal(copied.at(-1), entry.url);
+
+    ui.host.onCopy = () => {
+      throw new Error("terminal refused");
+    };
+    ui.tab.handleInput("y");
+    assert.match(text(ui.tab), /copy failed: terminal refused/);
+    ui.host.onCopy = undefined;
+    ui.tab.handleInput("y");
+    assert.match(text(ui.tab), /copy failed: no clipboard available/);
+    assert.equal(ui.popups.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+function sortable(f: GitFixture): FeedbackSnapshot {
+  const at = (id: string, t: string, body: string) => ({ id, created_at: t, body });
+  const older: ConversationEntry = { ...entry, id: "E1", kind: "comment", state: null, body: "first general", created_at: "2025-01-01T00:00:00Z" };
+  const newer: ConversationEntry = { ...entry, id: "E2", kind: "comment", state: null, body: "second general", created_at: "2025-01-05T00:00:00Z" };
+  return snapshot(f, [
+    thread({ id: "A", path: "z.ts", line: 3, is_resolved: true }, at("a", "2025-01-04T00:00:00Z", "alpha")),
+    thread({ id: "B", path: "b.ts", line: 9 }, at("b", "2025-01-01T00:00:00Z", "bravo")),
+    thread({ id: "C", path: "b.ts", line: 2 }, at("c", "2025-01-03T00:00:00Z", "charlie")),
+    thread({ id: "D", path: "a.ts", line: 1, is_resolved: true }, at("d", "2025-01-06T00:00:00Z", "delta")),
+  ], { conversation: [older, newer] });
+}
+
+function order(tab: { render(w: number): string[] }): string[] {
+  const words = ["alpha", "bravo", "charlie", "delta", "first general", "second general"];
+  const side = tab.render(200).map(stripTerminalSequences).map((l) => l.slice(l.indexOf("│") + 1)).join("\n");
+  return words.map((w) => [side.indexOf(w), w] as const).sort((a, b) => a[0] - b[0]).map(([, w]) => w);
+}
+
+test("s picks a sort; the selection follows the item and the sort survives refresh", async () => {
+  const f = gitFixture();
+  try {
+    const s = sortable(f);
+    const ui = setup(f, { load: () => s, fetch: async () => s });
+    assert.deepEqual(order(ui.tab), ["alpha", "bravo", "charlie", "delta", "first general", "second general"]);
+    assert.match(text(ui.tab), /s sort/);
+    assert.match(text(ui.tab), /sort: GitHub order/);
+    const pick = (key: string): void => {
+      ui.tab.handleInput("s");
+      const popup = ui.popups.at(-1)!;
+      assert.equal(popup.content.title, "sort");
+      assert.match(stripTerminalSequences(popup.content.text), /n  newest activity first/);
+      popup.keys?.[key]?.();
+    };
+    ui.tab.handleInput("j");
+    pick("n");
+    assert.deepEqual(order(ui.tab), ["delta", "alpha", "charlie", "bravo", "second general", "first general"]);
+    assert.match(text(ui.tab), /sort: newest  item 4\/6/);
+    assert.match(text(ui.tab), /bravo/);
+    pick("u");
+    assert.deepEqual(order(ui.tab), ["charlie", "bravo", "delta", "alpha", "second general", "first general"]);
+    pick("f");
+    assert.deepEqual(order(ui.tab), ["delta", "charlie", "bravo", "alpha", "first general", "second general"]);
+    ui.tab.handleInput("R");
+    await tick();
+    assert.match(text(ui.tab), /sort: file  item 3\/6/);
+    assert.deepEqual(order(ui.tab), ["delta", "charlie", "bravo", "alpha", "first general", "second general"]);
+    pick("d");
+    assert.deepEqual(order(ui.tab), ["alpha", "bravo", "charlie", "delta", "first general", "second general"]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("sidebar entries wrap the comment over two rows and keep the path tail", () => {
+  const f = gitFixture();
+  try {
+    const long = "This is a fairly long review comment that would never fit on a single sidebar row so it wraps and then ends with an ellipsis somewhere";
+    const path = "deeply/nested/directory/structure/for/the/module/file.ts";
+    const s = snapshot(f, [thread({ id: "L", path, line: 4 }, { body: long })]);
+    const ui = setup(f, { load: () => s });
+    const side = narrow(ui.tab).map((l) => l.slice(l.indexOf("│") + 1));
+    const at = side.findIndex((l) => l.includes("This is a fairly"));
+    assert.ok(at > 0);
+    assert.match(side[at + 1] ?? "", /\S/);
+    assert.match(side[at + 1] ?? "", /…\s*$/);
+    assert.doesNotMatch(side[at + 2] ?? "", /\S/);
+    assert.ok(side.some((l) => /….*module\/file\.ts:4/.test(l)));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("the sidebar scrolls to keep tall entries fully visible", () => {
+  const f = gitFixture();
+  try {
+    const threads = Array.from({ length: 20 }, (_, i) => thread({ id: `T${i}`, path: `f${i}.ts`, line: 1 }, { body: `comment ${i} `.repeat(30) }));
+    const ui = setup(f, { load: () => snapshot(f, threads) });
+    const sideOf = () => narrow(ui.tab).map((l) => l.slice(l.indexOf("│") + 1)).join("\n");
+    for (let i = 0; i < 19; i++) ui.tab.handleInput("j");
+    assert.match(sideOf(), /f19\.ts:1/);
+    assert.match(sideOf(), /comment 19 comment 19/);
+    assert.doesNotMatch(sideOf(), /f0\.ts:1/);
+    ui.tab.handleInput("g");
+    assert.match(sideOf(), /Code threads 20/);
+    assert.match(sideOf(), /f0\.ts:1/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("ctrl+up/down and plain arrows move between sidebar entries", () => {
+  const f = gitFixture();
+  try {
+    const ui = setup(f, { load: () => feedback(f) });
+    ui.tab.handleInput(CTRL_DOWN);
+    ui.tab.handleInput(CTRL_DOWN);
+    assert.match(text(ui.tab), /item 3\/4/);
+    ui.tab.handleInput(CTRL_UP);
+    assert.match(text(ui.tab), /item 2\/4/);
+    ui.tab.handleInput("\x1b[B");
+    ui.tab.handleInput("\x1bOB");
+    assert.match(text(ui.tab), /item 4\/4/);
+    ui.tab.handleInput("\x1b[A");
+    assert.match(text(ui.tab), /item 3\/4/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("t hides the sidebar for a full-width detail and survives refresh", async () => {
+  const f = gitFixture();
+  try {
+    const s = feedback(f);
+    const ui = setup(f, { load: () => s, fetch: async () => s });
+    assert.match(text(ui.tab), /│/);
+    assert.match(text(ui.tab), /t hide list/);
+    ui.tab.handleInput("t");
+    const out = text(ui.tab);
+    assert.doesNotMatch(out, /│/);
+    assert.doesNotMatch(out, /Code threads/);
+    assert.match(out, /t show list/);
+    assert.match(out, /rename this/);
+    ui.tab.handleInput("j");
+    assert.match(text(ui.tab), /item 2\/4/);
+    ui.tab.handleInput("R");
+    await tick();
+    assert.doesNotMatch(text(ui.tab), /Code threads/);
+    ui.tab.handleInput("t");
+    assert.match(text(ui.tab), /Code threads 3/);
+  } finally {
+    f.cleanup();
+  }
+});

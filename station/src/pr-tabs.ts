@@ -25,6 +25,7 @@ export interface PrTabHost {
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
+  onCopy?: (text: string) => void;
   walkthroughDrafts?: WalkthroughDrafts;
   drafts?: Drafts;
   requestRender?: () => void;
