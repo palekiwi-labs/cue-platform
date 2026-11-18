@@ -1,4 +1,9 @@
-import type { ListRequest, ListResult, Reply } from "./protocol.js";
+import type {
+  FeedbackResult,
+  ListRequest,
+  ListResult,
+  Reply,
+} from "./protocol.js";
 import { GithubService, ServiceError } from "./service.js";
 
 function object(value: unknown): Record<string, unknown> {
@@ -54,7 +59,31 @@ export function list(service: GithubService, request: ListRequest): ListResult {
     prs: prs.slice(offset, offset + limit),
     total: prs.length,
     nextOffset: offset + limit < prs.length ? offset + limit : null,
-    pausedUntil: null,
+    pausedUntil: service.paused(),
+  };
+}
+
+function prNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+    throw new ServiceError("invalid_request", "number must be a PR number");
+  return value;
+}
+
+export function feedback(
+  service: GithubService,
+  request: Record<string, unknown>,
+): FeedbackResult {
+  const name = repo(request.repo);
+  if (name === undefined)
+    throw new ServiceError("invalid_request", "repo is required");
+  const number = prNumber(request.number);
+  service.tracked(name, number);
+  return {
+    storeId: service.store.storeId,
+    repo: name,
+    number,
+    ...service.store.readFeedback(name, number),
+    pausedUntil: service.paused(),
   };
 }
 
@@ -67,7 +96,15 @@ export function apiReply(
     const request = object(input);
     if (operation === "list") return { ok: true, data: list(service, request) };
     if (operation === "refresh")
-      return { ok: true, data: service.refresh(repo(request.repo)) };
+      return {
+        ok: true,
+        data: service.refresh(
+          repo(request.repo),
+          request.number === undefined ? undefined : prNumber(request.number),
+        ),
+      };
+    if (operation === "feedback")
+      return { ok: true, data: feedback(service, request) };
     if (operation === "operation") {
       if (
         typeof request.operationId !== "string" ||

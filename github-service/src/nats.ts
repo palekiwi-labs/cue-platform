@@ -36,6 +36,7 @@ export async function serveNats(
         delay = 1_000;
         for await (const msg of sub) {
           if (!msg.reply) continue;
+          const operation = msg.subject.slice("github.api.v1.".length);
           let reply: unknown;
           try {
             reply =
@@ -47,11 +48,7 @@ export async function serveNats(
                       message: "request too large",
                     },
                   }
-                : apiReply(
-                    service,
-                    msg.subject.slice("github.api.v1.".length),
-                    msg.json(),
-                  );
+                : apiReply(service, operation, msg.json());
           } catch {
             reply = {
               ok: false,
@@ -66,7 +63,10 @@ export async function serveNats(
                   ok: false,
                   error: {
                     code: "response_too_large",
-                    message: "reduce list limit",
+                    message:
+                      operation === "feedback"
+                        ? "feedback exceeds the broker payload limit"
+                        : "reduce list limit",
                   },
                 }),
           );
