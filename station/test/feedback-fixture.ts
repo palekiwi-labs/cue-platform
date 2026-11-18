@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FeedbackSnapshot, ReviewThread, ThreadComment } from "../src/github-feedback.js";
+import type { FeedbackResult, FeedbackThread, FeedbackThreadComment, PrFeedback } from "../../github-service/src/protocol.js";
 
 export interface GitFixture {
   root: string;
@@ -55,40 +55,46 @@ export function gitFixture(): GitFixture {
   return { root, repo, git, base, baseTip, first, head, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-export function comment(over: Partial<ThreadComment> = {}): ThreadComment {
+export function comment(over: Partial<FeedbackThreadComment> = {}): FeedbackThreadComment {
   return {
-    id: "c1", database_id: "1", author: { login: "alice", type: "User", association: "MEMBER" },
-    body: "please rename", state: "SUBMITTED", created_at: "2025-01-02T03:04:05Z", updated_at: null,
-    last_edited_at: null, url: "https://github.com/org/repo/pull/7#discussion_r1", is_minimized: false,
-    minimized_reason: null, reply_to: null, review_id: "R1", review_state: "COMMENTED", path: "a.ts",
-    commit: null, original_commit: null, line: null, original_line: null, start_line: null,
-    original_start_line: null, outdated: false, diff_hunk: null, ...over,
+    id: "c1", databaseId: "1", author: { login: "alice", type: "User", association: "MEMBER" },
+    body: "please rename", state: "SUBMITTED", createdAt: "2025-01-02T03:04:05Z", updatedAt: null,
+    lastEditedAt: null, url: "https://github.com/org/repo/pull/7#discussion_r1", isMinimized: false,
+    minimizedReason: null, replyTo: null, reviewId: "R1", reviewState: "COMMENTED", path: "a.ts",
+    commit: null, originalCommit: null, line: null, originalLine: null, startLine: null,
+    originalStartLine: null, outdated: false, ...over,
   };
 }
 
-export function thread(over: Partial<ReviewThread> = {}, c: Partial<ThreadComment> = {}): ReviewThread {
-  const comments = over.comments ?? [comment(c)];
+export function thread(over: Partial<FeedbackThread> = {}, c: Partial<FeedbackThreadComment> = {}): FeedbackThread {
+  const { diffHunk, ...rest } = c;
+  const comments = over.comments ?? [comment(rest)];
   return {
-    id: "T1", path: "a.ts", subject_type: "LINE", diff_side: "RIGHT", start_diff_side: null, line: null,
-    start_line: null, original_line: null, original_start_line: null, is_resolved: false, is_outdated: false,
-    is_collapsed: false, resolved_by: null, comments_total: comments.length, ...over, comments,
+    id: "T1", path: "a.ts", subjectType: "LINE", diffSide: "RIGHT", startDiffSide: null, line: null,
+    startLine: null, originalLine: null, originalStartLine: null, isResolved: false, isOutdated: false,
+    isCollapsed: false, resolvedBy: null, commentsTotal: comments.length, diffHunk: diffHunk ?? null, ...over, comments,
   };
 }
 
-export function snapshot(f: { head: string; baseTip: string }, threads: ReviewThread[] = [], over: Partial<FeedbackSnapshot> = {}): FeedbackSnapshot {
+export function snapshot(f: { head: string; baseTip: string }, threads: FeedbackThread[] = [], over: Partial<PrFeedback> = {}): PrFeedback {
   return {
-    schema: "station/github-feedback@1",
-    fetched_at: "2025-01-03T00:00:00Z",
-    source: "github-graphql",
     repo: "org/repo",
     pr: {
-      number: 7, title: "Rename things", url: null, state: "OPEN", is_draft: false, author: "bob",
-      head_ref: "pr", base_ref: "main", head_sha: f.head, base_sha: f.baseTip,
+      number: 7, title: "Rename things", url: null, state: "OPEN", isDraft: false, author: "bob",
+      headRef: "pr", baseRef: "main", headSha: f.head, baseSha: f.baseTip,
     },
     threads,
     conversation: [],
-    omitted_reviews: 0,
+    omittedReviews: 0,
     ...over,
+  };
+}
+
+export function result(feedback: PrFeedback | null, over: Partial<FeedbackResult> = {}): FeedbackResult {
+  return {
+    storeId: "store", repo: "org/repo", number: 7, revision: feedback === null ? 0 : 1,
+    fetchedAt: feedback === null ? null : Date.parse("2025-01-03T00:00:00Z"), attemptedAt: null,
+    sourceUpdatedAt: null, failures: 0, error: null, pausedUntil: null, feedback, ...over,
   };
 }
 

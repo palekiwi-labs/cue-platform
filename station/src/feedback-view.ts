@@ -1,17 +1,15 @@
 import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type {
+  FeedbackConversationEntry,
+  FeedbackEvent,
+  FeedbackResult,
+  FeedbackThread,
+  PrFeedback,
+  RefreshOperation,
+} from "../../github-service/src/protocol.js";
 import { BOLD, C, fit, RESET, tailPath } from "./changes.js";
-import { localGit, parseHunk, requiredCommits, resolveThread, type Located } from "./feedback-location.js";
+import { commentHunk, localGit, parseHunk, requiredCommits, resolveThread, type Located } from "./feedback-location.js";
 import { runAsync } from "./git.js";
-import {
-  type ConversationEntry,
-  feedbackCachePath,
-  type FeedbackSnapshot,
-  fetchFeedback,
-  ghGraphql,
-  loadSnapshot,
-  type ReviewThread,
-  saveSnapshot,
-} from "./github-feedback.js";
 import { markdownRows } from "./markdown.js";
 import { findingsWorktree, prContext } from "./pr-review.js";
 import type { PrTabHost } from "./pr-tabs.js";
@@ -20,7 +18,7 @@ import { NoticeView, type TabScreen } from "./tabs.js";
 const PROSE_WIDTH = 80;
 const HUNK_TAIL = 12;
 
-export type FeedbackItem = { kind: "thread"; thread: ReviewThread } | { kind: "entry"; entry: ConversationEntry };
+export type FeedbackItem = { kind: "thread"; thread: FeedbackThread } | { kind: "entry"; entry: FeedbackConversationEntry };
 
 export type FeedbackSort = "github" | "newest" | "unresolved" | "file";
 
@@ -42,37 +40,37 @@ function time(iso: string | null | undefined): number {
   return Number.isNaN(t) ? -Infinity : t;
 }
 
-function threadActivity(t: ReviewThread): number {
-  return t.comments.reduce((m, c) => Math.max(m, time(c.created_at)), -Infinity);
+function threadActivity(t: FeedbackThread): number {
+  return t.comments.reduce((m, c) => Math.max(m, time(c.createdAt)), -Infinity);
 }
 
 function newestFirst(a: number, b: number): number {
   return a === b ? 0 : a > b ? -1 : 1;
 }
 
-function threadStart(t: ReviewThread): number {
-  if (t.subject_type === "FILE") return 0;
-  return (t.line !== null ? (t.start_line ?? t.line) : (t.original_start_line ?? t.original_line)) ?? 0;
+function threadStart(t: FeedbackThread): number {
+  if (t.subjectType === "FILE") return 0;
+  return (t.line !== null ? (t.startLine ?? t.line) : (t.originalStartLine ?? t.originalLine)) ?? 0;
 }
 
-function sortThreads(threads: readonly ReviewThread[], sort: FeedbackSort): ReviewThread[] {
+function sortThreads(threads: readonly FeedbackThread[], sort: FeedbackSort): FeedbackThread[] {
   const out = [...threads];
   if (sort === "newest") out.sort((a, b) => newestFirst(threadActivity(a), threadActivity(b)));
   else if (sort === "unresolved") {
-    out.sort((a, b) => Number(a.is_resolved) - Number(b.is_resolved) || newestFirst(threadActivity(a), threadActivity(b)));
+    out.sort((a, b) => Number(a.isResolved) - Number(b.isResolved) || newestFirst(threadActivity(a), threadActivity(b)));
   } else if (sort === "file") {
     out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || threadStart(a) - threadStart(b));
   }
   return out;
 }
 
-function sortConversation(entries: readonly ConversationEntry[], sort: FeedbackSort): ConversationEntry[] {
+function sortConversation(entries: readonly FeedbackConversationEntry[], sort: FeedbackSort): FeedbackConversationEntry[] {
   const out = [...entries];
-  if (sort === "newest" || sort === "unresolved") out.sort((a, b) => newestFirst(time(a.created_at), time(b.created_at)));
+  if (sort === "newest" || sort === "unresolved") out.sort((a, b) => newestFirst(time(a.createdAt), time(b.createdAt)));
   return out;
 }
 
-export function feedbackItems(s: FeedbackSnapshot, sort: FeedbackSort = DEFAULT_FEEDBACK_SORT): FeedbackItem[] {
+export function feedbackItems(s: PrFeedback, sort: FeedbackSort = DEFAULT_FEEDBACK_SORT): FeedbackItem[] {
   return [
     ...sortThreads(s.threads, sort).map((thread) => ({ kind: "thread" as const, thread })),
     ...sortConversation(s.conversation, sort).map((entry) => ({ kind: "entry" as const, entry })),
@@ -95,30 +93,34 @@ export function when(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+export function stamp(ms: number | null): string {
+  return ms === null ? "never" : when(new Date(ms).toISOString());
+}
+
 function login(a: { login: string | null }): string {
   return a.login ?? "ghost";
 }
 
-function threadLine(t: ReviewThread): number | null {
-  return t.line ?? t.original_line;
+function threadLine(t: FeedbackThread): number | null {
+  return t.line ?? t.originalLine;
 }
 
-export function threadLocation(t: ReviewThread): string {
-  if (t.subject_type === "FILE") return `${t.path} (file)`;
+export function threadLocation(t: FeedbackThread): string {
+  if (t.subjectType === "FILE") return `${t.path} (file)`;
   const end = threadLine(t);
   if (end === null) return t.path;
-  const start = t.line !== null ? t.start_line : t.original_start_line;
+  const start = t.line !== null ? t.startLine : t.originalStartLine;
   return start !== null && start !== end ? `${t.path}:${start}-${end}` : `${t.path}:${end}`;
 }
 
-function threadTags(t: ReviewThread): string[] {
+function threadTags(t: FeedbackThread): string[] {
   const tags: string[] = [];
-  if (t.is_resolved) tags.push("resolved");
-  if (t.is_outdated) tags.push("outdated");
+  if (t.isResolved) tags.push("resolved");
+  if (t.isOutdated) tags.push("outdated");
   return tags;
 }
 
-export function entryLabel(e: ConversationEntry): string {
+export function entryLabel(e: FeedbackConversationEntry): string {
   if (e.kind !== "review") return "PR comment";
   const state = e.state?.toLowerCase().replace(/_/g, " ") ?? "";
   return state === "" || state === "commented" ? "review" : `review ${state}`;
@@ -129,9 +131,10 @@ function countText(n: number): string {
 }
 
 export interface FeedbackViewOptions {
-  snapshot: FeedbackSnapshot;
+  feedback: PrFeedback;
+  fetchedAt: number | null;
   onQuit: () => void;
-  onOpen: (thread: ReviewThread) => void;
+  onOpen: (thread: FeedbackThread) => void;
   onGeneral: () => void;
   onCopy: (text: string) => void;
   onPickSort: (current: FeedbackSort, choose: (sort: FeedbackSort) => void) => void;
@@ -150,7 +153,7 @@ export class FeedbackView implements Component {
   note = "";
 
   constructor(private readonly opts: FeedbackViewOptions) {
-    this.items = feedbackItems(opts.snapshot);
+    this.items = feedbackItems(opts.feedback);
   }
 
   sortBy(): FeedbackSort {
@@ -160,7 +163,7 @@ export class FeedbackView implements Component {
   setSort(sort: FeedbackSort): void {
     const keep = this.current();
     this.sort = sort;
-    this.items = feedbackItems(this.opts.snapshot, sort);
+    this.items = feedbackItems(this.opts.feedback, sort);
     const index = keep === undefined ? -1 : this.items.findIndex((i) => itemId(i) === itemId(keep));
     this.cursor = Math.max(0, index);
     if (index < 0) this.offset = 0;
@@ -168,8 +171,8 @@ export class FeedbackView implements Component {
 
   invalidate(): void {}
 
-  get snapshot(): FeedbackSnapshot {
-    return this.opts.snapshot;
+  get feedback(): PrFeedback {
+    return this.opts.feedback;
   }
 
   current(): FeedbackItem | undefined {
@@ -180,7 +183,7 @@ export class FeedbackView implements Component {
     this.sidebar = previous.sidebar;
     if (previous.sort !== this.sort) {
       this.sort = previous.sort;
-      this.items = feedbackItems(this.opts.snapshot, this.sort);
+      this.items = feedbackItems(this.opts.feedback, this.sort);
     }
     const prev = previous.current();
     const index = prev === undefined ? -1 : this.items.findIndex((i) => itemId(i) === itemId(prev));
@@ -279,15 +282,15 @@ export class FeedbackView implements Component {
     return rows.length === 0 ? [`${C.faint}(no text)`] : rows;
   }
 
-  private hunkRows(t: ReviewThread, w: number): string[] {
-    const hunk = t.comments[0]?.diff_hunk ?? null;
+  private hunkRows(t: FeedbackThread, w: number): string[] {
+    const hunk = commentHunk(t, t.comments[0]);
     const out = this.section("Captured diff");
     if (hunk === null || hunk === "") return [...out, `${C.faint}no diff captured for this thread`];
     const lines = parseHunk(hunk);
     if (lines === null) return [...out, ...hunk.split("\n").map((l) => `${C.dim}${l}`)];
-    const left = t.diff_side === "LEFT";
-    const end = t.original_line;
-    const start = t.original_start_line ?? end;
+    const left = t.diffSide === "LEFT";
+    const end = t.originalLine;
+    const start = t.originalStartLine ?? end;
     const shown = lines.slice(-HUNK_TAIL);
     if (lines.length > shown.length) out.push(`${C.faint}  … ${lines.length - shown.length} earlier lines`);
     for (const l of shown) {
@@ -302,48 +305,48 @@ export class FeedbackView implements Component {
     return out;
   }
 
-  private threadRows(t: ReviewThread, w: number): string[] {
+  private threadRows(t: FeedbackThread, w: number): string[] {
     const out = wrapTextWithAnsi(`${C.text}${BOLD}${threadLocation(t)}`, Math.min(w, PROSE_WIDTH));
     out.push("");
     const tag = (label: string, value: string, color = C.text): string => `${C.dim}${label} ${color}${value}${RESET}   `;
     out.push(
-      tag("state", t.is_resolved ? `resolved${t.resolved_by === null ? "" : ` by ${t.resolved_by}`}` : "unresolved", t.is_resolved ? C.dim : C.mod) +
-        (t.is_outdated ? tag("", "outdated", C.mod) : "") +
-        (t.subject_type === "FILE" ? tag("", "file comment") : ""),
+      tag("state", t.isResolved ? `resolved${t.resolvedBy === null ? "" : ` by ${t.resolvedBy}`}` : "unresolved", t.isResolved ? C.dim : C.mod) +
+        (t.isOutdated ? tag("", "outdated", C.mod) : "") +
+        (t.subjectType === "FILE" ? tag("", "file comment") : ""),
     );
-    const origin = t.comments[0]?.original_commit ?? null;
+    const origin = t.comments[0]?.originalCommit ?? null;
     const lines = [
       t.line === null ? null : `line ${t.line} at PR head`,
-      t.original_line === null ? null : `line ${t.original_line} at ${origin === null ? "original commit" : origin.slice(0, 10)}`,
+      t.originalLine === null ? null : `line ${t.originalLine} at ${origin === null ? "original commit" : origin.slice(0, 10)}`,
     ].filter((x) => x !== null);
     if (lines.length > 0) out.push(`${C.dim}${lines.join("   ")}`);
-    if (t.comments_total > t.comments.length) out.push(`${C.mod}showing ${t.comments.length} of ${t.comments_total} comments`);
+    if (t.commentsTotal > t.comments.length) out.push(`${C.mod}showing ${t.comments.length} of ${t.commentsTotal} comments`);
     out.push(...this.hunkRows(t, w));
     out.push(...this.section(`Conversation (${t.comments.length})`));
     t.comments.forEach((c, i) => {
       if (i > 0) out.push(`${C.faint}${"─".repeat(Math.min(w, PROSE_WIDTH))}`);
       const extra = [
-        c.last_edited_at !== null ? "edited" : null,
+        c.lastEditedAt !== null ? "edited" : null,
         c.state === "PENDING" ? "pending" : null,
-        c.is_minimized ? `hidden${c.minimized_reason === null ? "" : `: ${c.minimized_reason.toLowerCase()}`}` : null,
+        c.isMinimized ? `hidden${c.minimizedReason === null ? "" : `: ${c.minimizedReason.toLowerCase()}`}` : null,
       ].filter((x) => x !== null);
-      out.push(`${C.accent}${login(c.author)}${C.dim}  ${when(c.created_at)}${extra.length > 0 ? `  ${extra.join("  ")}` : ""}`);
+      out.push(`${C.accent}${login(c.author)}${C.dim}  ${when(c.createdAt)}${extra.length > 0 ? `  ${extra.join("  ")}` : ""}`);
       out.push(...this.body(c.body, w));
       out.push("");
     });
     return out;
   }
 
-  private entryRows(e: ConversationEntry, w: number): string[] {
+  private entryRows(e: FeedbackConversationEntry, w: number): string[] {
     const head = e.kind === "review" ? `review ${e.state?.toLowerCase().replace("_", " ") ?? ""}` : "comment";
     const out = wrapTextWithAnsi(`${C.text}${BOLD}${head}`, Math.min(w, PROSE_WIDTH));
     out.push("");
     const extra = [
-      e.last_edited_at !== null ? "edited" : null,
+      e.lastEditedAt !== null ? "edited" : null,
       e.commit === null ? null : `at ${e.commit.slice(0, 10)}`,
-      e.is_minimized ? `hidden${e.minimized_reason === null ? "" : `: ${e.minimized_reason.toLowerCase()}`}` : null,
+      e.isMinimized ? `hidden${e.minimizedReason === null ? "" : `: ${e.minimizedReason.toLowerCase()}`}` : null,
     ].filter((x) => x !== null);
-    out.push(`${C.accent}${login(e.author)}${C.dim}  ${when(e.created_at)}${extra.length > 0 ? `  ${extra.join("  ")}` : ""}`);
+    out.push(`${C.accent}${login(e.author)}${C.dim}  ${when(e.createdAt)}${extra.length > 0 ? `  ${extra.join("  ")}` : ""}`);
     out.push("");
     out.push(...this.body(e.body, w));
     out.push("");
@@ -351,7 +354,7 @@ export class FeedbackView implements Component {
   }
 
   private renderList(height: number, w: number): string[] {
-    const s = this.opts.snapshot;
+    const s = this.opts.feedback;
     type Row = { text: string; item: number | null };
     const rows: Row[] = [];
     const header = (label: string, count: number): void => {
@@ -372,14 +375,14 @@ export class FeedbackView implements Component {
       if (item.kind !== "thread") return;
       const t = item.thread;
       const first = t.comments[0];
-      entry(i, tailPath(threadLocation(t), w - 1), threadTags(t), first === undefined ? null : login(first.author), t.comments_total, t.is_resolved);
+      entry(i, tailPath(threadLocation(t), w - 1), threadTags(t), first === undefined ? null : login(first.author), t.commentsTotal, t.isResolved);
     });
     header("Conversation", s.conversation.length);
     if (s.conversation.length === 0) rows.push({ text: ` ${C.faint}no general comments`, item: null });
     this.items.forEach((item, i) => {
       if (item.kind !== "entry") return;
       const e = item.entry;
-      entry(i, entryLabel(e), e.is_minimized ? ["hidden"] : [], login(e.author), 1, e.is_minimized);
+      entry(i, entryLabel(e), e.isMinimized ? ["hidden"] : [], login(e.author), 1, e.isMinimized);
     });
     const first = rows.findIndex((r) => r.item === this.cursor);
     if (first >= 0) {
@@ -399,17 +402,17 @@ export class FeedbackView implements Component {
     const total = Math.max(8, process.stdout.rows ?? 40);
     const bodyH = total - 3;
     this.lastHeight = bodyH;
-    const s = this.opts.snapshot;
+    const s = this.opts.feedback;
     const out: string[] = [];
     out.push(C.titleBg + fit(` ${C.text}${BOLD}github  #${s.pr.number}  ${s.pr.title}`, width) + RESET);
-    const unresolved = s.threads.filter((t) => !t.is_resolved).length;
-    const moved = this.opts.prHead !== undefined && this.opts.prHead !== s.pr.head_sha
+    const unresolved = s.threads.filter((t) => !t.isResolved).length;
+    const moved = this.opts.prHead !== undefined && this.opts.prHead !== s.pr.headSha
       ? `   ${C.mod}PR head in station is ${this.opts.prHead.slice(0, 10)}` : "";
     const note = this.note === "" ? "" : `   ${C.mod}${this.note}`;
     out.push(
       C.barBg +
         fit(
-          ` ${C.dim}fetched ${C.text}${when(s.fetched_at)}${C.dim}   head ${C.text}${s.pr.head_sha.slice(0, 10)}${C.dim}   ` +
+          ` ${C.dim}fetched ${C.text}${stamp(this.opts.fetchedAt)}${C.dim}   head ${C.text}${s.pr.headSha.slice(0, 10)}${C.dim}   ` +
             `${s.threads.length} threads (${unresolved} unresolved)   ${s.conversation.length} conversation${moved}${note}`,
           width,
         ) +
@@ -438,7 +441,7 @@ export class FeedbackView implements Component {
     const pos = this.items.length === 0 ? "" : `sort: ${sort}  item ${this.cursor + 1}/${this.items.length} `;
     const right = `${more}${C.dim}${pos}`;
     const left = this.notice === null
-      ? ` ${k("R", "fetch")}${k("↑/↓ ^↑/^↓", "item")}${k("⇧↑/⇧↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("y", "copy link")}` +
+      ? ` ${k("R", "refresh")}${k("↑/↓ ^↑/^↓", "item")}${k("⇧↑/⇧↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("y", "copy link")}` +
         `${k("s", "sort")}${k("t", this.sidebar ? "hide list" : "show list")}${k("q", "quit")}`
       : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, Math.max(1, width - visibleWidth(right) - 2), "…");
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
@@ -448,18 +451,22 @@ export class FeedbackView implements Component {
 }
 
 export interface FeedbackTabDeps {
-  load: () => FeedbackSnapshot | null;
-  fetch: () => Promise<FeedbackSnapshot>;
-  save: (snapshot: FeedbackSnapshot) => void;
+  read: () => Promise<FeedbackResult>;
+  refresh: (onProgress: (operation: RefreshOperation) => void) => Promise<RefreshOperation>;
+  watch: (listener: (event: FeedbackEvent) => void) => () => void;
   fetchCommits: (shas: string[]) => Promise<void>;
 }
 
+export function serviceRepo(host: PrTabHost): string {
+  return host.repoSlug.toLowerCase();
+}
+
 export function defaultFeedbackDeps(host: PrTabHost): FeedbackTabDeps {
-  const path = feedbackCachePath(host.repoSlug, host.pr);
+  const repo = serviceRepo(host);
   return {
-    load: () => loadSnapshot(path),
-    fetch: () => fetchFeedback(ghGraphql(host.repo), host.repoSlug, host.pr),
-    save: (s) => saveSnapshot(path, s),
+    read: () => host.github.feedback(repo, host.pr),
+    refresh: (onProgress) => host.github.refreshFeedback(repo, host.pr, onProgress),
+    watch: (listener) => host.github.onFeedback(listener),
     fetchCommits: async (shas) => {
       await runAsync(host.repo, ["fetch", "-q", "--no-tags", "origin", ...shas]);
     },
@@ -470,34 +477,97 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+type Phase = { kind: "loading" } | { kind: "refreshing"; pausedUntil: number | null } | { kind: "idle" };
+
 /**
- * The github tab of a PR: shows the saved feedback snapshot and fetches from
- * GitHub only on R. Opening a thread resolves its revision and side-specific
- * line first and refuses locations it cannot verify.
+ * The github tab of a PR: shows the PR feedback snapshot of the GitHub
+ * service and asks the service to refetch it from GitHub only on R. Feedback
+ * events for the PR mark the shown data as stale without replacing it.
+ * Opening a thread resolves its revision and side-specific line first and
+ * refuses locations it cannot verify.
  */
 export class FeedbackTab implements TabScreen {
   private view: FeedbackView | null = null;
-  private state: { kind: "none" } | { kind: "fetching" } | { kind: "error"; text: string } = { kind: "none" };
+  private result: FeedbackResult | null = null;
+  private phase: Phase = { kind: "loading" };
+  private error: string | null = null;
+  private latest: { storeId: string; revision: number } | null = null;
+  private progress = "";
   private opening = false;
+  private closed = false;
+  private readonly repo: string;
+  private readonly unwatch: () => void;
 
   constructor(
     private readonly host: PrTabHost,
     private readonly deps: FeedbackTabDeps = defaultFeedbackDeps(host),
   ) {
-    try {
-      const snapshot = deps.load();
-      if (snapshot !== null) this.use(snapshot);
-    } catch (e) {
-      this.state = { kind: "error", text: `saved snapshot unreadable: ${errText(e)}` };
-    }
+    this.repo = serviceRepo(host);
+    this.unwatch = deps.watch((event) => this.onEvent(event));
+    void this.load().then((failure) => this.finish(failure));
   }
 
-  private use(snapshot: FeedbackSnapshot): void {
-    if (snapshot.pr.number !== this.host.pr) throw new Error(`snapshot is for #${snapshot.pr.number}, not #${this.host.pr}`);
+  private onEvent(event: FeedbackEvent): void {
+    if (this.closed || event.repo !== this.repo || event.number !== this.host.pr) return;
+    const latest = this.latest;
+    if (latest === null || latest.storeId !== event.storeId || event.revision > latest.revision) {
+      this.latest = { storeId: event.storeId, revision: event.revision };
+    }
+    this.changed();
+  }
+
+  get stale(): boolean {
+    const latest = this.latest;
+    if (latest === null) return false;
+    const shown = this.result;
+    return shown === null || shown.storeId !== latest.storeId || latest.revision > shown.revision;
+  }
+
+  private paused(pausedUntil: number | null | undefined): string | null {
+    return pausedUntil != null && pausedUntil > Date.now() ? `GitHub rate limited until ${stamp(pausedUntil)}` : null;
+  }
+
+  private status(): { text: string; error: boolean }[] {
+    const out: { text: string; error: boolean }[] = [];
+    if (this.phase.kind === "refreshing") {
+      const paused = this.paused(this.phase.pausedUntil);
+      out.push({ text: paused === null ? "refreshing through GitHub service…" : `refresh waiting: ${paused}`, error: false });
+    }
+    if (this.error !== null) out.push({ text: this.error, error: true });
+    if (this.result?.error != null) out.push({ text: `last GitHub fetch failed: ${this.result.error}`, error: true });
+    if (this.phase.kind !== "refreshing") {
+      const paused = this.paused(this.result?.pausedUntil);
+      if (paused !== null) out.push({ text: paused, error: true });
+    }
+    if (this.stale) out.push({ text: "new feedback available · R refresh", error: false });
+    if (this.progress !== "") out.push({ text: this.progress, error: false });
+    return out;
+  }
+
+  private changed(): void {
+    if (this.view !== null) {
+      this.view.note = this.status()
+        .map((s) => `${s.error ? C.del : C.mod}${s.text}`)
+        .join(`${C.dim} · `);
+    }
+    this.host.requestRender?.();
+  }
+
+  private use(result: FeedbackResult): void {
+    if (result.repo !== this.repo || result.number !== this.host.pr) {
+      throw new Error(`feedback is for ${result.repo}#${result.number}, not ${this.repo}#${this.host.pr}`);
+    }
+    this.result = result;
+    const feedback = result.feedback;
+    if (feedback === null) {
+      this.view = null;
+      return;
+    }
     const next = new FeedbackView({
-      snapshot,
+      feedback,
+      fetchedAt: result.fetchedAt,
       onQuit: this.host.onQuit,
-      onOpen: (t) => void this.open(t, snapshot),
+      onOpen: (t) => void this.open(t, feedback),
       onGeneral: () =>
         this.host.showPopup({ title: "open", text: "general PR comments have no code location to open", footer: "any key" }, true),
       onCopy: (text) => {
@@ -519,63 +589,78 @@ export class FeedbackTab implements TabScreen {
     this.view = next;
   }
 
-  private notice(): TabScreen {
-    const n = this.host.pr;
-    const body =
-      this.state.kind === "fetching"
-        ? ["fetching review threads and comments from GitHub…"]
-        : this.state.kind === "error"
-          ? [this.state.text, "", "R fetch again from GitHub"]
-          : [
-              `no GitHub feedback fetched for #${n} yet`,
-              "",
-              "R fetch review threads and PR comments from GitHub (read-only)",
-            ];
-    return new NoticeView({ title: `github  #${n}`, subtitle: prContext(this.host.repoSlug, n), body, onQuit: this.host.onQuit, hints: "R fetch" });
+  private async load(): Promise<string | null> {
+    try {
+      const result = await this.deps.read();
+      if (!this.closed) this.use(result);
+      return null;
+    } catch (e) {
+      return `GitHub service: ${errText(e)}`;
+    }
   }
 
-  private setNote(text: string): void {
-    if (this.view !== null) this.view.note = text;
-    this.host.requestRender?.();
+  private finish(failure: string | null): void {
+    if (this.closed) return;
+    this.phase = { kind: "idle" };
+    this.error = failure;
+    if (failure !== null && this.view !== null) {
+      this.host.showPopup({ title: "github", text: failure, error: true, footer: "any key" }, true);
+    }
+    this.changed();
+  }
+
+  private notice(): TabScreen {
+    const n = this.host.pr;
+    const status = this.status().map((s) => s.text);
+    const hint = "R refresh through the GitHub service (read-only)";
+    const body =
+      this.phase.kind === "loading"
+        ? ["loading feedback from the GitHub service…"]
+        : this.phase.kind === "refreshing"
+          ? status
+          : this.result === null
+            ? [...status, "", hint]
+            : [`no GitHub feedback collected for #${n} yet`, ...status, "", hint];
+    return new NoticeView({ title: `github  #${n}`, subtitle: prContext(this.host.repoSlug, n), body, onQuit: this.host.onQuit, hints: "R refresh" });
   }
 
   async refresh(): Promise<void> {
-    if (this.state.kind === "fetching") return;
-    this.state = { kind: "fetching" };
-    this.setNote("fetching from GitHub…");
+    if (this.phase.kind !== "idle" || this.closed) return;
+    const phase = { kind: "refreshing" as const, pausedUntil: null as number | null };
+    this.phase = phase;
+    this.error = null;
+    this.changed();
+    let failure: string | null = null;
     try {
-      const snapshot = await this.deps.fetch();
-      this.use(snapshot);
-      this.state = { kind: "none" };
-      try {
-        this.deps.save(snapshot);
-        this.setNote("");
-      } catch (e) {
-        this.setNote(`not saved: ${errText(e)}`);
-      }
+      const operation = await this.deps.refresh((op) => {
+        phase.pausedUntil = op.pausedUntil ?? null;
+        this.changed();
+      });
+      const outcome = operation.feedback;
+      if (outcome?.state === "error") failure = `refresh failed: ${outcome.error ?? "unknown error"}`;
     } catch (e) {
-      const text = `fetch failed: ${errText(e)}`;
-      this.state = { kind: "error", text };
-      this.setNote(this.view === null ? "" : "fetch failed, showing the previous snapshot");
-      if (this.view !== null) this.host.showPopup({ title: "github", text, error: true, footer: "any key" }, true);
+      failure = `GitHub service: ${errText(e)}`;
     }
-    this.host.requestRender?.();
+    const reload = await this.load();
+    this.finish(failure ?? reload);
   }
 
-  async open(thread: ReviewThread, snapshot: FeedbackSnapshot): Promise<void> {
+  async open(thread: FeedbackThread, feedback: PrFeedback): Promise<void> {
     if (this.opening) return;
     this.opening = true;
     const fail = (text: string): void =>
       this.host.showPopup({ title: "open", text: `${text}\n\nThe captured diff stays in the detail view.`, error: true, footer: "any key" }, true);
     try {
       const git = localGit(this.host.repo);
-      const missing = [...new Set(requiredCommits(thread, snapshot))].filter((s) => !git.hasCommit(s));
+      const missing = [...new Set(requiredCommits(thread, feedback))].filter((s) => !git.hasCommit(s));
       if (missing.length > 0) {
-        this.setNote(`fetching ${missing.map((s) => s.slice(0, 10)).join(" ")} from origin…`);
+        this.progress = `fetching ${missing.map((s) => s.slice(0, 10)).join(" ")} from origin…`;
+        this.changed();
         await this.deps.fetchCommits(missing).catch(() => undefined);
-        this.setNote("");
+        this.progress = "";
+        this.changed();
       }
-      const loc = resolveThread(thread, snapshot, git);
+      const loc = resolveThread(thread, feedback, git);
       if (!loc.ok) {
         fail(`cannot open ${threadLocation(thread)}: ${loc.reason}`);
         return;
@@ -618,6 +703,12 @@ export class FeedbackTab implements TabScreen {
 
   invalidate(): void {
     this.view?.invalidate();
+  }
+
+  dispose(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.unwatch();
   }
 
   handleInput(data: string): void {

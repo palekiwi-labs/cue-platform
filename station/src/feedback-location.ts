@@ -1,5 +1,5 @@
 import { catFiles, run } from "./git.js";
-import type { FeedbackSnapshot, ReviewThread } from "./github-feedback.js";
+import type { FeedbackThread, FeedbackThreadComment, PrFeedback } from "../../github-service/src/protocol.js";
 
 export interface HunkLine {
   kind: " " | "-" | "+";
@@ -58,25 +58,30 @@ function short(sha: string): string {
   return sha.slice(0, 10);
 }
 
-function side(thread: ReviewThread): "LEFT" | "RIGHT" | null {
-  if (thread.diff_side === "LEFT" || thread.diff_side === "RIGHT") return thread.diff_side;
-  return thread.subject_type === "FILE" ? "RIGHT" : null;
+/** The diff hunk a comment was made on: its own when it differs from the thread's, else the thread's. */
+export function commentHunk(thread: FeedbackThread, comment: FeedbackThreadComment | undefined): string | null {
+  return comment?.diffHunk === undefined ? thread.diffHunk : comment.diffHunk;
 }
 
-function isCurrent(thread: ReviewThread): boolean {
-  return !thread.is_outdated && (thread.line !== null || thread.subject_type === "FILE");
+function side(thread: FeedbackThread): "LEFT" | "RIGHT" | null {
+  if (thread.diffSide === "LEFT" || thread.diffSide === "RIGHT") return thread.diffSide;
+  return thread.subjectType === "FILE" ? "RIGHT" : null;
+}
+
+function isCurrent(thread: FeedbackThread): boolean {
+  return !thread.isOutdated && (thread.line !== null || thread.subjectType === "FILE");
 }
 
 /** The commit a thread's coordinates refer to: the PR head for current threads, else the commit it was made on. */
-export function threadCommit(thread: ReviewThread, snapshot: FeedbackSnapshot): string | null {
-  return isCurrent(thread) ? snapshot.pr.head_sha : (thread.comments[0]?.original_commit ?? null);
+export function threadCommit(thread: FeedbackThread, feedback: PrFeedback): string | null {
+  return isCurrent(thread) ? feedback.pr.headSha : (thread.comments[0]?.originalCommit ?? null);
 }
 
 /** Commits the location of a thread depends on, for fetching before resolving. */
-export function requiredCommits(thread: ReviewThread, snapshot: FeedbackSnapshot): string[] {
-  const commit = threadCommit(thread, snapshot);
+export function requiredCommits(thread: FeedbackThread, feedback: PrFeedback): string[] {
+  const commit = threadCommit(thread, feedback);
   if (commit === null) return [];
-  return side(thread) === "LEFT" ? [commit, snapshot.pr.base_sha] : [commit];
+  return side(thread) === "LEFT" ? [commit, feedback.pr.baseSha] : [commit];
 }
 
 /**
@@ -84,17 +89,17 @@ export function requiredCommits(thread: ReviewThread, snapshot: FeedbackSnapshot
  * and line on the side it was written on. Lines GitHub reports are checked
  * against the captured diff hunk; any mismatch is reported, never guessed.
  */
-export function resolveThread(thread: ReviewThread, snapshot: FeedbackSnapshot, git: GitAccess): Located {
+export function resolveThread(thread: FeedbackThread, feedback: PrFeedback, git: GitAccess): Located {
   const fail = (reason: string): Located => ({ ok: false, reason });
   const first = thread.comments[0];
   if (first === undefined) return fail("the thread has no comments");
   const s = side(thread);
   if (s === null) return fail(`GitHub reported no diff side for ${thread.path}`);
-  const fileLevel = thread.subject_type === "FILE";
+  const fileLevel = thread.subjectType === "FILE";
   const current = isCurrent(thread);
-  const commit = threadCommit(thread, snapshot);
+  const commit = threadCommit(thread, feedback);
   if (commit === null) return fail("GitHub reported no original commit for this outdated thread");
-  const line = fileLevel ? 1 : current ? thread.line : thread.original_line;
+  const line = fileLevel ? 1 : current ? thread.line : thread.originalLine;
   if (line === null) return fail("GitHub reported no line for this thread");
   if (!git.hasCommit(commit)) return fail(`commit ${short(commit)} is not in the local repository and could not be fetched`);
 
@@ -102,11 +107,11 @@ export function resolveThread(thread: ReviewThread, snapshot: FeedbackSnapshot, 
   let path = thread.path;
   let base: string | null = null;
   if (s === "LEFT") {
-    if (!git.hasCommit(snapshot.pr.base_sha)) {
-      return fail(`base ${short(snapshot.pr.base_sha)} is not in the local repository and could not be fetched`);
+    if (!git.hasCommit(feedback.pr.baseSha)) {
+      return fail(`base ${short(feedback.pr.baseSha)} is not in the local repository and could not be fetched`);
     }
-    const mb = git.mergeBase(commit, snapshot.pr.base_sha);
-    if (mb === null) return fail(`no merge-base between ${short(commit)} and base ${short(snapshot.pr.base_sha)}`);
+    const mb = git.mergeBase(commit, feedback.pr.baseSha);
+    if (mb === null) return fail(`no merge-base between ${short(commit)} and base ${short(feedback.pr.baseSha)}`);
     rev = mb;
     if (git.fileAt(rev, path) === null) {
       const old = git.renamedFrom(rev, commit, path);
@@ -114,7 +119,7 @@ export function resolveThread(thread: ReviewThread, snapshot: FeedbackSnapshot, 
       path = old;
     }
   } else {
-    base = git.mergeBase(commit, snapshot.pr.base_sha);
+    base = git.mergeBase(commit, feedback.pr.baseSha);
   }
 
   const src = git.fileAt(rev, path);
@@ -126,7 +131,7 @@ export function resolveThread(thread: ReviewThread, snapshot: FeedbackSnapshot, 
   const where = s === "LEFT" ? `base side at merge-base ${short(rev)}` : current ? `PR head ${short(rev)}` : `commit ${short(rev)}`;
   if (fileLevel) return { ok: true, rev, path, line, side: s, base, note: `file comment, ${where}` };
 
-  const anchor = hunkAnchor(first.diff_hunk, s);
+  const anchor = hunkAnchor(commentHunk(thread, first), s);
   if (anchor === null) {
     if (s === "LEFT") return fail("the captured diff hunk does not end on a base-side line, so the old-side location cannot be verified");
     return { ok: true, rev, path, line, side: s, base, note: `${where} (no captured diff to verify against)` };

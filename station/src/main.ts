@@ -17,6 +17,7 @@ import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkth
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
+import { GithubClient } from "../../github-service/src/client.js";
 import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
 import { preparerRun, submitToSupervisor } from "./prepare.js";
@@ -235,6 +236,7 @@ function prTabs(
   router: Router,
   review: Review,
   chosen: Map<string, string>,
+  github: GithubClient,
   onQuit: () => void,
   quitLabel?: string,
 ): TabsScreen {
@@ -256,6 +258,7 @@ function prTabs(
     prHead: review.packet.head_sha,
     prWorktree: review.repoPath,
     chosen,
+    github,
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
@@ -274,8 +277,16 @@ function prTabs(
 
 function showReview(review: Review): void {
   const router = new Router();
-  const quit = (): void => router.quit();
-  router.show(review.pr !== null ? prTabs(router, review, new Map(), quit) : changesView(router, review, quit));
+  if (review.pr === null) {
+    router.show(changesView(router, review, () => router.quit()));
+  } else {
+    const github = new GithubClient();
+    const tabs = prTabs(router, review, new Map(), github, () => {
+      tabs.dispose();
+      void github.close().finally(() => router.quit());
+    });
+    router.show(tabs);
+  }
   router.tui.start();
 }
 
@@ -364,7 +375,11 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(prTabs(router, review, chosen, toList, "back"));
+      const tabs = prTabs(router, review, chosen, source.client, () => {
+        tabs.dispose();
+        toList();
+      }, "back");
+      router.show(tabs);
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {

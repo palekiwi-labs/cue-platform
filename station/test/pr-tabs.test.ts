@@ -44,6 +44,21 @@ test("number keys switch tabs and keep each screen", () => {
   assert.equal(built, 2);
 });
 
+test("dispose releases the built screens only", () => {
+  const disposed: string[] = [];
+  const screen = (name: string): TabScreen => Object.assign(new Fake(name), { dispose: () => void disposed.push(name) });
+  const tabs = new TabsScreen([
+    { label: "changes", screen: () => screen("a") },
+    { label: "findings", screen: () => screen("b") },
+    { label: "github", screen: () => screen("c") },
+  ]);
+  tabs.render(80);
+  tabs.handleInput("3");
+  tabs.render(80);
+  tabs.dispose();
+  assert.deepEqual(disposed, ["a", "c"]);
+});
+
 test("footer carries the tab strip with the active tab marked", () => {
   const tabs = new TabsScreen([
     { label: "changes", screen: () => new Fake("a") },

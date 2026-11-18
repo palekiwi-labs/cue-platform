@@ -4,6 +4,7 @@ import { C, fit, RESET } from "./changes.js";
 export interface TabScreen extends Component {
   handleInput(data: string): void;
   handleEscape?(): boolean;
+  dispose?(): void;
 }
 
 export interface Tab {
@@ -55,6 +56,11 @@ export class TabsScreen implements TabScreen {
 
   handleEscape(): boolean {
     return this.current().handleEscape?.() === true;
+  }
+
+  dispose(): void {
+    for (const screen of this.built.values()) screen.dispose?.();
+    this.built.clear();
   }
 
   render(width: number): string[] {

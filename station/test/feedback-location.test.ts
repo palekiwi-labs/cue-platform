@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hunkAnchor, localGit, parseHunk, requiredCommits, resolveThread } from "../src/feedback-location.js";
+import { commentHunk, hunkAnchor, localGit, parseHunk, requiredCommits, resolveThread } from "../src/feedback-location.js";
 import type { Located } from "../src/feedback-location.js";
-import { gitFixture, LEFT_HUNK, RENAME_HUNK, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
+import { comment, gitFixture, LEFT_HUNK, RENAME_HUNK, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
 
 const reason = (l: Located): string => (l.ok ? "" : l.reason);
 
@@ -21,7 +21,7 @@ test("parseHunk numbers both sides and the anchor is the last line on the commen
 test("current right-side threads open at the PR head on the reported line", () => {
   const f = gitFixture();
   try {
-    const t = thread({ line: 7, original_line: 5 }, { original_commit: f.first, diff_hunk: RIGHT_HUNK });
+    const t = thread({ line: 7, originalLine: 5 }, { originalCommit: f.first, diffHunk: RIGHT_HUNK });
     const s = snapshot(f, [t]);
     assert.deepEqual(requiredCommits(t, s), [f.head]);
     const loc = resolveThread(t, s, localGit(f.repo));
@@ -35,15 +35,15 @@ test("outdated threads open at their original commit, and mismatching lines are 
   const f = gitFixture();
   try {
     const git = localGit(f.repo);
-    const outdated = thread({ is_outdated: true, original_line: 5 }, { original_commit: f.first, diff_hunk: RIGHT_HUNK });
+    const outdated = thread({ isOutdated: true, originalLine: 5 }, { originalCommit: f.first, diffHunk: RIGHT_HUNK });
     const loc = resolveThread(outdated, snapshot(f, [outdated]), git);
     assert.equal(loc.ok, true);
     assert.equal(loc.ok && `${loc.rev}:${loc.path}:${loc.line}`, `${f.first}:a.ts:5`);
-    const wrong = thread({ is_outdated: true, original_line: 6 }, { original_commit: f.first, diff_hunk: RIGHT_HUNK });
+    const wrong = thread({ isOutdated: true, originalLine: 6 }, { originalCommit: f.first, diffHunk: RIGHT_HUNK });
     const refused = resolveThread(wrong, snapshot(f, [wrong]), git);
     assert.equal(refused.ok, false);
     assert.match(reason(refused), /hunk ends at line 5, GitHub reports line 6/);
-    const drifted = thread({ line: 6 }, { original_commit: f.first, diff_hunk: RIGHT_HUNK });
+    const drifted = thread({ line: 6 }, { originalCommit: f.first, diffHunk: RIGHT_HUNK });
     const moved = resolveThread(drifted, snapshot(f, [drifted]), git);
     assert.match(reason(moved), /does not match the commented line/);
   } finally {
@@ -55,17 +55,17 @@ test("old-side threads open at the merge-base, following renames, and need a bas
   const f = gitFixture();
   try {
     const git = localGit(f.repo);
-    const deleted = thread({ diff_side: "LEFT", line: 8, original_line: 8 }, { original_commit: f.first, diff_hunk: LEFT_HUNK });
+    const deleted = thread({ diffSide: "LEFT", line: 8, originalLine: 8 }, { originalCommit: f.first, diffHunk: LEFT_HUNK });
     const s = snapshot(f, [deleted]);
     assert.deepEqual(requiredCommits(deleted, s), [f.head, f.baseTip]);
     const loc = resolveThread(deleted, s, git);
     assert.equal(loc.ok && `${loc.rev}:${loc.path}:${loc.line}:${loc.side}:${loc.base}`, `${f.base}:a.ts:8:LEFT:null`);
-    const outdatedLeft = thread({ diff_side: "LEFT", is_outdated: true, original_line: 8 }, { original_commit: f.first, diff_hunk: LEFT_HUNK });
+    const outdatedLeft = thread({ diffSide: "LEFT", isOutdated: true, originalLine: 8 }, { originalCommit: f.first, diffHunk: LEFT_HUNK });
     assert.equal(resolveThread(outdatedLeft, s, git).ok, true);
-    const renamed = thread({ path: "new.ts", diff_side: "LEFT", line: 3, original_line: 3 }, { original_commit: f.first, diff_hunk: RENAME_HUNK });
+    const renamed = thread({ path: "new.ts", diffSide: "LEFT", line: 3, originalLine: 3 }, { originalCommit: f.first, diffHunk: RENAME_HUNK });
     const r = resolveThread(renamed, s, git);
     assert.equal(r.ok && `${r.path}:${r.line}`, "old.ts:3");
-    const plus = thread({ diff_side: "LEFT", line: 5, original_line: 5 }, { original_commit: f.first, diff_hunk: RIGHT_HUNK });
+    const plus = thread({ diffSide: "LEFT", line: 5, originalLine: 5 }, { originalCommit: f.first, diffHunk: RIGHT_HUNK });
     const p = resolveThread(plus, s, git);
     assert.match(reason(p), /does not end on a base-side line/);
   } finally {
@@ -78,18 +78,26 @@ test("missing commits, sides and lines are reported instead of guessed; file com
   try {
     const git = localGit(f.repo);
     const s = snapshot(f);
-    const gone = thread({ is_outdated: true, original_line: 5 }, { original_commit: "f".repeat(40), diff_hunk: RIGHT_HUNK });
+    const gone = thread({ isOutdated: true, originalLine: 5 }, { originalCommit: "f".repeat(40), diffHunk: RIGHT_HUNK });
     assert.match(reason(resolveThread(gone, s, git)), /not in the local repository/);
-    const noSide = thread({ diff_side: null, line: 7 });
+    const noSide = thread({ diffSide: null, line: 7 });
     assert.equal(resolveThread(noSide, s, git).ok, false);
-    const noLine = thread({ is_outdated: true }, { original_commit: f.first });
+    const noLine = thread({ isOutdated: true }, { originalCommit: f.first });
     assert.match(reason(resolveThread(noLine, s, git)), /no line/);
-    const tooFar = thread({ line: 99 }, { diff_hunk: RIGHT_HUNK });
+    const tooFar = thread({ line: 99 }, { diffHunk: RIGHT_HUNK });
     assert.match(reason(resolveThread(tooFar, s, git)), /has 11 lines/);
-    const file = thread({ subject_type: "FILE", diff_side: null });
+    const file = thread({ subjectType: "FILE", diffSide: null });
     const loc = resolveThread(file, s, git);
     assert.equal(loc.ok && `${loc.rev}:${loc.line}`, `${f.head}:1`);
   } finally {
     f.cleanup();
   }
+});
+
+test("a comment's own diff hunk overrides the thread's, which is used otherwise", () => {
+  const t = thread({ diffHunk: RIGHT_HUNK, comments: [comment(), comment({ id: "c2", diffHunk: LEFT_HUNK }), comment({ id: "c3", diffHunk: null })] });
+  assert.equal(commentHunk(t, t.comments[0]), RIGHT_HUNK);
+  assert.equal(commentHunk(t, t.comments[1]), LEFT_HUNK);
+  assert.equal(commentHunk(t, t.comments[2]), null);
+  assert.equal(commentHunk(t, undefined), RIGHT_HUNK);
 });

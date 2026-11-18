@@ -3,78 +3,126 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { GithubClient, GithubClientError } from "../../github-service/src/client.js";
+import type {
+  FeedbackConversationEntry,
+  FeedbackEvent,
+  FeedbackResult,
+  PrFeedback,
+  RefreshOperation,
+} from "../../github-service/src/protocol.js";
 import { FeedbackTab, type FeedbackTabDeps, when } from "../src/feedback-view.js";
-import type { ConversationEntry, FeedbackSnapshot } from "../src/github-feedback.js";
 import type { PopupContent } from "../src/popup.js";
 import type { PrTabHost } from "../src/pr-tabs.js";
-import { comment, gitFixture, type GitFixture, LEFT_HUNK, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
+import { comment, gitFixture, type GitFixture, LEFT_HUNK, result, RIGHT_HUNK, snapshot, thread } from "./feedback-fixture.js";
 
-const entry: ConversationEntry = {
-  kind: "review", id: "R9", database_id: "9", author: { login: "carol", type: "User", association: "MEMBER" },
-  body: "Looks good overall", state: "APPROVED", created_at: "2025-01-02T10:00:00Z", updated_at: null,
-  last_edited_at: null, url: "https://github.com/org/repo/pull/7#pullrequestreview-9", commit: null,
-  is_minimized: false, minimized_reason: null,
+const entry: FeedbackConversationEntry = {
+  kind: "review", id: "R9", databaseId: "9", author: { login: "carol", type: "User", association: "MEMBER" },
+  body: "Looks good overall", state: "APPROVED", createdAt: "2025-01-02T10:00:00Z", updatedAt: null,
+  lastEditedAt: null, url: "https://github.com/org/repo/pull/7#pullrequestreview-9", commit: null,
+  isMinimized: false, minimizedReason: null,
 };
 
-function setup(f: GitFixture, deps: Partial<FeedbackTabDeps> = {}) {
+type Progress = (operation: RefreshOperation) => void;
+
+interface SetupOptions {
+  data?: PrFeedback | null;
+  next?: PrFeedback;
+  read?: () => Promise<FeedbackResult>;
+  refresh?: (onProgress: Progress) => Promise<RefreshOperation>;
+  fetchCommits?: (shas: string[]) => Promise<void>;
+}
+
+function operation(over: Partial<NonNullable<RefreshOperation["feedback"]>> = {}, pausedUntil: number | null = null): RefreshOperation {
+  return {
+    operationId: "op", createdAt: 0, completedAt: null, state: "pending", repositories: {}, pausedUntil,
+    feedback: { repo: "org/repo", number: 7, state: "pending", ...over },
+  };
+}
+
+function done(over: Partial<NonNullable<RefreshOperation["feedback"]>> = {}): RefreshOperation {
+  return { ...operation({ state: "success", revision: 2, changed: true, ...over }), state: "complete", completedAt: 1 };
+}
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+async function setup(f: GitFixture, o: SetupOptions = {}) {
   const popups: { content: PopupContent; keys?: Record<string, () => void> }[] = [];
   const opened: string[] = [];
   let renders = 0;
   const host: PrTabHost = {
-    repo: f.repo, repoSlug: "org/repo", pr: 7, prHead: f.head, prWorktree: f.repo, chosen: new Map(),
+    repo: f.repo, repoSlug: "Org/Repo", pr: 7, prHead: f.head, prWorktree: f.repo, chosen: new Map(),
+    github: new GithubClient("nats://127.0.0.1:1"),
     onQuit: () => {},
     openPath: (cwd, path, line, base) => opened.push(`${cwd === f.repo ? "pr" : cwd}|${path}:${line}|${base ?? "-"}`),
     showPopup: (content, _d, keys) => popups.push({ content, keys }),
     requestRender: () => renders++,
   };
-  const saved: FeedbackSnapshot[] = [];
-  const fetchCalls: number[] = [];
-  const full: FeedbackTabDeps = {
-    load: () => null,
-    fetch: async () => {
-      fetchCalls.push(1);
-      throw new Error("not stubbed");
+  const calls = { read: 0, refresh: 0 };
+  const listeners = new Set<(event: FeedbackEvent) => void>();
+  const deps: FeedbackTabDeps = {
+    read: async () => {
+      calls.read++;
+      if (o.read !== undefined) return o.read();
+      const later = calls.read > 1 && o.next !== undefined;
+      const data = later ? o.next! : (o.data ?? null);
+      return result(data, data === null ? {} : { revision: later ? 2 : 1 });
     },
-    save: (s) => saved.push(s),
-    fetchCommits: async () => {},
-    ...deps,
+    refresh: async (onProgress) => {
+      calls.refresh++;
+      return o.refresh === undefined ? done() : o.refresh(onProgress);
+    },
+    watch: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    fetchCommits: o.fetchCommits ?? (async () => {}),
   };
-  return { host, tab: new FeedbackTab(host, full), popups, opened, saved, fetchCalls, renders: () => renders };
+  const tab = new FeedbackTab(host, deps);
+  await tick();
+  const emit = (event: Partial<FeedbackEvent>): void => {
+    for (const l of listeners) l({ storeId: "store", repo: "org/repo", number: 7, revision: 2, newComments: [], ...event });
+  };
+  return { host, tab, popups, opened, calls, listeners, emit, renders: () => renders };
 }
 
 function text(tab: { render(w: number): string[] }): string {
   return tab.render(200).map(stripTerminalSequences).join("\n");
 }
 
-const tick = () => new Promise((r) => setImmediate(r));
-
 async function until(done: () => boolean): Promise<void> {
   for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 20));
 }
 
-function feedback(f: GitFixture): FeedbackSnapshot {
+function feedback(f: GitFixture): PrFeedback {
   return snapshot(f, [
-    thread({ id: "T1", line: 7, original_line: 5, is_resolved: true, resolved_by: "bob" }, { original_commit: f.first, diff_hunk: RIGHT_HUNK, body: "rename this" }),
-    thread({ id: "T2", diff_side: "LEFT", is_outdated: true, original_line: 8, comments: [] }),
-    thread({ id: "T3", diff_side: "LEFT", line: 8, original_line: 8 }, { original_commit: f.first, diff_hunk: LEFT_HUNK, body: "why delete?" }),
+    thread({ id: "T1", line: 7, originalLine: 5, isResolved: true, resolvedBy: "bob" }, { originalCommit: f.first, diffHunk: RIGHT_HUNK, body: "rename this" }),
+    thread({ id: "T2", diffSide: "LEFT", isOutdated: true, originalLine: 8, comments: [] }),
+    thread({ id: "T3", diffSide: "LEFT", line: 8, originalLine: 8 }, { originalCommit: f.first, diffHunk: LEFT_HUNK, body: "why delete?" }),
   ], { conversation: [entry] });
 }
 
-test("entering the tab never fetches; R fetches, saves and shows threads and conversation", async () => {
+const HOUR = 3_600_000;
+
+test("entering the tab reads the service snapshot and never refreshes", async () => {
   const f = gitFixture();
   try {
-    const s = feedback(f);
-    let resolve: (v: FeedbackSnapshot) => void = () => {};
-    const ui = setup(f, { fetch: () => new Promise((r) => (resolve = r)) });
-    assert.match(text(ui.tab), /no GitHub feedback fetched for #7 yet/);
-    ui.tab.handleInput("R");
-    assert.match(text(ui.tab), /fetching review threads/);
-    ui.tab.handleInput("R");
-    resolve(s);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const ui = await setup(f, {
+      read: async () => {
+        await gate;
+        return result(feedback(f));
+      },
+    });
+    assert.match(text(ui.tab), /loading feedback from the GitHub service/);
+    release();
     await tick();
     const out = text(ui.tab);
-    assert.equal(ui.saved.length, 1);
+    assert.equal(ui.calls.read, 1);
+    assert.equal(ui.calls.refresh, 0);
     assert.match(out, /github  #7  Rename things/);
+    assert.match(out, /fetched \d{4}-\d\d-\d\d \d\d:\d\d/);
     assert.match(out, /3 threads \(2 unresolved\)/);
     assert.match(out, /Code threads 3/);
     assert.match(out, /Conversation 1/);
@@ -83,30 +131,155 @@ test("entering the tab never fetches; R fetches, saves and shows threads and con
     assert.match(out, /Captured diff/);
     assert.match(out, /-l8/);
     assert.match(out, /why delete\?/);
+    assert.match(out, /R refresh/);
     assert.ok(ui.renders() > 0);
   } finally {
     f.cleanup();
   }
 });
 
-test("a saved snapshot loads on entry; failed fetches keep it and report the error", async () => {
+test("R refreshes through the service, shows progress and a rate-limit wait, then reloads", async () => {
   const f = gitFixture();
   try {
-    const ui = setup(f, { load: () => feedback(f), fetch: async () => { throw new Error("rate limited"); } });
+    let progress: Progress = () => {};
+    let finish: (op: RefreshOperation) => void = () => {};
+    const ui = await setup(f, {
+      next: feedback(f),
+      refresh: (onProgress) => {
+        progress = onProgress;
+        return new Promise((r) => (finish = r));
+      },
+    });
+    assert.match(text(ui.tab), /no GitHub feedback collected for #7 yet/);
+    assert.match(text(ui.tab), /R refresh through the GitHub service/);
+    ui.tab.handleInput("R");
+    assert.match(text(ui.tab), /refreshing through GitHub service…/);
+    ui.tab.handleInput("R");
+    assert.equal(ui.calls.refresh, 1);
+    const until = Date.now() + HOUR;
+    progress(operation({}, until));
+    assert.match(text(ui.tab), /refresh waiting: GitHub rate limited until \d{4}-/);
+    progress(operation());
+    assert.match(text(ui.tab), /refreshing through GitHub service…/);
+    finish(done());
+    await tick();
+    assert.equal(ui.calls.read, 2);
     assert.match(text(ui.tab), /Code threads 3/);
+    assert.doesNotMatch(text(ui.tab), /refreshing/);
+    assert.equal(ui.popups.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("refresh failures keep the previous data, report the error and reload", async () => {
+  const f = gitFixture();
+  try {
+    let fail: () => Promise<RefreshOperation> = async () => done({ state: "error", error: "GitHub collection failed" });
+    const ui = await setup(f, { data: feedback(f), refresh: () => fail() });
     ui.tab.handleInput("j");
     ui.tab.handleInput("R");
     await tick();
-    assert.match(ui.popups.at(-1)?.content.text ?? "", /fetch failed: rate limited/);
-    assert.match(text(ui.tab), /showing the previous snapshot/);
+    assert.match(ui.popups.at(-1)?.content.text ?? "", /refresh failed: GitHub collection failed/);
+    assert.equal(ui.calls.read, 2);
+    assert.match(text(ui.tab), /refresh failed: GitHub collection failed/);
+    assert.match(text(ui.tab), /Code threads 3/);
     assert.match(text(ui.tab), /item 2\/4/);
 
-    const empty = setup(f, { fetch: async () => { throw new Error("gh: not logged in"); } });
-    empty.tab.handleInput("R");
+    fail = async () => {
+      throw new GithubClientError("unavailable", "GitHub service did not respond");
+    };
+    ui.tab.handleInput("R");
     await tick();
-    assert.match(text(empty.tab), /fetch failed: gh: not logged in/);
-    const broken = setup(f, { load: () => { throw new Error("bad json"); } });
-    assert.match(text(broken.tab), /saved snapshot unreadable: bad json/);
+    assert.match(ui.popups.at(-1)?.content.text ?? "", /GitHub service: GitHub service did not respond/);
+    assert.match(text(ui.tab), /item 2\/4/);
+
+    fail = async () => done();
+    ui.tab.handleInput("R");
+    await tick();
+    assert.doesNotMatch(text(ui.tab), /failed|did not respond/);
+    assert.equal(ui.popups.length, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("service unavailability, collection errors and rate-limit pauses are shown", async () => {
+  const f = gitFixture();
+  try {
+    let read: () => Promise<FeedbackResult> = async () => {
+      throw new GithubClientError("unavailable", "GitHub service connection unavailable");
+    };
+    const ui = await setup(f, { read: () => read() });
+    assert.match(text(ui.tab), /GitHub service: GitHub service connection unavailable/);
+    assert.match(text(ui.tab), /R refresh through the GitHub service/);
+    assert.equal(ui.popups.length, 0);
+
+    const pausedUntil = Date.now() + HOUR;
+    read = async () => result(null, { pausedUntil, error: "GitHub collection failed", failures: 2 });
+    ui.tab.handleInput("R");
+    await tick();
+    let out = text(ui.tab);
+    assert.match(out, /no GitHub feedback collected for #7 yet/);
+    assert.match(out, /last GitHub fetch failed: GitHub collection failed/);
+    assert.match(out, /GitHub rate limited until/);
+
+    read = async () => result(feedback(f), { pausedUntil, error: "GitHub collection failed" });
+    ui.tab.handleInput("R");
+    await tick();
+    out = text(ui.tab);
+    assert.match(out, /Code threads 3/);
+    assert.match(out, /last GitHub fetch failed: GitHub collection failed · GitHub rate limited until/);
+
+    read = async () => result(feedback(f), { pausedUntil: Date.now() - 1 });
+    ui.tab.handleInput("R");
+    await tick();
+    assert.doesNotMatch(text(ui.tab), /rate limited|failed/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a feedback event for the open PR marks newer data without replacing it", async () => {
+  const f = gitFixture();
+  try {
+    const s = feedback(f);
+    const more = { ...s, conversation: [...s.conversation, { ...entry, id: "R10", body: "one more thing" }] };
+    const ui = await setup(f, { data: s, next: more });
+    const before = ui.renders();
+    ui.emit({ number: 8 });
+    ui.emit({ repo: "org/other" });
+    ui.emit({ revision: 1 });
+    assert.doesNotMatch(text(ui.tab), /new feedback/);
+    ui.emit({ revision: 2, newComments: [{ id: "R10", kind: "review", author: "carol", createdAt: "2025-01-04T00:00:00Z" }] });
+    assert.ok(ui.renders() > before);
+    assert.match(text(ui.tab), /new feedback available · R refresh/);
+    assert.match(text(ui.tab), /Conversation 1/);
+    assert.equal(ui.calls.read, 1);
+    ui.tab.handleInput("R");
+    await tick();
+    assert.equal(ui.calls.refresh, 1);
+    assert.match(text(ui.tab), /Conversation 2/);
+    assert.doesNotMatch(text(ui.tab), /new feedback/);
+    ui.emit({ revision: 2 });
+    assert.doesNotMatch(text(ui.tab), /new feedback/);
+    ui.emit({ storeId: "reset", revision: 1 });
+    assert.match(text(ui.tab), /new feedback available/);
+
+    ui.tab.dispose();
+    assert.equal(ui.listeners.size, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("an event before any feedback was collected is shown in the notice", async () => {
+  const f = gitFixture();
+  try {
+    const ui = await setup(f);
+    ui.emit({ revision: 1 });
+    assert.match(text(ui.tab), /no GitHub feedback collected for #7 yet/);
+    assert.match(text(ui.tab), /new feedback available · R refresh/);
   } finally {
     f.cleanup();
   }
@@ -117,7 +290,7 @@ test("refresh keeps the selected item by id", async () => {
   try {
     const s = feedback(f);
     const reordered = { ...s, threads: [s.threads[2]!, s.threads[0]!, s.threads[1]!] };
-    const ui = setup(f, { load: () => s, fetch: async () => reordered });
+    const ui = await setup(f, { data: s, next: reordered });
     ui.tab.handleInput("s");
     ui.popups.at(-1)?.keys?.d?.();
     ui.tab.handleInput("G");
@@ -132,11 +305,24 @@ test("refresh keeps the selected item by id", async () => {
   }
 });
 
+test("the detail shows the thread's captured diff", async () => {
+  const f = gitFixture();
+  try {
+    const t = thread({ id: "H", line: 7, diffHunk: RIGHT_HUNK, comments: [comment(), comment({ id: "c2", body: "reply", diffHunk: LEFT_HUNK })] });
+    const ui = await setup(f, { data: snapshot(f, [t]) });
+    const out = text(ui.tab);
+    assert.match(out, /\+changed5/);
+    assert.doesNotMatch(out, /-l8/);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("e opens resolved thread locations and explains what it cannot open", async () => {
   const f = gitFixture();
   try {
     const fetched: string[][] = [];
-    const ui = setup(f, { load: () => feedback(f), fetchCommits: async (shas) => void fetched.push(shas) });
+    const ui = await setup(f, { data: feedback(f), fetchCommits: async (shas) => void fetched.push(shas) });
     ui.tab.handleInput("e");
     await until(() => ui.opened.length === 1);
     const worktree = join(f.repo, "worktrees", "review", "pr-7-findings");
@@ -169,11 +355,11 @@ test("e fetches missing commits first and asks before opening a file with local 
   try {
     const missing = "e".repeat(40);
     const s = snapshot(f, [
-      thread({ id: "M", is_outdated: true, original_line: 5 }, { original_commit: missing, diff_hunk: RIGHT_HUNK }),
-      thread({ id: "D", line: 7 }, { diff_hunk: RIGHT_HUNK }),
+      thread({ id: "M", isOutdated: true, originalLine: 5 }, { originalCommit: missing, diffHunk: RIGHT_HUNK }),
+      thread({ id: "D", line: 7 }, { diffHunk: RIGHT_HUNK }),
     ]);
     const fetched: string[][] = [];
-    const ui = setup(f, { load: () => s, fetchCommits: async (shas) => void fetched.push(shas) });
+    const ui = await setup(f, { data: s, fetchCommits: async (shas) => void fetched.push(shas) });
     ui.tab.handleInput("e");
     await until(() => ui.popups.length === 1);
     assert.deepEqual(fetched, [[missing]]);
@@ -202,10 +388,10 @@ function narrow(tab: { render(w: number): string[] }, width = 120): string[] {
 
 const SIDE_LABEL = /PR version|base version|unknown side|diff:|new \(head\)|old \(base\)|side new|old side/;
 
-test("no diff side label is shown and general comments carry no open hint", () => {
+test("no diff side label is shown and general comments carry no open hint", async () => {
   const f = gitFixture();
   try {
-    const ui = setup(f, { load: () => feedback(f) });
+    const ui = await setup(f, { data: feedback(f) });
     let out = text(ui.tab);
     assert.match(out, /state unresolved/);
     assert.doesNotMatch(out, SIDE_LABEL);
@@ -226,11 +412,11 @@ test("no diff side label is shown and general comments carry no open hint", () =
   }
 });
 
-test("y copies the selected thread or comment link and reports failures", () => {
+test("y copies the selected thread or comment link and reports failures", async () => {
   const f = gitFixture();
   try {
     const copied: string[] = [];
-    const ui = setup(f, { load: () => feedback(f) });
+    const ui = await setup(f, { data: feedback(f) });
     ui.host.onCopy = (t) => void copied.push(t);
     ui.tab.handleInput("y");
     assert.deepEqual(copied, ["https://github.com/org/repo/pull/7#discussion_r1"]);
@@ -261,16 +447,16 @@ test("y copies the selected thread or comment link and reports failures", () => 
   }
 });
 
-function sortable(f: GitFixture): FeedbackSnapshot {
-  const at = (id: string, t: string) => ({ id, created_at: t });
+function sortable(f: GitFixture): PrFeedback {
+  const at = (id: string, t: string) => ({ id, createdAt: t });
   const by = (login: string) => ({ ...entry.author, login });
-  const older: ConversationEntry = { ...entry, id: "E1", kind: "comment", state: null, author: by("erin"), created_at: "2025-01-01T00:00:00Z" };
-  const newer: ConversationEntry = { ...entry, id: "E2", kind: "comment", state: null, author: by("frank"), created_at: "2025-01-05T00:00:00Z" };
+  const older: FeedbackConversationEntry = { ...entry, id: "E1", kind: "comment", state: null, author: by("erin"), createdAt: "2025-01-01T00:00:00Z" };
+  const newer: FeedbackConversationEntry = { ...entry, id: "E2", kind: "comment", state: null, author: by("frank"), createdAt: "2025-01-05T00:00:00Z" };
   return snapshot(f, [
-    thread({ id: "A", path: "z.ts", line: 3, is_resolved: true }, at("a", "2025-01-04T00:00:00Z")),
+    thread({ id: "A", path: "z.ts", line: 3, isResolved: true }, at("a", "2025-01-04T00:00:00Z")),
     thread({ id: "B", path: "b.ts", line: 9 }, at("b", "2025-01-01T00:00:00Z")),
     thread({ id: "C", path: "b.ts", line: 2 }, at("c", "2025-01-03T00:00:00Z")),
-    thread({ id: "D", path: "a.ts", line: 1, is_resolved: true }, at("d", "2025-01-06T00:00:00Z")),
+    thread({ id: "D", path: "a.ts", line: 1, isResolved: true }, at("d", "2025-01-06T00:00:00Z")),
   ], { conversation: [older, newer] });
 }
 
@@ -294,7 +480,7 @@ test("s picks a sort; the selection follows the item and the sort survives refre
   const f = gitFixture();
   try {
     const s = sortable(f);
-    const ui = setup(f, { load: () => s, fetch: async () => s });
+    const ui = await setup(f, { data: s, next: s });
     assert.deepEqual(order(ui.tab), [CHARLIE, BRAVO, DELTA, ALPHA, SECOND, FIRST]);
     assert.match(text(ui.tab), /s sort/);
     assert.match(text(ui.tab), /sort: unresolved first/);
@@ -327,7 +513,7 @@ test("s picks a sort; the selection follows the item and the sort survives refre
   }
 });
 
-test("sidebar entries are two rows: location or type, then state, author and comment count", () => {
+test("sidebar entries are two rows: location or type, then state, author and comment count", async () => {
   const f = gitFixture();
   try {
     const long = "This is a fairly long review comment that must not show up in the sidebar list";
@@ -335,17 +521,17 @@ test("sidebar entries are two rows: location or type, then state, author and com
     const reply = comment({ id: "c2", author: { login: "dave", type: "User", association: "MEMBER" }, body: "agreed" });
     const s = snapshot(f, [
       thread({ id: "L", path, line: 4 }, { body: long }),
-      thread({ id: "R", path: "r.ts", line: 2, is_resolved: true, is_outdated: true, comments: [comment({ body: long }), reply] }),
+      thread({ id: "R", path: "r.ts", line: 2, isResolved: true, isOutdated: true, comments: [comment({ body: long }), reply] }),
     ], {
       conversation: [
         entry,
         { ...entry, id: "R10", state: "CHANGES_REQUESTED", body: long },
         { ...entry, id: "R11", state: "COMMENTED" },
-        { ...entry, id: "C1", kind: "comment", state: null, author: { ...entry.author, login: "erin" }, is_minimized: true, minimized_reason: "OUTDATED" },
+        { ...entry, id: "C1", kind: "comment", state: null, author: { ...entry.author, login: "erin" }, isMinimized: true, minimizedReason: "OUTDATED" },
       ],
     });
-    s.threads[1]!.comments_total = 3;
-    const ui = setup(f, { load: () => s });
+    s.threads[1]!.commentsTotal = 3;
+    const ui = await setup(f, { data: s });
     const side = sideRows(ui.tab, 120).map((l) => l.trim());
     assert.ok(side.every((l) => !/fairly long|Looks good|agreed/.test(l)));
     const rowsOf = (label: RegExp): string[] => {
@@ -367,11 +553,11 @@ test("sidebar entries are two rows: location or type, then state, author and com
   }
 });
 
-test("the sidebar scrolls to keep tall entries fully visible", () => {
+test("the sidebar scrolls to keep tall entries fully visible", async () => {
   const f = gitFixture();
   try {
     const threads = Array.from({ length: 20 }, (_, i) => thread({ id: `T${i}`, path: `f${i}.ts`, line: 1 }, { body: `comment ${i} `.repeat(30) }));
-    const ui = setup(f, { load: () => snapshot(f, threads) });
+    const ui = await setup(f, { data: snapshot(f, threads) });
     const sideOf = () => narrow(ui.tab).map((l) => l.slice(l.indexOf("│") + 1)).join("\n");
     for (let i = 0; i < 19; i++) ui.tab.handleInput("j");
     assert.match(sideOf(), /f19\.ts:1/);
@@ -385,10 +571,10 @@ test("the sidebar scrolls to keep tall entries fully visible", () => {
   }
 });
 
-test("ctrl+up/down and plain arrows move between sidebar entries", () => {
+test("ctrl+up/down and plain arrows move between sidebar entries", async () => {
   const f = gitFixture();
   try {
-    const ui = setup(f, { load: () => feedback(f) });
+    const ui = await setup(f, { data: feedback(f) });
     ui.tab.handleInput(CTRL_DOWN);
     ui.tab.handleInput(CTRL_DOWN);
     assert.match(text(ui.tab), /item 3\/4/);
@@ -408,7 +594,7 @@ test("t hides the sidebar for a full-width detail and survives refresh", async (
   const f = gitFixture();
   try {
     const s = feedback(f);
-    const ui = setup(f, { load: () => s, fetch: async () => s });
+    const ui = await setup(f, { data: s, next: s });
     assert.match(text(ui.tab), /│/);
     assert.match(text(ui.tab), /t hide list/);
     ui.tab.handleInput("t");
@@ -429,7 +615,7 @@ test("t hides the sidebar for a full-width detail and survives refresh", async (
   }
 });
 
-test("when renders timestamps in the process local timezone", () => {
+test("when renders timestamps in the process local timezone", async () => {
   const saved = process.env.TZ;
   try {
     process.env.TZ = "Asia/Taipei";
