@@ -231,9 +231,9 @@ outdated and collapsed state, `resolvedBy`, `commentsTotal`, `diffHunk`
 and comments; comments and conversation entries keep GitHub ids
 (`databaseId` as a string), author login, type and association, body,
 state (`PENDING` for unsubmitted comments of the viewer), GitHub ISO
-timestamps, url and minimized state. Field names follow the
-`station/github-feedback@1` snapshot in camelCase; `fetched_at` and
-`source` are replaced by the service metadata.
+timestamps, url and minimized state. Field names follow the former
+station `station/github-feedback@1` snapshot in camelCase; `fetched_at`
+and `source` are replaced by the service metadata.
 
 ### Advisory notifications
 
@@ -262,13 +262,16 @@ periodically reconcile revisions even without a notification.
 Pi's PR browser and station read persisted snapshots on launch. Refresh
 requests go through the service; neither consumer falls back to a GitHub
 list fetch. Both retain displayed rows while refreshing and show an
-indicator when background data has changed. Station's feedback tab and diffs
-still use their existing on-demand fetching paths.
+indicator when background data has changed. Station's `github` tab reads
+PR feedback from the service the same way (see
+`station/docs/github-feedback.md`); diffs still use their existing
+on-demand fetching paths.
 
 The client also reads feedback (`feedback(repo, number)`), refreshes the
 feedback of one PR and waits for the operation (`refreshFeedback(repo,
-number)`), and passes feedback events to `onFeedback(listener)` callbacks
-until the returned function is called. `snapshotHealth` reports an
+number, onProgress?)`, where `onProgress` receives each pending
+operation, including its `pausedUntil`), and passes feedback events to
+`onFeedback(listener)` callbacks until the returned function is called. `snapshotHealth` reports an
 active rate-limit pause.
 
 The shared client collects all snapshot pages with revision guards and
