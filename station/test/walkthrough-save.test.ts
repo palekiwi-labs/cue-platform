@@ -72,7 +72,7 @@ test("preparerRun pins the head worktree and the review-pr context", () => {
   assert.equal(run.cwd, "/code/my repo");
   assert.equal(run.context, "review-pr-7");
   assert.deepEqual(run.worktree, { base: HEAD });
-  assert.equal(run.model, "anthropic/claude-opus-5-5");
+  assert.equal(run.model, "9r/cc/claude-opus-5-5");
   assert.equal(run.agent.isolated, true);
   assert.ok(run.prompt.includes(saveCommand(["/nix/node", "/st/bin/station.js"], pr)));
   assert.deepEqual(run.agent.extensions, ["npm:@gotgenes/pi-anthropic-auth"]);

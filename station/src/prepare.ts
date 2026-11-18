@@ -2,13 +2,11 @@ import { randomUUID } from "node:crypto";
 import { connect } from "@nats-io/transport-node";
 import type { ResolvedPr } from "./source.js";
 
-export const PREPARER_MODEL = "anthropic/claude-opus-5-5";
+export const PREPARER_MODEL = "9r/cc/claude-opus-5-5";
 export const PREPARER_TOOLS = ["read", "bash", "grep", "find", "ls"];
-export const ANTHROPIC_AUTH_EXTENSION = "npm:@gotgenes/pi-anthropic-auth";
 
-/** Extensions an isolated preparer needs for its model; isolation drops the ones from pi settings. */
-export function preparerExtensions(model: string): string[] {
-  return model.startsWith("anthropic/") ? [ANTHROPIC_AUTH_EXTENSION] : [];
+export function preparerExtensions(_model: string): string[] {
+  return [];
 }
 
 export const PREPARER_SYSTEM_PROMPT = `You are the walkthrough preparer for station, a terminal review tool.
