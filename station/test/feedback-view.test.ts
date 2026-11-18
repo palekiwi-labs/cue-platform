@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import { FeedbackTab, type FeedbackTabDeps } from "../src/feedback-view.js";
+import { FeedbackTab, type FeedbackTabDeps, when } from "../src/feedback-view.js";
 import type { ConversationEntry, FeedbackSnapshot } from "../src/github-feedback.js";
 import type { PopupContent } from "../src/popup.js";
 import type { PrTabHost } from "../src/pr-tabs.js";
@@ -423,5 +423,20 @@ test("t hides the sidebar for a full-width detail and survives refresh", async (
     assert.match(text(ui.tab), /Code threads 3/);
   } finally {
     f.cleanup();
+  }
+});
+
+test("when renders timestamps in the process local timezone", () => {
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "Asia/Taipei";
+    assert.equal(when("2025-01-02T20:30:00Z"), "2025-01-03 04:30");
+    process.env.TZ = "UTC";
+    assert.equal(when("2025-01-02T20:30:00Z"), "2025-01-02 20:30");
+    assert.equal(when(null), "");
+    assert.equal(when("not a date"), "not a date");
+  } finally {
+    if (saved === undefined) delete process.env.TZ;
+    else process.env.TZ = saved;
   }
 });
