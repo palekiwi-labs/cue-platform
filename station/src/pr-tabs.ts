@@ -1,3 +1,4 @@
+import type { GithubClient } from "../../github-service/src/client.js";
 import type { PopupContent } from "./popup.js";
 import { chooseFindingStatus, type PublishFindingStatus } from "./finding-status.js";
 import { FindingsView, headInRepo, loadRun, loadSources } from "./findings.js";
@@ -23,12 +24,15 @@ export interface PrTabHost {
   prHead: string;
   prWorktree: string;
   chosen: Map<string, string>;
+  github: GithubClient;
   onQuit: () => void;
   openPath: (cwd: string, path: string, line: number, base?: string) => void;
   showPopup: (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
   publishFindingStatus?: PublishFindingStatus;
+  onCopy?: (text: string) => void;
   walkthroughDrafts?: WalkthroughDrafts;
   drafts?: Drafts;
+  requestRender?: () => void;
 }
 
 export type FindingsTabHost = PrTabHost;

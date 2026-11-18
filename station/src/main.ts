@@ -19,6 +19,8 @@ import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkth
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
+import { LivePrs, sourceFeed } from "./prs-live.js";
+import { GithubClient } from "../../github-service/src/client.js";
 import { backdrop, ComposeBox, Popup, type PopupContent, popupWidth } from "./popup.js";
 import type { PacketFile } from "./packet.js";
 import { preparerRun, submitToSupervisor } from "./prepare.js";
@@ -28,6 +30,7 @@ import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from
 import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
 import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { WalkthroughDrafts } from "./walkthrough-comments.js";
+import { githubTab } from "./feedback-view.js";
 import { Drafts } from "./drafts.js";
 import { prContext } from "./pr-review.js";
 import { TabsScreen } from "./tabs.js";
@@ -239,6 +242,7 @@ function prTabs(
   router: Router,
   review: Review,
   chosen: Map<string, string>,
+  github: GithubClient,
   onQuit: () => void,
   quitLabel?: string,
 ): TabsScreen {
@@ -260,24 +264,36 @@ function prTabs(
     prHead: review.packet.head_sha,
     prWorktree: review.repoPath,
     chosen,
+    github,
     onQuit,
     openPath: (cwd, path, line, base) => openPath(router.tui, cwd, path, line, base),
     showPopup: (content, dismissable, keys) => router.showPopup(content, dismissable, keys),
+    onCopy: (text) => process.stdout.write(osc52(text)),
     walkthroughDrafts,
     drafts,
     publishFindingStatus: router.publisher.publish,
+    requestRender: () => router.tui.requestRender(),
   };
   return new TabsScreen([
     { label: "changes", screen: () => changesView(router, review, onQuit, quitLabel, drafts) },
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
+    { label: "github", screen: () => githubTab(host) },
   ]);
 }
 
 function showReview(review: Review): void {
   const router = new Router();
-  const quit = (): void => router.quit();
-  router.show(review.pr !== null ? prTabs(router, review, new Map(), quit) : changesView(router, review, quit));
+  if (review.pr === null) {
+    router.show(changesView(router, review, () => router.quit()));
+  } else {
+    const github = new GithubClient();
+    const tabs = prTabs(router, review, new Map(), github, () => {
+      tabs.dispose();
+      void github.close().finally(() => router.quit());
+    });
+    router.show(tabs);
+  }
   router.tui.start();
 }
 
@@ -327,36 +343,6 @@ function showPrs(repo: string): void {
   const router = new Router();
   let busy = false;
   const source = new PrsSource(repoSlug(repo).toLowerCase());
-  let revision = "";
-  let loading = false;
-  let checking = false;
-  const refresh = async (live = true): Promise<void> => {
-    if (loading) return;
-    loading = true;
-    list.setNote(live ? "refreshing through GitHub service…" : "loading snapshot…");
-    router.tui.requestRender();
-    try {
-      const data = await source.load(live);
-      revision = data.revision;
-      list.setPrs(data.prs, data.viewer);
-      list.setNote(data.note);
-    } catch (e) {
-      list.setNote(`GitHub service: ${errText(e)}`);
-    } finally {
-      loading = false;
-      router.tui.requestRender();
-    }
-  };
-  const unwatch = source.client.watch(() => {
-    if (loading || checking || !revision) return;
-    checking = true;
-    void source.load().then((data) => {
-      if (data.revision !== revision) list.setNote("new PR data available · r refresh");
-    }).catch((e) => list.setNote(`GitHub service: ${errText(e)}`)).finally(() => {
-      checking = false;
-      router.tui.requestRender();
-    });
-  });
   const toList = (): void => router.show(list);
   const chosen = new Map<string, string>();
   const open = async (pr: PrSummary): Promise<void> => {
@@ -366,7 +352,11 @@ function showPrs(repo: string): void {
     try {
       const review = await fromPr(repo, String(pr.number));
       router.hidePopup();
-      router.show(prTabs(router, review, chosen, toList, "back"));
+      const tabs = prTabs(router, review, chosen, source.client, () => {
+        tabs.dispose();
+        toList();
+      }, "back");
+      router.show(tabs);
     } catch (e) {
       router.showPopup({ title: `#${pr.number}`, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
@@ -418,7 +408,7 @@ function showPrs(repo: string): void {
   const list = new PrsView({
     repo: repoSlug(repo),
     onQuit: () => {
-      unwatch();
+      live.dispose();
       void source.client.close().finally(() => router.quit());
     },
     onOpen: (pr) => void open(pr),
@@ -434,7 +424,7 @@ function showPrs(repo: string): void {
         true,
         Object.fromEntries(LAUNCHES.map((l) => [l.key, () => void launch(pr, l.kind)])),
       ),
-    onRefresh: () => void refresh(),
+    onRefresh: () => void live.refresh(),
     onCopy: (text) => process.stdout.write(osc52(text)),
     onPickSort: (current, choose) =>
       router.showPopup(
@@ -443,9 +433,10 @@ function showPrs(repo: string): void {
         Object.fromEntries(PR_SORTS.map((s) => [s.key, () => choose(s.sort)])),
       ),
   });
+  const live = new LivePrs(list, sourceFeed(source), () => router.tui.requestRender());
   router.show(list);
   router.tui.start();
-  void refresh(false);
+  void live.start();
 }
 
 function showFindings(address: string): void {

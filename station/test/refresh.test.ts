@@ -10,6 +10,7 @@ import type { TabScreen } from "../src/tabs.js";
 import { WalkthroughDrafts } from "../src/walkthrough-comments.js";
 import { emptyWalkthroughComments } from "../src/state.js";
 import { Drafts } from "../src/drafts.js";
+import { GithubClient } from "../../github-service/src/client.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "station-refresh-"));
@@ -30,7 +31,7 @@ function fixture() {
   const opened: string[] = [];
   const host: PrTabHost = {
     repo, repoSlug: "org/repo", pr: 7, prHead: head, prWorktree: repo,
-    chosen: new Map(), onQuit: () => {},
+    chosen: new Map(), github: new GithubClient("nats://127.0.0.1:1"), onQuit: () => {},
     openPath: (_cwd, file, line) => opened.push(`${file}:${line}`),
     showPopup: (content) => { if (content.error) errors.push(content.text); },
   };
