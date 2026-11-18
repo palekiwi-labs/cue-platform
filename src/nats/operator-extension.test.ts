@@ -71,7 +71,7 @@ test.skipIf(!natsServerBin)("core NATS routes to both linked sessions, clears on
     await send(b, event(a))
     expect(first.emit("before_agent_start", { messageType: "user" })).toBeUndefined()
     await send(b)
-    expect(first.emit("before_agent_start", { messageType: "user" }).message.content).toContain(b)
+    expect(first.emit("before_agent_start", { messageType: "user" }).message.content).toContain("[operator] F3 open -> dismissed")
     await send(b)
     first.tree(a)
     expect(first.emit("before_agent_start", { messageType: "user" })).toBeUndefined()

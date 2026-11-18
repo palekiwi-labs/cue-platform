@@ -63,9 +63,16 @@ export class PendingOperatorChanges {
   take(context: string): string | undefined {
     if (!this.entries.size && !this.overflow) return
     const changes = [...this.entries.values()].map(e =>
-      `finding ${e.finding_id} (${e.artifact_address}) ${e.old_status ?? "unset"} -> ${e.new_status}`)
-    if (this.overflow) changes.push(`${this.overflow} more changes (not retained)`)
+      `[operator] ${e.finding_id} ${e.old_status ?? "unset"} -> ${e.new_status} (${shortLocation(e.artifact_address, context)})`)
+    if (this.overflow) changes.push(`[operator] ${this.overflow} more changes`)
     this.clear()
-    return `Observed operator changes since your last message (review station, ${context}): ${changes.join("; ")}.`
+    return ["Operator changes since your last message:", ...changes].join("\n")
   }
+}
+
+function shortLocation(artifact: string, context: string): string {
+  const prefix = `${context}/review/`
+  const path = artifact.startsWith(prefix) ? artifact.slice(prefix.length) : artifact
+  const cut = path.lastIndexOf("/")
+  return cut < 0 ? path : `${path.slice(0, cut)}, ${path.slice(cut + 1)}`
 }
