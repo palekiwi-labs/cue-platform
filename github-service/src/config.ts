@@ -13,6 +13,7 @@ export function parseConfig(input: string): Config {
     "nats_url",
     "poll_seconds",
     "concurrency",
+    "feedback_concurrency",
     "cooldown_seconds",
     "stagger_seconds",
     "max_backoff_seconds",
@@ -60,6 +61,7 @@ export function parseConfig(input: string): Config {
       cooldownMs,
       maxBackoffMs,
       concurrency: number("concurrency", 2, 1, 8),
+      feedbackConcurrency: number("feedback_concurrency", 1, 1, 4),
       staggerMs: number("stagger_seconds", 1, 0, 60) * 1000,
     },
   };

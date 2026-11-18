@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { RateLimitError } from "./collector.js";
 import type {
   ChangedEvent,
   CompletedEvent,
+  FeedbackEvent,
   Pr,
+  PrFeedback,
   RefreshOperation,
+  RefreshOutcome,
 } from "./protocol.js";
 import { SnapshotStore } from "./store.js";
 
@@ -20,9 +24,10 @@ export class ServiceError extends Error {
     super(message);
   }
 }
-type Outcome = RefreshOperation["repositories"][string];
+type Outcome = RefreshOutcome;
 interface Job {
   repo: string;
+  number?: number;
   due: number;
   promise: Promise<Outcome>;
   resolve: (value: Outcome) => void;
@@ -30,6 +35,7 @@ interface Job {
 export interface ServiceOptions {
   pollMs?: number;
   concurrency?: number;
+  feedbackConcurrency?: number;
   cooldownMs?: number;
   staggerMs?: number;
   maxBackoffMs?: number;
@@ -40,20 +46,33 @@ export interface ServiceOptions {
 export interface ServiceEvents {
   changed: ChangedEvent;
   completed: CompletedEvent;
+  feedbackChanged: FeedbackEvent;
 }
+type ServiceEvent = ServiceEvents[keyof ServiceEvents];
 export type FetchRepository = (
   repo: string,
   signal: AbortSignal,
 ) => Promise<{ viewer: string; prs: Pr[] }>;
+export type FetchFeedback = (
+  repo: string,
+  number: number,
+  signal: AbortSignal,
+) => Promise<PrFeedback>;
+
+class NotTracked extends Error {}
 
 export class GithubService {
   readonly options: Required<ServiceOptions>;
   private jobs = new Map<string, Job>();
+  private feedbackJobs = new Map<string, Job>();
   private running = new Set<Promise<void>>();
+  private runningRepos = 0;
+  private runningFeedback = 0;
+  private pausedUntil = 0;
   private nextPoll = new Map<string, number>();
   private operations = new Map<string, RefreshOperation>();
   private listeners = new Set<
-    (subject: keyof ServiceEvents, event: ChangedEvent | CompletedEvent) => void
+    (subject: keyof ServiceEvents, event: ServiceEvent) => void
   >();
   private abort = new AbortController();
   private timer?: ReturnType<typeof setInterval>;
@@ -62,10 +81,12 @@ export class GithubService {
     readonly store: SnapshotStore,
     private fetch: FetchRepository,
     options: ServiceOptions = {},
+    private fetchFeedback?: FetchFeedback,
   ) {
     this.options = {
       pollMs: 120_000,
       concurrency: 2,
+      feedbackConcurrency: 1,
       cooldownMs: 15_000,
       staggerMs: 1_000,
       maxBackoffMs: 1_800_000,
@@ -96,24 +117,30 @@ export class GithubService {
         : this.options.cooldownMs,
     );
   }
-  private allowedAt(repo: string): number {
-    const s = this.store.read(repo).snapshot;
+  private allowedAt(repo: string, number?: number): number {
+    const s =
+      number === undefined
+        ? this.store.read(repo).snapshot
+        : this.store.readFeedback(repo, number);
     return s.attemptedAt === null ? 0 : s.attemptedAt + this.delay(s.failures);
   }
+  pause(until: number): void {
+    this.pausedUntil = Math.max(this.pausedUntil, until);
+  }
+  paused(): number | null {
+    return this.pausedUntil > this.options.now() ? this.pausedUntil : null;
+  }
   onEvent(
-    listener: (
-      subject: keyof ServiceEvents,
-      event: ChangedEvent | CompletedEvent,
-    ) => void,
+    listener: (subject: keyof ServiceEvents, event: ServiceEvent) => void,
   ): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
-  private emit(
-    subject: keyof ServiceEvents,
-    event: ChangedEvent | CompletedEvent,
+  private emit<K extends keyof ServiceEvents>(
+    subject: K,
+    event: ServiceEvents[K],
   ): void {
     for (const listener of this.listeners) {
       try {
@@ -127,6 +154,13 @@ export class GithubService {
       throw new ServiceError("invalid_request", "repository is not configured");
     return [repo];
   }
+  tracked(repo: string, number: number): string {
+    this.select(repo);
+    const updatedAt = this.store.tracked(repo, number);
+    if (updatedAt === null)
+      throw new ServiceError("not_found", "pull request is not tracked");
+    return updatedAt;
+  }
   private prune(): void {
     const now = this.options.now();
     for (const [id, op] of this.operations) {
@@ -137,10 +171,17 @@ export class GithubService {
         this.operations.delete(id);
     }
   }
-  refresh(repo?: string): { operationId: string } {
+  refresh(repo?: string, number?: number): { operationId: string } {
     if (this.abort.signal.aborted)
       throw new ServiceError("unavailable", "service is stopping");
-    const repos = this.select(repo);
+    if (number !== undefined) {
+      if (repo === undefined)
+        throw new ServiceError("invalid_request", "number requires repo");
+      if (!this.fetchFeedback)
+        throw new ServiceError("unavailable", "feedback is not collected");
+      this.tracked(repo, number);
+    }
+    const repos = number === undefined ? this.select(repo) : [];
     this.prune();
     while (this.operations.size >= this.options.maxOperations) {
       const completed = [...this.operations].find(
@@ -156,16 +197,24 @@ export class GithubService {
       createdAt: this.options.now(),
       completedAt: null,
       state: "pending",
+      pausedUntil: null,
       repositories: Object.fromEntries(
         repos.map((r) => [r, { state: "pending" }]),
       ),
     };
+    const pending = repos.map(async (r) => {
+      op.repositories[r] = await this.enqueue(r);
+    });
+    if (repo !== undefined && number !== undefined) {
+      op.feedback = { repo, number, state: "pending" };
+      pending.push(
+        this.enqueueFeedback(repo, number).then((outcome) => {
+          op.feedback = { repo, number, ...outcome };
+        }),
+      );
+    }
     this.operations.set(operationId, op);
-    void Promise.all(
-      repos.map(async (r) => {
-        op.repositories[r] = await this.enqueue(r);
-      }),
-    ).then(() => {
+    void Promise.all(pending).then(() => {
       op.state = "complete";
       op.completedAt = this.options.now();
       this.emit("completed", { operationId });
@@ -181,17 +230,44 @@ export class GithubService {
         "not_found",
         "operation expired, evicted or unknown",
       );
-    return structuredClone(op);
+    return { ...structuredClone(op), pausedUntil: this.paused() };
   }
   private enqueue(repo: string): Promise<Outcome> {
-    const existing = this.jobs.get(repo);
+    return this.queue(this.jobs, repo, repo);
+  }
+  private enqueueFeedback(repo: string, number: number): Promise<Outcome> {
+    return this.queue(this.feedbackJobs, `${repo}#${number}`, repo, number);
+  }
+  private queue(
+    jobs: Map<string, Job>,
+    key: string,
+    repo: string,
+    number?: number,
+  ): Promise<Outcome> {
+    const existing = jobs.get(key);
     if (existing) return existing.promise;
     let resolve!: (value: Outcome) => void;
     const promise = new Promise<Outcome>((r) => {
       resolve = r;
     });
-    this.jobs.set(repo, { repo, due: this.allowedAt(repo), promise, resolve });
+    jobs.set(key, {
+      repo,
+      number,
+      due: this.allowedAt(repo, number),
+      promise,
+      resolve,
+    });
     return promise;
+  }
+  private scheduleFeedback(repo: string): void {
+    if (!this.fetchFeedback) return;
+    for (const pr of this.store.read(repo).prs) {
+      if (
+        this.store.readFeedback(repo, pr.number).sourceUpdatedAt !==
+        pr.updatedAt
+      )
+        void this.enqueueFeedback(repo, pr.number);
+    }
   }
   tick(): void {
     if (this.abort.signal.aborted) return;
@@ -206,18 +282,46 @@ export class GithubService {
     this.tick();
     this.timer = setInterval(() => this.tick(), 250);
   }
+  private launch(work: () => Promise<void>, done: () => void): void {
+    const task = work().finally(() => {
+      done();
+      this.running.delete(task);
+      this.pump();
+    });
+    this.running.add(task);
+  }
   private pump(): void {
     if (this.abort.signal.aborted) return;
+    const now = this.options.now();
+    if (this.pausedUntil > now) return;
     for (const job of this.jobs.values()) {
-      if (this.running.size >= this.options.concurrency) break;
-      if (job.due > this.options.now()) continue;
+      if (this.runningRepos >= this.options.concurrency) break;
+      if (job.due > now) continue;
       job.due = Infinity;
-      const task = this.run(job).finally(() => {
-        this.running.delete(task);
-        this.pump();
-      });
-      this.running.add(task);
+      this.runningRepos++;
+      this.launch(
+        () => this.run(job),
+        () => this.runningRepos--,
+      );
     }
+    if ([...this.jobs.values()].some((job) => job.due <= now)) return;
+    for (const job of this.feedbackJobs.values()) {
+      if (this.runningFeedback >= this.options.feedbackConcurrency) break;
+      if (job.due > now) continue;
+      job.due = Infinity;
+      this.runningFeedback++;
+      this.launch(
+        () => this.runFeedback(job),
+        () => this.runningFeedback--,
+      );
+    }
+  }
+  private limited(job: Job, error: unknown): boolean {
+    if (!(error instanceof RateLimitError) || this.abort.signal.aborted)
+      return false;
+    this.pause(error.until);
+    job.due = error.until;
+    return true;
   }
   private async run(job: Job): Promise<void> {
     let outcome: Outcome;
@@ -240,7 +344,9 @@ export class GithubService {
           repo: job.repo,
           revision: saved.revision,
         });
-    } catch {
+      this.scheduleFeedback(job.repo);
+    } catch (error) {
+      if (this.limited(job, error)) return;
       try {
         this.store.failed(job.repo, this.options.now());
         failures = this.store.read(job.repo).snapshot.failures;
@@ -255,13 +361,60 @@ export class GithubService {
     this.jobs.delete(job.repo);
     job.resolve(outcome);
   }
+  private async runFeedback(job: Job): Promise<void> {
+    const { repo } = job;
+    const number = job.number!;
+    let outcome: Outcome;
+    try {
+      const source = this.store.tracked(repo, number);
+      if (source === null) throw new NotTracked();
+      this.store.feedbackAttempted(repo, number, this.options.now());
+      const feedback = await this.fetchFeedback!(
+        repo,
+        number,
+        this.abort.signal,
+      );
+      if (this.abort.signal.aborted) throw new Error("stopping");
+      if (this.store.tracked(repo, number) === null) throw new NotTracked();
+      const { newComments, ...saved } = this.store.replaceFeedback(
+        repo,
+        number,
+        feedback,
+        source,
+        this.options.now(),
+      );
+      outcome = { state: "success", ...saved };
+      if (saved.changed)
+        this.emit("feedbackChanged", {
+          storeId: this.store.storeId,
+          repo,
+          number,
+          revision: saved.revision,
+          newComments,
+        });
+    } catch (error) {
+      if (this.limited(job, error)) return;
+      if (error instanceof NotTracked) {
+        outcome = { state: "error", error: "pull request is not tracked" };
+      } else {
+        try {
+          this.store.feedbackFailed(repo, number, this.options.now());
+        } catch {}
+        outcome = { state: "error", error: "GitHub collection failed" };
+      }
+    }
+    this.feedbackJobs.delete(`${repo}#${number}`);
+    job.resolve(outcome);
+  }
   async close(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.abort.abort();
-    for (const [repo, job] of this.jobs) {
-      if (job.due !== Infinity) {
-        this.jobs.delete(repo);
-        job.resolve({ state: "error", error: "service stopping" });
+    for (const jobs of [this.jobs, this.feedbackJobs]) {
+      for (const [key, job] of jobs) {
+        if (job.due !== Infinity) {
+          jobs.delete(key);
+          job.resolve({ state: "error", error: "service stopping" });
+        }
       }
     }
     await Promise.all(this.running);

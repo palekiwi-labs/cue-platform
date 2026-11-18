@@ -11,7 +11,7 @@ test("collect all PR pages and nested connections with credential viewer", async
     2,
     "review-page",
   );
-  const calls: Record<string, string>[] = [];
+  const calls: Record<string, string | number>[] = [];
   const graphql: Graphql = async (query, variables) => {
     calls.push(variables);
     if (query.includes("node(id:")) {

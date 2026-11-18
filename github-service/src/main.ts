@@ -2,8 +2,9 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { collect } from "./collector.js";
+import { collect, createGhGraphql } from "./collector.js";
 import { parseConfig } from "./config.js";
+import { collectFeedback } from "./feedback.js";
 import { serveNats } from "./nats.js";
 import { GithubService } from "./service.js";
 import { SnapshotStore } from "./store.js";
@@ -31,10 +32,12 @@ async function main(): Promise<void> {
   );
   process.umask(0o077);
   const store = new SnapshotStore(statePath, config.repositories);
-  const service = new GithubService(
+  const graphql = createGhGraphql((until) => service.pause(until));
+  const service: GithubService = new GithubService(
     store,
-    (repo, signal) => collect(repo, undefined, signal),
+    (repo, signal) => collect(repo, graphql, signal),
     config.scheduling,
+    (repo, number, signal) => collectFeedback(repo, number, graphql, signal),
   );
   const abort = new AbortController();
   const stop = () => abort.abort();

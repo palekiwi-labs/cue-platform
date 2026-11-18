@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SnapshotStore } from "../src/store.js";
-import { pr, repo } from "./fixtures.js";
+import { pr, prFeedback, repo, threadComment } from "./fixtures.js";
 
 test("persist snapshots and health privately, retain revisions on unchanged data", () => {
   const dir = mkdtempSync(join(tmpdir(), "github-store-"));
@@ -94,5 +94,102 @@ test("SQLite write failure rolls back the snapshot and permits later recovery", 
     fault.close();
     store.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("feedback revisions, baseline, new comments without PENDING, pruning", () => {
+  const store = new SnapshotStore(":memory:", [repo]);
+  try {
+    assert.equal(store.readFeedback(repo, 1).feedback, null);
+    assert.throws(() =>
+      store.replaceFeedback(repo, 1, prFeedback(), pr.updatedAt, 1),
+    );
+    store.replace(repo, "viewer", [pr, { ...pr, number: 2 }], 1);
+    store.feedbackFailed(repo, 1, 2);
+    assert.equal(store.readFeedback(repo, 1).failures, 1);
+    assert.equal(store.readFeedback(repo, 1).revision, 0);
+    assert.deepEqual(
+      store.replaceFeedback(
+        repo,
+        1,
+        prFeedback([threadComment("C1")], ["I1"]),
+        "u1",
+        3,
+      ),
+      { revision: 1, changed: true, newComments: [] },
+    );
+    const saved = store.readFeedback(repo, 1);
+    assert.equal(saved.sourceUpdatedAt, "u1");
+    assert.equal(saved.failures, 0);
+    assert.equal(saved.error, null);
+    assert.equal(saved.fetchedAt, 3);
+    assert.deepEqual(saved.feedback, prFeedback([threadComment("C1")], ["I1"]));
+    assert.deepEqual(
+      store.replaceFeedback(
+        repo,
+        1,
+        prFeedback([threadComment("C1")], ["I1"]),
+        "u2",
+        4,
+      ),
+      { revision: 1, changed: false, newComments: [] },
+    );
+    assert.equal(store.readFeedback(repo, 1).sourceUpdatedAt, "u2");
+    const withNew = prFeedback(
+      [
+        threadComment("C1"),
+        threadComment("C2"),
+        threadComment("P1", "PENDING"),
+      ],
+      ["I1", "I2"],
+    );
+    assert.deepEqual(store.replaceFeedback(repo, 1, withNew, "u3", 5), {
+      revision: 2,
+      changed: true,
+      newComments: [
+        {
+          id: "C2",
+          kind: "thread",
+          author: "bob",
+          createdAt: "2026-01-02T00:00:00Z",
+          threadId: "T1",
+        },
+        {
+          id: "I2",
+          kind: "comment",
+          author: "carol",
+          createdAt: "2026-01-03T00:00:00Z",
+        },
+      ],
+    });
+    store.feedbackFailed(repo, 1, 6);
+    const failed = store.readFeedback(repo, 1);
+    assert.equal(failed.failures, 1);
+    assert.equal(failed.error, "GitHub collection failed");
+    assert.equal(failed.revision, 2);
+    assert.deepEqual(failed.feedback, withNew);
+    const submitted = prFeedback(
+      [threadComment("C1"), threadComment("C2"), threadComment("P1")],
+      ["I1", "I2"],
+    );
+    assert.deepEqual(
+      store
+        .replaceFeedback(repo, 1, submitted, "u4", 7)
+        .newComments.map((c) => c.id),
+      ["P1"],
+    );
+    store.replaceFeedback(repo, 2, prFeedback([], [], 2), "u1", 8);
+    assert.throws(() =>
+      store.replaceFeedback(repo, 2, prFeedback([], [], 3), "u1", 8),
+    );
+    store.replace(repo, "viewer", [{ ...pr, number: 2 }], 9);
+    assert.equal(store.readFeedback(repo, 1).feedback, null);
+    assert.equal(store.readFeedback(repo, 1).revision, 0);
+    assert.equal(store.readFeedback(repo, 2).revision, 1);
+    store.feedbackAttempted(repo, 1, 10);
+    assert.equal(store.readFeedback(repo, 1).attemptedAt, null);
+    assert.throws(() => store.readFeedback("unconfigured/repo", 1));
+  } finally {
+    store.close();
   }
 });

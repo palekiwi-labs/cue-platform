@@ -33,6 +33,7 @@ Provision `~/.config/cue/github.toml` externally:
 repositories = ["spabreaks/spabreaks"]
 poll_seconds = 120
 concurrency = 2
+feedback_concurrency = 1
 cooldown_seconds = 15
 stagger_seconds = 1
 max_backoff_seconds = 1800
@@ -94,6 +95,59 @@ configured maximum. Manual requests do not bypass either. Polling and
 SQLite continue independently while NATS is unavailable. On shutdown,
 queued work completes with errors and running subprocesses are aborted.
 
+## PR feedback
+
+After each successful repository poll, the service fetches the feedback
+of every open PR whose `updatedAt` differs from the `updatedAt` recorded
+at its last successful feedback fetch, or that has never been fetched.
+After a restart this is a first pass over all changed PRs. A live check
+showed that a review-thread reply bumps the PR `updatedAt`. Feedback jobs
+coalesce per PR, use their own concurrency (`feedback_concurrency`,
+default 1, at most 4), start only when no repository poll is waiting for
+a slot, and follow the same cooldown and per-PR exponential backoff as
+repositories.
+
+A feedback fetch reads PR metadata, review threads (50 per page), the
+comments of each thread (100 per page, followed per thread), PR comments
+and reviews (100 per page). A GraphQL error, a missing PR, or a missing or
+repeated cursor fails the whole fetch; the last good feedback, revision
+and `fetchedAt` are kept and the failure count and sanitized error are
+updated. Reviews without a body are kept only for `APPROVED`,
+`CHANGES_REQUESTED` and `DISMISSED`; pending reviews and empty
+`COMMENTED` reviews are counted in `omittedReviews`. Conversation entries
+are ordered by time.
+
+Each thread carries the diff hunk of its first comment as `diffHunk`. A
+comment carries its own `diffHunk` only when it differs from the thread
+hunk, so the hunk of a comment is `comment.diffHunk` when that key is
+present, otherwise `thread.diffHunk`.
+
+Feedback is stored per PR in one SQLite transaction. Its revision
+advances only when the feedback content changes. Rows of PRs that leave
+the open list are deleted when the repository snapshot is replaced, so a
+reopened PR starts again at revision 0.
+
+## Rate limits
+
+Every gh call runs `gh api graphql --include`, so the HTTP status line
+and headers precede the body on stdout, also on failure. gh exits non-zero
+on HTTP errors and on any GraphQL error, writes the body to stdout, and
+writes `gh: <message>` to stderr (REST errors end in `(HTTP <status>)`;
+without a message it prints `gh: HTTP <status>`). A failed call is a rate
+limit when the status is 429, a GraphQL error has type `RATE_LIMITED`,
+stderr or the error messages mention "rate limit" (primary and secondary
+limits), or a 403 carries `Retry-After` or `X-RateLimit-Remaining: 0`.
+
+On a rate limit the service pauses all collection, repositories and
+feedback, until `Retry-After`, else `X-RateLimit-Reset` when the remaining
+budget is 0, else 60 seconds for secondary limits and 5 minutes otherwise
+(clamped to 1 second to 2 hours). The affected job is requeued for the end
+of the pause without counting a failure; pending refresh operations stay
+pending. A successful response with `X-RateLimit-Remaining` below 100
+proactively pauses collection until its reset. The pause is in memory and
+exposed as `pausedUntil` (Unix milliseconds or null) in list, feedback and
+operation results.
+
 GitHub does not offer a transaction across GraphQL pages. Count and cursor
 checks reject detectable inconsistencies, but a concurrent edit with an
 unchanged total may still yield a temporally mixed snapshot; a later poll
@@ -105,7 +159,9 @@ Use core NATS request/reply with JSON objects. Every reply is either
 `{ "ok": true, "data": ... }` or
 `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
 Requests are bounded to 16 KiB. Replies exceeding the broker payload limit
-return `response_too_large`; reduce the list limit. No shared queue group:
+return `response_too_large`; reduce the list limit. A feedback reply has no
+pagination, so feedback larger than the broker limit (1 MiB by default)
+cannot be read. No shared queue group:
 run only one responder for this namespace. Configure routing/ACLs for
 `github.api.v1.*` and `github.evt.v1.*` explicitly, independent of agent
 lifecycle subjects.
@@ -116,7 +172,7 @@ Request: `{ repo?, offset?, limit?, storeId?, revisions? }`.
 Omitting `repo` selects all configured repositories. Default offset is 0;
 limit is 1–100 (default 100).
 
-Result: `{ storeId, repositories, prs, total, nextOffset }`.
+Result: `{ storeId, repositories, prs, total, nextOffset, pausedUntil }`.
 `repositories` contains metadata for every selected repository even when
 unfetched or when the PR page is empty. PR pagination is over the combined
 configured-order repository list, with ascending PR numbers within each.
@@ -132,7 +188,12 @@ reduce retries on busy multi-repo installations.
 
 ### `github.api.v1.refresh`
 
-Request: `{ repo? }`. Omit `repo` to refresh all configured repositories.
+Request: `{ repo?, number? }`. Omit `repo` to refresh all configured
+repositories. With `repo` and `number`, refresh the feedback of that PR
+only; the PR must be in the open list of the repository (`not_found`
+otherwise). A per-PR refresh skips the `updatedAt` check but still
+coalesces with a queued or running fetch of that PR and respects cooldown
+and backoff.
 Result: `{ operationId }`, returned promptly without awaiting GitHub.
 The operation can remain pending during cooldown or backoff. A new
 operation may share repository fetches with other operations or polling.
@@ -142,14 +203,37 @@ parallel duplicate fetches of a repository.
 ### `github.api.v1.operation`
 
 Request: `{ operationId }`.
-Result: `{ operationId, createdAt, completedAt, state, repositories }`.
+Result: `{ operationId, createdAt, completedAt, state, repositories,
+feedback?, pausedUntil }`.
 State is `pending` or `complete`. The repository map holds outcomes with
 state `pending`, `success` (plus `revision` and `changed`), or `error`
-(plus sanitized `error`). Completed operations expire after 15 minutes;
+(plus sanitized `error`). A per-PR refresh has an empty repository map
+and a `feedback` outcome `{ repo, number, state, revision?, changed?,
+error? }`. Completed operations expire after 15 minutes;
 at most 256 pending/completed operations are retained, evicting oldest
 completed first. If all capacity is pending, refresh returns `busy`.
 Operation tracking is in-memory, not persistent across daemon restarts;
 unknown/expired/evicted IDs return `not_found`. Reread snapshots to recover.
+
+### `github.api.v1.feedback`
+
+Request: `{ repo, number }` for a PR in the open list of the repository
+(`not_found` otherwise).
+Result: `{ storeId, repo, number, revision, fetchedAt, attemptedAt,
+sourceUpdatedAt, failures, error, pausedUntil, feedback }`. `feedback` is
+null and `revision` 0 until the first successful fetch. `sourceUpdatedAt`
+is the PR `updatedAt` from the list snapshot that triggered the last
+successful fetch. `feedback` is `{ repo, pr, threads, conversation,
+omittedReviews }`: `pr` holds number, title, url, state, `isDraft`,
+author, `headRef`, `baseRef`, `headSha` and `baseSha` at fetch time;
+threads hold path, `subjectType`, diff sides, line fields, resolved,
+outdated and collapsed state, `resolvedBy`, `commentsTotal`, `diffHunk`
+and comments; comments and conversation entries keep GitHub ids
+(`databaseId` as a string), author login, type and association, body,
+state (`PENDING` for unsubmitted comments of the viewer), GitHub ISO
+timestamps, url and minimized state. Field names follow the
+`station/github-feedback@1` snapshot in camelCase; `fetched_at` and
+`source` are replaced by the service metadata.
 
 ### Advisory notifications
 
@@ -159,6 +243,13 @@ unknown/expired/evicted IDs return `not_found`. Reread snapshots to recover.
 - `github.evt.v1.completed`: `{ operationId }`, after all repositories in
   an explicit refresh operation finish, including unchanged/error results.
   Query the operation for its outcomes.
+- `github.evt.v1.feedback`: `{ storeId, repo, number, revision,
+  newComments }`, only after changed feedback of a PR commits.
+  `newComments` lists `{ id, kind, author, createdAt, threadId? }` for
+  comment ids not seen in the previous successful fetch; `kind` is
+  `thread` (with `threadId`), `comment` or `review`. `PENDING` comments
+  are never listed and are reported once submitted. The first successful
+  fetch of a PR is a baseline with empty `newComments`.
 
 These are lossy core NATS hints. They are neither durable events nor proof
 of a consumer's state. No offline replay or JetStream outbox exists.
@@ -171,8 +262,14 @@ periodically reconcile revisions even without a notification.
 Pi's PR browser and station read persisted snapshots on launch. Refresh
 requests go through the service; neither consumer falls back to a GitHub
 list fetch. Both retain displayed rows while refreshing and show an
-indicator when background data has changed. Comments, reviews and diffs
+indicator when background data has changed. Station's feedback tab and diffs
 still use their existing on-demand fetching paths.
+
+The client also reads feedback (`feedback(repo, number)`), refreshes the
+feedback of one PR and waits for the operation (`refreshFeedback(repo,
+number)`), and passes feedback events to `onFeedback(listener)` callbacks
+until the returned function is called. `snapshotHealth` reports an
+active rate-limit pause.
 
 The shared client collects all snapshot pages with revision guards and
 bounded conflict retries. It tracks refresh operations by polling, so

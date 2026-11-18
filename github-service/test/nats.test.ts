@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { once } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { serveNats } from "../src/nats.js";
@@ -11,11 +14,12 @@ import { GithubService } from "../src/service.js";
 import { SnapshotStore } from "../src/store.js";
 import {
   SUBJECTS,
+  type FeedbackEvent,
   type ListResult,
   type RefreshOperation,
   type Reply,
 } from "../src/protocol.js";
-import { pr, repo } from "./fixtures.js";
+import { pr, prFeedback, repo, threadComment } from "./fixtures.js";
 
 async function eventually<T>(
   read: () => Promise<T>,
@@ -259,6 +263,99 @@ test(
       if (server) await stop(server);
       await service.close();
       store.close();
+    }
+  },
+);
+
+test(
+  "NATS feedback read, per-PR refresh, feedback events and size limit",
+  { timeout: 15_000 },
+  async () => {
+    const port = await unusedPort();
+    const url = `nats://127.0.0.1:${port}`;
+    const dir = mkdtempSync(join(tmpdir(), "github-nats-"));
+    const conf = join(dir, "nats.conf");
+    writeFileSync(conf, "max_payload: 65536\n");
+    const server = spawn(
+      "nats-server",
+      ["-a", "127.0.0.1", "-p", String(port), "-c", conf],
+      { stdio: "ignore" },
+    );
+    const store = new SnapshotStore(":memory:", [repo]);
+    store.replace(repo, "viewer", [pr, { ...pr, number: 2 }], 1);
+    let now = 1000;
+    let ids = ["C1"];
+    const service = new GithubService(
+      store,
+      async () => ({ viewer: "viewer", prs: [pr, { ...pr, number: 2 }] }),
+      { now: () => now, cooldownMs: 10, pollMs: 100_000 },
+      async (_, number) =>
+        number === 2
+          ? prFeedback(
+              [{ ...threadComment("C9"), body: "x".repeat(70_000) }],
+              [],
+              2,
+            )
+          : prFeedback(ids.map((id) => threadComment(id))),
+    );
+    const abort = new AbortController();
+    const ui = new GithubClient(url);
+    let nc: NatsConnection | undefined;
+    let serving: Promise<void> | undefined;
+    try {
+      nc = await client(url);
+      serving = serveNats(service, url, abort.signal);
+      const events: FeedbackEvent[] = [];
+      const off = ui.onFeedback((event) => events.push(event));
+      const empty = await eventually(
+        () => ui.feedback(repo, 1),
+        () => true,
+      );
+      assert.equal(empty.revision, 0);
+      assert.equal(empty.feedback, null);
+      assert.equal(empty.pausedUntil, null);
+      await assert.rejects(ui.feedback(repo, 9), { code: "not_found" });
+      const first = await ui.refreshFeedback(repo, 1);
+      assert.equal(first.feedback?.state, "success");
+      assert.deepEqual(first.repositories, {});
+      const read = await ui.feedback(repo, 1);
+      assert.equal(read.revision, 1);
+      assert.equal(read.feedback?.threads[0].comments[0].id, "C1");
+      await eventually(
+        async () => events.length,
+        (n) => n === 1,
+      );
+      assert.deepEqual(events[0].newComments, []);
+      ids = ["C1", "C2"];
+      now += 10;
+      await ui.refreshFeedback(repo, 1);
+      await eventually(
+        async () => events.length,
+        (n) => n === 2,
+      );
+      assert.equal(events[1].revision, 2);
+      assert.equal(events[1].number, 1);
+      assert.deepEqual(
+        events[1].newComments.map((c) => c.id),
+        ["C2"],
+      );
+      off();
+      await ui.refreshFeedback(repo, 2);
+      await assert.rejects(ui.feedback(repo, 2), {
+        code: "response_too_large",
+      });
+      const legacy = await ui.refresh(repo);
+      assert.equal(legacy.repositories[repo].state, "success");
+      assert.equal(legacy.feedback, undefined);
+    } finally {
+      await ui.close();
+      abort.abort();
+      await serving;
+      await nc?.close();
+      await stop(server);
+      await service.close();
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   },
 );
