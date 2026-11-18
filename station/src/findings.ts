@@ -163,6 +163,7 @@ export interface FindingsOptions {
   onQuit: () => void;
   refreshable?: boolean;
   onOpen: (file: string, line: number) => void;
+  onStatus?: (finding: Finding) => void;
 }
 
 function severityColor(s: string): string {
@@ -297,6 +298,11 @@ export class FindingsView implements Component {
       case " ":
         this.offset += Math.floor(h / 2);
         return;
+      case "s": {
+        const finding = this.current();
+        if (finding) this.opts.onStatus?.(finding);
+        return;
+      }
       case "e": {
         const f = this.current();
         if (f?.file != null) this.opts.onOpen(f.file, f.line_start ?? 1);
@@ -423,7 +429,7 @@ export class FindingsView implements Component {
     }
 
     const k = (key: string, what: string): string => `${C.text}${key}${C.dim} ${what}  `;
-    const keys = ` ${this.opts.refreshable ? k("R", "refresh") : ""}${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("q", "quit")}`;
+    const keys = ` ${this.opts.refreshable ? k("R", "refresh") : ""}${k("↑/↓", "finding")}${k("shift-↑/↓ pgup/pgdn", "scroll")}${k("e", "open")}${k("s", "status")}${k("q", "quit")}`;
     const more = this.offset + bodyH < rows.length ? `${C.accent}more ↓  ` : "";
     const pos = r.findings.length === 0 ? "" : `finding ${this.cursor + 1}/${r.findings.length} `;
     const right = `${more}${C.dim}${pos}`;

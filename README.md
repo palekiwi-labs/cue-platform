@@ -182,6 +182,62 @@ NATS sender never uses it. Do not use HTTP to circumvent coordination.
 The HTTP sender sends only the text: the HTTP bridge speaks with its own
 configured voice and ignores the session voice.
 
+## Operator events v1
+
+The review station's findings view supports `s` on the highlighted finding.
+Choose `a` open, `b` applied, or `c` dismissed, then press Enter in the
+confirmation popup to save. Any other key cancels either popup; navigation
+never writes. The footer lists `s status`. Dismissal supplies a default
+reason; opening or applying clears the dismissal reason.
+
+The selected `verifiers-*.json` remains the source of truth. The station
+atomically replaces it before publishing, preserving other fields. The
+artifact address is the loaded review run address plus that filename; the
+first three address segments identify its owning canonical context. A
+publish failure shows a warning without rolling back the saved change.
+
+`src/nats/index.ts` registers the pi subscriber as part of the existing
+package extension; no separate feature flag is needed. Pi must load this
+checkout, not another checkout or the installed Git revision. Use `/reload`
+after changing the loaded checkout. Link the session to the review context
+with `cue-session-link` or the context browser's link action. The subscriber
+initializes from the session's linked context, not `$CUE_CONTEXT` or branch
+configuration, and clears pending facts on relink or tree/session switch.
+The footer shows `operator: connected` or `operator: disconnected` when
+linked.
+
+Both processes use `$CUE_NATS_URL` (default `nats://127.0.0.1:4222`). Core
+NATS subjects are `operator.evt.v1.<base64url-context>.finding_status_changed`;
+any leaf routing/permissions between the processes must allow these subjects.
+Publication success means local NATS acceptance, not a subscriber receipt.
+No JetStream, replay, offline queue, or acknowledgement is provided.
+
+On the next idle-session user message, pi inserts a visible factual summary.
+It coalesces up to 100 artifact/finding pairs, removes net-zero changes, and
+reports the count of further unretained change events. Custom-message runs
+and steering messages while busy do not consume pending changes. Reloads
+and session switches discard pending facts.
+
+For a manual check:
+
+1. Build station with `cd station && npm run build`, then return to the
+   worktree root. Ensure station and pi can reach the same NATS service.
+2. Load this worktree's pi package, start/reload pi, and link it to the
+   canonical context owning a review run. Wait for `operator: connected`.
+3. From a checkout containing the reviewed head commit, run
+   `node <worktree>/station/bin/station.js findings
+   <org>/<repo>/<context>/review/runs/<run-id>` on one command line.
+   Alternatively open the PR's findings tab in station.
+4. Highlight an open finding, press `s`, `c`, Enter. Verify the on-screen
+   status and the verifier JSON now say dismissed. Type `continue` in idle
+   pi: a visible `operator-events` summary should precede the response.
+5. Dismiss and reopen a finding before typing again: no summary for that
+   net-zero change. Cancel either popup: no write or event. Link pi to a
+   different context: changes in the old context must not appear.
+6. Stop/disconnect NATS and save another status: JSON still changes and
+   station warns that the event was not published. Reconnecting does not
+   replay the missed change.
+
 ## GitHub snapshot service
 
 `github-service/` is a separately packaged Node service providing private
