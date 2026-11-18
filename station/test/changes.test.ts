@@ -401,3 +401,19 @@ test("the navigator lists walkthrough drafts under their own group", () => {
   assert.match(screen(v), /Comments 1/);
   assert.doesNotMatch(screen(v), /Walkthrough 1/);
 });
+
+test("F toggles focus, dimming chunks other than the active one", () => {
+  const { v } = view();
+  const line = (needle: string): string => v.render(100).find((l) => stripTerminalSequences(l).includes(needle)) ?? "";
+  const addBg = "\x1b[48;2;18;52;32m";
+  assert.ok(line("+ y").includes(addBg));
+  v.handleInput("F");
+  assert.ok(line("+ added").includes(addBg));
+  assert.ok(!line("+ y").includes(addBg));
+  assert.match(stripTerminalSequences(line("+ y")), /\+ y/);
+  v.handleInput("j");
+  assert.ok(!line("+ added").includes(addBg));
+  assert.ok(line("+ y").includes(addBg));
+  v.handleInput("F");
+  assert.ok(line("+ added").includes(addBg));
+});

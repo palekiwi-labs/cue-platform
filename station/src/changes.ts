@@ -139,6 +139,7 @@ export class ChangesView implements Component {
   private offset = 0;
   private sidebarOffset = 0;
   private sidebar = true;
+  private focus = false;
   private sideFocus = false;
   private sideMode: "files" | "comments" = "files";
   private readonly pane: CommentsPane;
@@ -801,6 +802,11 @@ export class ChangesView implements Component {
       this.showComments();
       return;
     }
+    if (data === "F") {
+      this.focus = !this.focus;
+      this.notice = { text: this.focus ? "focus on" : "focus off", error: false };
+      return;
+    }
     if (this.item !== null) {
       this.handleLineInput(data);
       return;
@@ -889,6 +895,7 @@ export class ChangesView implements Component {
   private renderRow(row: Row, w: number): string {
     const cur = this.current();
     const activeChunk = cur.chunk;
+    if (this.focus && "chunk" in row && row.chunk !== activeChunk) return this.renderDimmed(row, w);
     const mark = (on: boolean): string => (on ? `${C.accent}▎${RESET}` : " ");
     switch (row.kind) {
       case "blank":
@@ -942,6 +949,25 @@ export class ChangesView implements Component {
         const body = row.head ? `${C.mod}${BOLD}comment${RESET}${C.noteBg}  ${C.dim}${row.text}` : `${C.text}${row.text}`;
         return lead + " ".repeat(GUTTER - 2) + C.noteBg + fit(`${bar}${body}`, w - 1 - (GUTTER - 2)) + RESET;
       }
+    }
+  }
+
+  private renderDimmed(row: Exclude<Row, { kind: "blank" | "file" | "note" }>, w: number): string {
+    switch (row.kind) {
+      case "hunk":
+      case "folded": {
+        const c = this.chunk(row.chunk);
+        const label = c.section !== "" ? `  ${c.section.trim()}` : "";
+        const arrow = row.kind === "folded" ? "▸" : "⋯";
+        return ` ${C.faint}${fit(`  ${arrow} line ${c.new_start}${label}`, w - 1)}${RESET}`;
+      }
+      case "line": {
+        if (row.sign === "\\") return ` ${C.faint}${fit(`            ${row.text}`, w - 1)}${RESET}`;
+        const sign = row.sign === "+" || row.sign === "-" ? row.sign : " ";
+        return ` ${C.faint}${fit(`${num(row.oldNo)} ${num(row.newNo)} ${sign} ${row.text}`, w - 1)}${RESET}`;
+      }
+      case "comment":
+        return ` ${" ".repeat(GUTTER - 2)}${C.faint}${fit(`┃ ${row.head ? "comment  " : ""}${row.text}`, w - 1 - (GUTTER - 2))}${RESET}`;
     }
   }
 
@@ -1035,7 +1061,7 @@ export class ChangesView implements Component {
       ? ` ${C.text}j/k${C.dim} file  ${C.text}enter${C.dim} jump  ${C.text}C${C.dim} comments  ${C.text}tab/esc${C.dim} back to diff`
       : this.item !== null
       ? ` ${k("j/k", "line")}${k("V", this.anchor === null ? "range" : "end range")}${k("c", "comment")}${k("y", "copy loc")}${k("E/d", "edit/delete")}${k("e", "open")}${k("esc", this.anchor === null ? "chunks" : "clear range")}`
-      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}y${C.dim} copy loc  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
+      : ` ${C.text}j/k${C.dim} chunk  ${C.text}enter${C.dim} lines  ${C.text}c${C.dim} comment  ${C.text}y${C.dim} copy loc  ${C.text}C${C.dim} comments  ${C.text}^↑/^↓${C.dim} file  ${C.text}space${C.dim} fold  ${C.text}f${C.dim} fold file  ${C.text}F${C.dim} ${this.focus ? "unfocus" : "focus"}  ${C.text}tab${C.dim} files  ${C.text}t${C.dim} hide  ${C.text}e${C.dim} open  ${C.text}q${C.dim} ${this.opts.quitLabel ?? "quit"}`;
     const left = this.notice === null
       ? keys
       : truncateToWidth(` ${this.notice.error ? C.del : C.add}${this.notice.text}`, Math.max(1, width - pos.length - 2), "…");
