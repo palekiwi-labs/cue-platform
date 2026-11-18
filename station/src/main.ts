@@ -16,6 +16,7 @@ import { createNatsClient } from "../../src/nats/client.js";
 import { chooseFindingStatus } from "./finding-status.js";
 import { checkoutPr } from "./checkout.js";
 import { LAUNCHES, type LaunchKind, launchPickerText, launchReview, launchWalkthrough } from "./launch.js";
+import { ReviewStatuses } from "./pr-status.js";
 import { PR_SORTS, PrsView, sortPickerText } from "./prs.js";
 import { pruneReviews } from "./prune.js";
 import { PrsSource } from "./prs-source.js";
@@ -464,6 +465,7 @@ function showPrs(repo: string, home: HomeOptions): void {
       router.showPopup({ title, text: errText(e), error: true, footer: "any key" }, true);
     } finally {
       busy = false;
+      statuses.refresh();
     }
   };
   const list = new PrsView({
@@ -482,7 +484,10 @@ function showPrs(repo: string, home: HomeOptions): void {
         true,
         Object.fromEntries(LAUNCHES.map((l) => [l.key, () => void launch(pr, l.kind)])),
       ),
-    onRefresh: () => void live.refresh(),
+    onRefresh: () => {
+      statuses.refresh();
+      void live.refresh();
+    },
     onCopy: (text) => process.stdout.write(osc52(text)),
     onPickSort: (current, choose) =>
       router.showPopup(
@@ -491,10 +496,20 @@ function showPrs(repo: string, home: HomeOptions): void {
         Object.fromEntries(PR_SORTS.map((s) => [s.key, () => choose(s.sort)])),
       ),
   });
-  const live = new LivePrs(list, sourceFeed(source), () => router.tui.requestRender());
+  const statuses = new ReviewStatuses(list, repoSlug(repo), () => router.tui.requestRender());
+  let listed = "";
+  const live = new LivePrs(list, sourceFeed(source), () => {
+    const now = list.numbers().join(",");
+    if (now !== listed) {
+      listed = now;
+      statuses.refresh();
+    }
+    router.tui.requestRender();
+  });
   let activity: ActivityTab | null = null;
   const quit = (): void => {
     live.dispose();
+    statuses.dispose();
     void Promise.allSettled([source.client.close(), activity?.close()]).finally(() => router.quit());
   };
   const tabs = new TabsScreen([

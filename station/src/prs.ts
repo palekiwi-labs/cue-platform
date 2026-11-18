@@ -1,6 +1,7 @@
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { stackPrs } from "../../src/prs/stack.js";
+import { openFindings, type PrReviewStatus, type RunState } from "./pr-status.js";
 import { nearestSurvivor } from "./reload.js";
 import type { PrSummary } from "./source.js";
 
@@ -111,6 +112,61 @@ function decision(d: string): string {
   }
 }
 
+function stateColor(state: RunState): string {
+  switch (state) {
+    case "completed":
+      return C.add;
+    case "incomplete":
+      return C.mod;
+    case "unknown":
+      return C.dim;
+    default:
+      return C.del;
+  }
+}
+
+export const STATUS_WIDTH = 7;
+
+export function statusSlot(status: PrReviewStatus | undefined): string {
+  if (status === undefined) return " ".repeat(STATUS_WIDTH);
+  const run = status.inProgress
+    ? `${C.accent}◐`
+    : status.latest === null ? " " : `${stateColor(status.latest)}●`;
+  const open = openFindings(status);
+  const count = open > 0 ? `${C.mod}${open > 99 ? "99+" : String(open)}` : "";
+  const walk = status.walkthroughs.length > 0 ? `${C.ren}w` : " ";
+  return `${run} ${count}${" ".repeat(3 - visibleWidth(count))} ${walk}`;
+}
+
+function runAge(runId: string, now: number): string {
+  const s = Number(runId);
+  return Number.isFinite(s) && s > 0 ? `${age(new Date(s * 1000).toISOString(), now)} ago` : "";
+}
+
+export function previewLines(pr: PrSummary | undefined, status: PrReviewStatus | undefined, now: number): string[] {
+  if (pr === undefined) return [];
+  const out = [`${C.text}${BOLD}#${pr.number}${RESET} ${C.text}${pr.title}`];
+  if (status === undefined) {
+    out.push(`${C.dim}no reviews or walkthroughs`);
+    return out;
+  }
+  out.push(`${C.dim}runs`);
+  if (status.inProgress && !status.runs.some((r) => r.state === "in progress")) out.push(`  ${C.accent}◐ ${C.text}starting`);
+  if (status.runs.length === 0 && !status.inProgress) out.push(`  ${C.dim}none`);
+  for (const r of status.runs) {
+    const glyph = r.state === "in progress" ? `${C.accent}◐` : `${stateColor(r.state)}●`;
+    const counts = status.findings.find((f) => f.runId === r.runId);
+    const findings = counts === undefined
+      ? r.verified ? "" : `  ${C.dim}not verified`
+      : `  ${counts.open > 0 ? C.mod : C.dim}${counts.open}/${counts.total} findings open`;
+    out.push(`  ${glyph} ${C.text}${r.runId}  ${C.dim}${r.state}  ${runAge(r.runId, now)}${findings}`);
+  }
+  out.push(`${C.dim}walkthroughs`);
+  if (status.walkthroughs.length === 0) out.push(`  ${C.dim}none`);
+  for (const w of status.walkthroughs) out.push(`  ${C.ren}w ${C.text}${w}`);
+  return out;
+}
+
 export class PrsView implements Component {
   private readonly opts: PrsOptions;
   private prs: PrSummary[] = [];
@@ -124,6 +180,9 @@ export class PrsView implements Component {
   private offset = 0;
   private lastHeight = 20;
   private notice: { text: string; error: boolean; until?: number } | null = null;
+  private statuses = new Map<number, PrReviewStatus>();
+  private previewOffset = 0;
+  private previewFor: number | undefined;
 
   constructor(opts: PrsOptions) {
     this.opts = opts;
@@ -148,6 +207,14 @@ export class PrsView implements Component {
     this.me = me;
     this.loaded = true;
     return this.reorder(prs);
+  }
+
+  setStatuses(statuses: Map<number, PrReviewStatus>): void {
+    this.statuses = statuses;
+  }
+
+  numbers(): number[] {
+    return this.prs.map((p) => p.number);
   }
 
   sortBy(): PrSort {
@@ -219,6 +286,14 @@ export class PrsView implements Component {
 
   handleInput(data: string): void {
     this.notice = null;
+    if (matchesKey(data, "shift+down")) {
+      this.previewOffset++;
+      return;
+    }
+    if (matchesKey(data, "shift+up")) {
+      this.previewOffset = Math.max(0, this.previewOffset - 1);
+      return;
+    }
     switch (data) {
       case "y":
         this.copy("url");
@@ -290,16 +365,34 @@ export class PrsView implements Component {
     const base = selected ? C.selBg : "";
     const num = `${C.dim}#${String(pr.number).padEnd(6)}`;
     const req = mine ? `${C.mod}● ` : "  ";
-    const right = `${decision(pr.reviewDecision)}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
+    const right = `${statusSlot(this.statuses.get(pr.number))}  ${decision(pr.reviewDecision)}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
     const rightW = visibleWidth(right);
     const left = `${marker}${base}${req}${num}${C.dim}${row.guide}${pr.isDraft ? C.dim : C.text}${pr.title}`;
     const leftCell = fit(left, Math.max(0, width - rightW - 1));
     return `${base}${leftCell}${base} ${right}${RESET}`;
   }
 
+  private renderPreview(width: number, height: number, now: number): string[] {
+    const pr = this.selected();
+    if (pr?.number !== this.previewFor) {
+      this.previewFor = pr?.number;
+      this.previewOffset = 0;
+    }
+    const lines = previewLines(pr, pr === undefined ? undefined : this.statuses.get(pr.number), now);
+    const room = height - 1;
+    this.previewOffset = Math.min(this.previewOffset, Math.max(0, lines.length - room));
+    const shown = lines.slice(this.previewOffset, this.previewOffset + room).map((l) => fit(` ${l}`, width) + RESET);
+    while (shown.length < room) shown.push("");
+    const more = lines.length > room
+      ? `  ${this.previewOffset + 1}-${Math.min(lines.length, this.previewOffset + room)}/${lines.length}`
+      : "";
+    return [C.fileBg + fit(` ${C.dim}review status${more}`, width) + RESET, ...shown];
+  }
+
   render(width: number): string[] {
     const total = Math.max(8, process.stdout.rows ?? 40);
-    const bodyH = total - 3;
+    const previewH = total >= 20 ? Math.min(10, Math.floor(total / 3)) : 0;
+    const bodyH = total - 3 - previewH;
     this.lastHeight = bodyH;
     const now = Date.now();
     const out: string[] = [];
@@ -319,8 +412,9 @@ export class PrsView implements Component {
     if (this.loaded && this.prs.length === 0) body.push(fit(`  ${C.dim}no open pull requests${RESET}`, width));
     while (body.length < bodyH) body.push("");
     out.push(...body);
+    if (previewH > 0) out.push(...this.renderPreview(width, previewH, now));
 
-    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}c${C.dim} checkout  ${C.text}L${C.dim} launch  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}R${C.dim} refresh  ${C.text}q${C.dim} quit`;
+    const keys = ` ${C.text}j/k${C.dim} move  ${C.text}enter${C.dim} review  ${C.text}y${C.dim} copy url  ${C.text}h${C.dim} copy md  ${C.text}c${C.dim} checkout  ${C.text}L${C.dim} launch  ${C.text}shift-↑/↓${C.dim} scroll status  ${C.text}s${C.dim} sort  ${C.text}t${C.dim} tree  ${C.text}R${C.dim} refresh  ${C.text}q${C.dim} quit`;
     const pos = `${this.layout === "tree" ? "tree  " : ""}sort: ${sortLabel(this.sort)}  ` +
       (this.rows.length > 0 ? `${this.cursor + 1}/${this.rows.length} ` : "");
     const room = Math.max(1, width - pos.length - 2);
