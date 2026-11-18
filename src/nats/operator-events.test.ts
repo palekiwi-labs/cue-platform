@@ -38,16 +38,18 @@ describe("operator events", () => {
     pending.add(event)
     pending.add({ ...event, old_status: "dismissed", new_status: "applied" })
     pending.add({ ...event, artifact_address: `${context}/review/other.json` })
-    const text = pending.take(context)!
-    expect(text).toContain("open -> applied")
-    expect(text).toContain("open -> dismissed")
+    expect(pending.take(context)).toBe([
+      "Operator changes since your last message:",
+      "[operator] F3 open -> applied (runs/run, verifiers-a.json)",
+      "[operator] F3 open -> dismissed (other.json)",
+    ].join("\n"))
     expect(pending.take(context)).toBeUndefined()
   })
   test("bounds retained changes and clears overflow", () => {
     const pending = new PendingOperatorChanges(1)
     pending.add(event)
     pending.add({ ...event, finding_id: "F4" })
-    expect(pending.take(context)).toContain("1 more changes")
+    expect(pending.take(context)).toContain("[operator] 1 more changes")
     expect(pending.take(context)).toBeUndefined()
   })
 })
