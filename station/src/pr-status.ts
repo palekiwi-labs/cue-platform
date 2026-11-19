@@ -140,10 +140,6 @@ export function prReviewStatus(repoSlug: string, pr: number, windows: Windows, s
   return status;
 }
 
-export function openFindings(status: PrReviewStatus): number {
-  return status.findings[0]?.open ?? 0;
-}
-
 export const POLL_MS = 5000;
 
 export interface StatusTarget {
