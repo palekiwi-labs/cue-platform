@@ -121,14 +121,21 @@ const status = (over: Partial<PrReviewStatus>): PrReviewStatus => ({
   runs: [], inProgress: false, latest: null, findings: [], walkthroughs: [], ...over,
 });
 
-test("status slot has a fixed width and shows run, open findings and walkthrough", () => {
+test("status slot shows one review cell (in progress, failed or open count) and the walkthrough marker", () => {
   const plain = (s: PrReviewStatus | undefined) => stripTerminalSequences(statusSlot(s));
+  const done = (open: number, extra: Partial<PrReviewStatus> = {}) => status({
+    runs: [{ runId: "1", state: "completed", verified: true }], latest: "completed",
+    findings: [{ runId: "1", open, total: open + 1 }], ...extra,
+  });
   assert.equal(plain(undefined), " ".repeat(STATUS_WIDTH));
-  assert.equal(plain(status({ inProgress: true })), "◐       ".slice(0, STATUS_WIDTH));
-  const done = status({ latest: "completed", findings: [{ runId: "1", open: 3, total: 4 }], walkthroughs: ["w"] });
-  assert.equal(plain(done), "● 3   w");
-  assert.equal(plain(status({ latest: "completed", findings: [{ runId: "1", open: 120, total: 130 }] })), "● 99+  ");
-  for (const s of [undefined, status({ inProgress: true }), done]) assert.equal(visibleWidth(statusSlot(s)), STATUS_WIDTH);
+  assert.equal(plain(status({ inProgress: true })), "◐    ");
+  assert.equal(plain(done(3, { walkthroughs: ["w"] })), "3   w");
+  assert.equal(plain(done(0)), "0    ");
+  assert.equal(plain(done(120)), "99+  ");
+  assert.equal(plain(status({ runs: [{ runId: "1", state: "interrupted", verified: false }], latest: "interrupted" })), "✗    ");
+  assert.equal(plain(status({ runs: [{ runId: "1", state: "completed", verified: false }], latest: "completed" })), "-    ");
+  assert.equal(plain(status({ walkthroughs: ["w"] })), "    w");
+  for (const s of [undefined, status({ inProgress: true }), done(3)]) assert.equal(visibleWidth(statusSlot(s)), STATUS_WIDTH);
 });
 
 test("every review decision fits the fixed decision column", () => {
@@ -164,7 +171,7 @@ test("list rows carry the status slot and the preview scrolls with shift arrows"
     const many = Array.from({ length: 20 }, (_, i) => ({ runId: String(100 + i), state: "completed" as const, verified: false }));
     v.setStatuses(new Map([[7, status({ latest: "completed", runs: many })]]));
     const out = () => v.render(100).map(stripTerminalSequences);
-    assert.ok(out().some((l) => l.includes("#7") && l.includes("●")));
+    assert.ok(out().some((l) => l.includes("#7") && / - {3}/.test(l)));
     assert.ok(out().some((l) => l.startsWith(" review status")));
     const first = out().find((l) => l.startsWith(" review status"));
     v.handleInput("\x1b[1;2B");

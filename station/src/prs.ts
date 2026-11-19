@@ -1,7 +1,7 @@
 import { type Component, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BOLD, C, fit, RESET } from "./changes.js";
 import { stackPrs } from "../../src/prs/stack.js";
-import { openFindings, type PrReviewStatus, type RunState } from "./pr-status.js";
+import { type PrReviewStatus, type RunState } from "./pr-status.js";
 import { nearestSurvivor } from "./reload.js";
 import type { PrSummary } from "./source.js";
 
@@ -127,17 +127,23 @@ function stateColor(state: RunState): string {
   }
 }
 
-export const STATUS_WIDTH = 7;
+export const STATUS_WIDTH = 5;
+
+function reviewCell(status: PrReviewStatus): string {
+  if (status.inProgress) return `${C.accent}◐`;
+  const last = status.runs.find((r) => r.state !== "in progress");
+  if (last === undefined) return "";
+  if (last.state !== "completed") return `${stateColor(last.state)}✗`;
+  const counts = status.findings.find((f) => f.runId === last.runId);
+  if (counts === undefined) return `${C.dim}-`;
+  return counts.open > 0 ? `${C.mod}${counts.open > 99 ? "99+" : String(counts.open)}` : `${C.dim}0`;
+}
 
 export function statusSlot(status: PrReviewStatus | undefined): string {
   if (status === undefined) return " ".repeat(STATUS_WIDTH);
-  const run = status.inProgress
-    ? `${C.accent}◐`
-    : status.latest === null ? " " : `${stateColor(status.latest)}●`;
-  const open = openFindings(status);
-  const count = open > 0 ? `${C.mod}${open > 99 ? "99+" : String(open)}` : "";
+  const cell = reviewCell(status);
   const walk = status.walkthroughs.length > 0 ? `${C.ren}w` : " ";
-  return `${run} ${count}${" ".repeat(3 - visibleWidth(count))} ${walk}`;
+  return `${cell}${" ".repeat(3 - visibleWidth(cell))} ${walk}`;
 }
 
 function runAge(runId: string, now: number): string {
