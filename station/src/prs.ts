@@ -99,7 +99,9 @@ export function age(iso: string, now: number): string {
   return `${Math.floor(s / (86400 * 30))}mo`;
 }
 
-function decision(d: string): string {
+export const DECISION_WIDTH = 8;
+
+export function decision(d: string): string {
   switch (d) {
     case "APPROVED":
       return `${C.add}approved`;
@@ -365,7 +367,8 @@ export class PrsView implements Component {
     const base = selected ? C.selBg : "";
     const num = `${C.dim}#${String(pr.number).padEnd(6)}`;
     const req = mine ? `${C.mod}● ` : "  ";
-    const right = `${statusSlot(this.statuses.get(pr.number))}  ${decision(pr.reviewDecision)}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
+    const dec = decision(pr.reviewDecision);
+    const right = `${statusSlot(this.statuses.get(pr.number))}  ${dec}${" ".repeat(DECISION_WIDTH - visibleWidth(dec))}  ${C.dim}${pr.author.padEnd(14).slice(0, 14)} ${age(pr.updatedAt, now).padStart(4)} `;
     const rightW = visibleWidth(right);
     const left = `${marker}${base}${req}${num}${C.dim}${row.guide}${pr.isDraft ? C.dim : C.text}${pr.title}`;
     const leftCell = fit(left, Math.max(0, width - rightW - 1));
