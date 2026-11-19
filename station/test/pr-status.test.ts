@@ -13,7 +13,7 @@ import {
   type StatusInput,
   type Windows,
 } from "../src/pr-status.js";
-import { previewLines, PrsView, STATUS_WIDTH, statusSlot } from "../src/prs.js";
+import { DECISION_WIDTH, decision, previewLines, PrsView, STATUS_WIDTH, statusSlot } from "../src/prs.js";
 import type { PrSummary } from "../src/source.js";
 
 const win = (context: string, run: string, state: string, busy = true) => ({ context, run, state, busy });
@@ -129,6 +129,10 @@ test("status slot has a fixed width and shows run, open findings and walkthrough
   assert.equal(plain(done), "● 3   w");
   assert.equal(plain(status({ latest: "completed", findings: [{ runId: "1", open: 120, total: 130 }] })), "● 99+  ");
   for (const s of [undefined, status({ inProgress: true }), done]) assert.equal(visibleWidth(statusSlot(s)), STATUS_WIDTH);
+});
+
+test("every review decision fits the fixed decision column", () => {
+  for (const d of ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""]) assert.ok(visibleWidth(decision(d)) <= DECISION_WIDTH);
 });
 
 const pr = (n: number): PrSummary => ({
