@@ -189,9 +189,9 @@ describe("chunk comments in the reader", () => {
   }
   const hasLine = (frame: string[] | undefined, s: string) => frame?.some((l) => l.includes(s)) ?? false
 
-  test("r appends the quoted chunks and comments after the editor text, then closes", async () => {
+  test("enter appends the quoted chunks and comments after the editor text, then closes", async () => {
     const { ctx, keys, editor, notes, events } = fakeCtx(commentTurn(), true, "my draft")
-    keys.push("c", ...chars("first"), ENTER, "j", "c", ...chars("second"), ENTER, "r")
+    keys.push("c", ...chars("first"), ENTER, "j", "c", ...chars("second"), ENTER, ENTER)
     await openTurnReader(ctx)
     expect(editor.text).toBe("my draft\n\n> one\n\nfirst\n\n> two\n\nsecond")
     expect(notes).toEqual(["Inserted 2 comments into the editor"])
@@ -201,7 +201,7 @@ describe("chunk comments in the reader", () => {
   for (const [name, altEnter] of [["tmux csi-u", "\x1b[13;3u"], ["xterm modifyOtherKeys", "\x1b[27;3;13~"]]) {
     test(`alt+enter as ${name} adds a comment newline without cancelling`, async () => {
       const { ctx, keys, editor } = fakeCtx(commentTurn("one"), true)
-      keys.push("c", ...chars("ab"), altEnter, ...chars("cd"), ENTER, "r")
+      keys.push("c", ...chars("ab"), altEnter, ...chars("cd"), ENTER, ENTER)
       await openTurnReader(ctx)
       expect(editor.text).toBe("> one\n\nab\ncd")
     })
@@ -209,7 +209,7 @@ describe("chunk comments in the reader", () => {
 
   test("comments are visible inline and inserting never sends", async () => {
     const { ctx, keys, frames, editor } = fakeCtx(commentTurn(), true)
-    keys.push("c", ...chars("hi"), ENTER, "r")
+    keys.push("c", ...chars("hi"), ENTER, ENTER)
     await openTurnReader(ctx)
     const saved = frames.at(-2)!
     expect(hasLine(saved, "┃ hi")).toBe(true)
@@ -220,7 +220,7 @@ describe("chunk comments in the reader", () => {
   test("a failed insert keeps the drafts, the editor text and the reader open", async () => {
     const branch = commentTurn()
     const first = fakeCtx(branch, true, "keep", true)
-    first.keys.push("c", ...chars("note"), ENTER, "r", "q")
+    first.keys.push("c", ...chars("note"), ENTER, ENTER, "q")
     await openTurnReader(first.ctx)
     expect(first.editor.text).toBe("keep")
     expect(first.notes).toEqual(["Could not insert comments (no editor); drafts kept"])
@@ -228,18 +228,38 @@ describe("chunk comments in the reader", () => {
     expect(hasLine(first.frames.at(-2), "┃ note")).toBe(true)
 
     const retry = fakeCtx(branch, true, "keep")
-    retry.keys.push("r")
+    retry.keys.push(ENTER)
     await openTurnReader(retry.ctx)
     expect(retry.editor.text).toBe("keep\n\n> one\n\nnote")
   })
 
-  test("r without comments notifies and stays open", async () => {
+  test("enter without saved comments does nothing and keeps the editor text", async () => {
     const { ctx, keys, notes, editor, events } = fakeCtx(commentTurn(), true, "x")
-    keys.push("r", "q")
+    keys.push(ENTER, "q")
     await openTurnReader(ctx)
-    expect(notes).toEqual(["No comments to insert"])
+    expect(notes).toEqual([])
     expect(editor.text).toBe("x")
     expect(events).toEqual(["render", "backdrop hidden", "done"])
+  })
+
+  test("enter in the comment composer saves the comment without inserting", async () => {
+    const { ctx, keys, notes, editor, events, frames } = fakeCtx(commentTurn(), true, "draft")
+    keys.push("c", ...chars("saved"), ENTER, "q")
+    await openTurnReader(ctx)
+    expect(editor.text).toBe("draft")
+    expect(notes).toEqual([])
+    expect(hasLine(frames.at(-2), "┃ saved")).toBe(true)
+    expect(frames.at(-2)!.at(-1)).toContain("enter reply")
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("r no longer inserts the comments", async () => {
+    const { ctx, keys, notes, editor, events } = fakeCtx(commentTurn(), true, "x")
+    keys.push("c", ...chars("kept"), ENTER, "r", "q")
+    await openTurnReader(ctx)
+    expect(editor.text).toBe("x")
+    expect(notes).toEqual([])
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
   })
 
   test("drafts survive closing and reopening the same turn, not a new turn", async () => {
@@ -309,7 +329,7 @@ describe("chunk comments in the reader", () => {
 
     const done = { type: "message", id: "done", message: { ...partial, content: [{ type: "text", text: "one\n\ntwo\n\nthree" }] } }
     const later = fakeCtx([userEntry, done], true, "")
-    later.keys.push("r")
+    later.keys.push(ENTER)
     await openTurnReader(later.ctx)
     expect(hasLine(later.rendered().map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")), "┃ early")).toBe(true)
     expect(later.editor.text).toBe("> tw\n\nearly")

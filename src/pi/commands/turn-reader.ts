@@ -58,14 +58,12 @@ function turnComments(key: string | undefined): TurnComments {
 
 /**
  * Append the reply built from `comments` to the editor text. On success the
- * comments are cleared; on failure they are kept and false is returned.
+ * comments are cleared. Without comments nothing happens; on failure the
+ * comments are kept. Both return false.
  */
 export function insertReply(ctx: ExtensionContext, comments: TurnComments): boolean {
   const reply = replyText(comments)
-  if (reply === "") {
-    ctx.ui.notify("No comments to insert", "info")
-    return false
-  }
+  if (reply === "") return false
   const n = comments.size
   try {
     const text = appendReply(ctx.ui.getEditorText(), reply)
@@ -140,7 +138,7 @@ export async function openTurnReader(
           }
           else if (data === COMMENT_KEY) reader.comment(new Editor(tui, editorTheme))
           else if (data === DELETE_KEY) reader.deleteComment()
-          else if (data === REPLY_KEY) {
+          else if (matchesKey(data, REPLY_KEY)) {
             if (insertReply(ctx, comments)) return close()
           }
           else if (matchesKey(data, PREV_COMMENT_KEY)) reader.jumpComment(-1)

@@ -420,7 +420,7 @@ describe("TurnReader chunk comments", () => {
       "│  ┃ comment" + " ".repeat(47) + "│",
       "│  ┃ why two?" + " ".repeat(46) + "│",
       "│" + " ".repeat(58) + "│",
-      "╰─────── f unfocus · c comment · d delete · r reply · esc ─╯",
+      "╰─── f unfocus · c comment · d delete · enter reply · esc ─╯",
     ])
   })
 
@@ -432,7 +432,7 @@ describe("TurnReader chunk comments", () => {
     const lines = reader.render(60)
     const row = lines.find((l) => strip(l).includes("note on one"))!
     expect(row).toContain("\x1b[2m")
-    expect(lines.at(-1)).toContain("f unfocus · c comment · r reply · ↑↓ chunk · esc")
+    expect(lines.at(-1)).toContain("f unfocus · c comment · enter reply · ↑↓ chunk · esc")
     expect(lines.at(-1)).not.toContain("d delete")
   })
 
@@ -604,11 +604,11 @@ describe("TurnReader chunk comments", () => {
     const paragraphs = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n\n")
     const reader = new TurnReader(plain, md, ["a", paragraphs], () => 16, false, true, comments)
     const wide = reader.render(86).at(-1)!
-    expect(wide).toContain("r reply")
+    expect(wide).toContain("enter reply")
     expect(wide).toContain("c comment")
-    const narrow = reader.render(50).at(-1)!
-    expect(narrow).toHaveLength(50)
-    expect(narrow).toContain(" f unfocus · c comment · d delete · r reply ")
+    const narrow = reader.render(54).at(-1)!
+    expect(narrow).toHaveLength(54)
+    expect(narrow).toContain(" f unfocus · c comment · d delete · enter reply ")
     expect(narrow).not.toContain("s speak")
   })
 })
