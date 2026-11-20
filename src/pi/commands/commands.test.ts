@@ -45,6 +45,7 @@ function makeCommandPi(handler: ExecHandler = () => ok()) {
     registerTool: () => {},
     on: () => {},
     registerShortcut: () => {},
+    registerFlag: () => {},
     registerCommand: (name: string, options: CommandRegistration) => {
       commands[name] = options
     },
