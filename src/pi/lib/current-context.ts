@@ -20,7 +20,7 @@ export interface CueContextDetails {
 }
 
 /** Minimal entry shape read from `sessionManager.getBranch()`. */
-interface BranchEntry {
+export interface BranchEntry {
   type: string
   customType?: string
   details?: unknown
