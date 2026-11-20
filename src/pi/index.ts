@@ -17,6 +17,7 @@ import { registerTurnSummary } from "./commands/turn-summary"
 import { registerTurnReader } from "./commands/turn-reader"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
+import { registerInjectFlag } from "./inject-flag"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
 import { registerStoreCommit } from "./store-commit"
@@ -85,5 +86,6 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerCueSkillInjection(pi)
   registerResponseStyle(pi)
   registerSessionNaming(pi)
+  registerInjectFlag(pi)
   registerSessionLabel(pi)
 }

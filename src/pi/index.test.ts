@@ -36,6 +36,7 @@ function makeMockPi(handler: ExecHandler = () => ok()) {
   const pi = {
     registerTool: (t: ToolDefinition<any>) => tools.push(t),
     registerShortcut: () => {},
+    registerFlag: () => {},
     registerCommand: (name: string) => commands.push(name),
     sendUserMessage: (_content: string) => {},
     on: () => {},

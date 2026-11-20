@@ -27,7 +27,8 @@ import type { PacketFile } from "./packet.js";
 import { preparerRun, submitToSupervisor } from "./prepare.js";
 import { walkthroughSaveCommand } from "./walkthrough-save.js";
 import { fromDemo, fromPr, fromRange, resolvePr, type PrSummary, prRepo, repoSlug, type Review } from "./source.js";
-import { buildRound, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
+import { buildRound, ensureContext, osc52, reviewContext, type RoundComment, submitRound } from "./round.js";
+import { openChat } from "./chat.js";
 import { loadComments, loadFolds, loadWalkthroughComments, saveComments, saveFolds, saveWalkthroughComments } from "./state.js";
 import { currentWalkthrough, findingsTab, type PrTabHost, walkthroughTab } from "./pr-tabs.js";
 import { WalkthroughDrafts } from "./walkthrough-comments.js";
@@ -285,7 +286,17 @@ function prTabs(
     { label: "findings", screen: () => findingsTab(host) },
     { label: "walkthrough", screen: () => walkthroughTab(host) },
     { label: "github", screen: () => githubTab(host) },
-  ]);
+  ], { p: () => void startChat(router, review, pr, repo) });
+}
+
+async function startChat(router: Router, review: Review, pr: number, repo: string): Promise<void> {
+  try {
+    const context = await ensureContext(repo, `review-pr-${pr}`, `Review PR #${pr}`);
+    await openChat({ repoSlug: review.repo, pr, cwd: review.repoPath, context });
+  } catch (e) {
+    router.showPopup({ title: "chat", text: e instanceof Error ? e.message : String(e), error: true, footer: "any key" }, true);
+    router.tui.requestRender();
+  }
 }
 
 function showReview(review: Review): void {
