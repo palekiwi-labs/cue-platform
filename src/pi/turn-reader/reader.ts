@@ -86,7 +86,7 @@ export const COMMENT_KEY = "c"
 /** Reader key that deletes the comment on the focused chunk. */
 export const DELETE_KEY = "d"
 /** Reader key that puts the quoted chunks and their comments into the editor. */
-export const REPLY_KEY = "r"
+export const REPLY_KEY = "enter"
 /** Reader key that copies the focused chunk's source to the clipboard. */
 export const COPY_KEY = "y"
 /** Reader key that focuses the previous commented chunk of the displayed messages. */
