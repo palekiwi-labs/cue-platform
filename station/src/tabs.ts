@@ -23,7 +23,10 @@ export class TabsScreen implements TabScreen {
   private active = 0;
   private readonly built = new Map<number, TabScreen>();
 
-  constructor(private readonly tabs: Tab[]) {}
+  constructor(
+    private readonly tabs: Tab[],
+    private readonly keys: Record<string, () => void> = {},
+  ) {}
 
   get index(): number {
     return this.active;
@@ -51,7 +54,9 @@ export class TabsScreen implements TabScreen {
       this.select(Number(data) - 1);
       return;
     }
-    this.current().handleInput(data);
+    const action = this.keys[data];
+    if (action !== undefined) action();
+    else this.current().handleInput(data);
   }
 
   handleEscape(): boolean {

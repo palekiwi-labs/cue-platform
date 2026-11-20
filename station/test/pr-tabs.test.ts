@@ -131,3 +131,13 @@ test("walkthrough addresses, listing and file shape", () => {
   writeFileSync(join(dir, "v2.json"), JSON.stringify({ version: 2 }));
   assert.throws(() => loadWalkthrough("org/repo/review-pr-7/review/walkthrough/v2.json", store), /\$\.head: must be a non-empty string/);
 });
+
+test("tab-level keys run their action instead of reaching the screen", () => {
+  const a = new Fake("a");
+  let chats = 0;
+  const tabs = new TabsScreen([{ label: "changes", screen: () => a }], { p: () => void chats++ });
+  tabs.handleInput("p");
+  tabs.handleInput("j");
+  assert.equal(chats, 1);
+  assert.deepEqual(a.inputs, ["j"]);
+});
