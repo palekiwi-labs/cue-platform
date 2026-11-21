@@ -1,9 +1,34 @@
 import { randomUUID } from "node:crypto"
+import type { NatsConnection, Subscription } from "@nats-io/transport-node"
 import { createNatsClient, type NatsClient } from "../../nats/client"
 import type { SenderOptions } from "./sender"
 import type { SpeechVoice } from "./settings"
 
 export type SpeechPublisher = Pick<NatsClient, "start" | "publish" | "close">
+
+/** Bridge progress for one utterance: a chunk starts, or the utterance ends. */
+export interface SpeechProgress {
+  type: "chunk" | "stopped" | "finished"
+  utt: string
+  seq?: number
+  text?: string
+}
+
+/** The progress event a `speech.evt.*` message carries, or undefined. */
+export function progressEvent(subject: string, body: unknown, utt?: string): SpeechProgress | undefined {
+  if (!subject.startsWith("speech.evt.")) return undefined
+  const type = subject.slice("speech.evt.".length)
+  if (type !== "chunk" && type !== "stopped" && type !== "finished") return undefined
+  if (typeof body !== "object" || body === null) return undefined
+  const b = body as Record<string, unknown>
+  if (typeof b.utt !== "string" || (utt !== undefined && b.utt !== utt)) return undefined
+  return {
+    type,
+    utt: b.utt,
+    ...(typeof b.seq === "number" ? { seq: b.seq } : {}),
+    ...(typeof b.text === "string" ? { text: b.text } : {}),
+  }
+}
 
 interface Utterance {
   message: number
@@ -19,11 +44,35 @@ export class NatsSpeechSender {
   private readonly client: SpeechPublisher
   private current: Utterance | undefined
   private messages = 0
+  private subscription: Subscription | undefined
+  /** Called with bridge progress for the utterance currently being sent, when set. */
+  onProgress: ((event: SpeechProgress) => void) | undefined
   used = false
 
   constructor(private readonly options: SenderOptions = {}, client?: SpeechPublisher) {
-    this.client = client ?? createNatsClient({ name: "pi-speech" })
+    this.client = client ?? createNatsClient({ name: "pi-speech", onConnect: (nc) => this.watch(nc) })
     this.client.start()
+  }
+
+  /** The utterance id of the message being sent, for matching progress events. */
+  currentUtt(): string | undefined {
+    return this.current?.utt
+  }
+
+  private watch(nc: NatsConnection): void {
+    this.subscription?.unsubscribe()
+    this.subscription = nc.subscribe("speech.evt.>", {
+      callback: (_error, msg) => {
+        let body: unknown
+        try {
+          body = msg.json()
+        } catch {
+          return
+        }
+        const event = progressEvent(msg.subject, body, this.current?.utt)
+        if (event) this.onProgress?.(event)
+      },
+    })
   }
 
   /** A new utterance; every chunk of it, the final one included, carries the given voice. */
@@ -71,6 +120,8 @@ export class NatsSpeechSender {
   }
 
   close(): Promise<void> {
+    this.subscription?.unsubscribe()
+    this.subscription = undefined
     if (this.current) this.complete(this.current.message)
     return this.client.close()
   }
