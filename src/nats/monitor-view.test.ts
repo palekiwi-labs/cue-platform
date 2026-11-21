@@ -104,6 +104,35 @@ describe("AgentMonitorView", () => {
     expect(fake.closed()).toBe(true)
   })
 
+  test("alt+e expands prompts in full and shift+up/down scroll the preview", async () => {
+    const { tui } = fakeTui()
+    const live = `${B2}-builder-0`
+    const fake = fakeSource([row(live, { run_id: live, state: "busy" })])
+    fake.log.add(ev(live, "input", { source: "user", preview: "first line second…", text: "first line\nsecond line\nLAST LINE" }))
+    for (let i = 0; i < 20; i++) fake.log.add(ev(live, "tool_start", { call_id: `c${i}`, tool: "bash", args: `cmd${i}` }))
+    const view = new AgentMonitorView(tui, theme, async () => fake.source, () => {}, () => NOW)
+    await Bun.sleep(0)
+
+    let text = view.render(140).join("\n")
+    expect(text).toContain("cmd19")
+    expect(text).not.toContain("first line")
+
+    for (let i = 0; i < 40; i++) view.handleInput("\x1b[1;2A")
+    text = view.render(140).join("\n")
+    expect(text).toContain("> [user] first line second…")
+    expect(text).not.toContain("cmd19")
+
+    view.handleInput("\x1be")
+    for (let i = 0; i < 40; i++) view.handleInput("\x1b[1;2A")
+    text = view.render(140).join("\n")
+    expect(text).toContain("  second line")
+    expect(text).toContain("  LAST LINE")
+
+    for (let i = 0; i < 40; i++) view.handleInput("\x1b[1;2B")
+    expect(view.render(140).join("\n")).toContain("cmd19")
+    view.close()
+  })
+
   test("shows the connection error", async () => {
     const { tui } = fakeTui()
     const view = new AgentMonitorView(

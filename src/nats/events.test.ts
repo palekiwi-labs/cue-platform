@@ -77,6 +77,18 @@ describe("previews", () => {
     expect(argPreview("bash", { command: "x".repeat(1000) }).length).toBe(300)
   })
 
+  test("input carries the bounded full text, dropped first when the event is too big", () => {
+    const { tr } = tracker()
+    const small = tr.input("line one\nline two", "user")
+    expect(small.text).toBe("line one\nline two")
+    expect(small.preview).toBe("line one line two")
+    const big = tr.input("\u00e9".repeat(6000), "user")
+    expect((big.text as string).length).toBe(6000)
+    const decoded = JSON.parse(encodeEvent(big, 8192))
+    expect(decoded.text).toBeUndefined()
+    expect(decoded.preview.length).toBe(200)
+  })
+
   test("oversized events are shrunk below the limit", () => {
     const { tr } = tracker()
     const ev = tr.input("y".repeat(100), "user")

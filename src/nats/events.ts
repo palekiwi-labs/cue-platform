@@ -6,6 +6,7 @@ export const DEFAULT_JS_DOMAIN = "pale"
 export const JS_DOMAIN_ENV = "CUE_NATS_JS_DOMAIN"
 
 export const INPUT_PREVIEW_CHARS = 200
+export const INPUT_TEXT_CHARS = 6000
 export const ARG_PREVIEW_CHARS = 300
 export const ERROR_PREVIEW_CHARS = 300
 export const MAX_MSG_BYTES = 8 * 1024
@@ -188,6 +189,10 @@ export function argPreview(toolName: string, args: unknown, max = ARG_PREVIEW_CH
 export function encodeEvent(event: AgentEvent, maxBytes = MAX_MSG_BYTES): string {
   let json = JSON.stringify(event)
   if (Buffer.byteLength(json) <= maxBytes) return json
+  if (typeof event.text === "string") {
+    const { text: _text, ...rest } = event
+    return encodeEvent(rest as AgentEvent, maxBytes)
+  }
   const shrunk: AgentEvent = { ...event }
   for (const [key, value] of Object.entries(shrunk)) {
     if (typeof value === "string" && value.length > 64) shrunk[key] = truncate(value, 64)
@@ -296,7 +301,8 @@ export class SessionTracker {
     this.markBusy()
     delete this.row.error
     const { model, context } = this.row
-    return this.event("input", { source, preview: truncate(text, INPUT_PREVIEW_CHARS), model, context })
+    const full = text.length <= INPUT_TEXT_CHARS ? text : `${text.slice(0, INPUT_TEXT_CHARS - 1)}\u2026`
+    return this.event("input", { source, preview: truncate(text, INPUT_PREVIEW_CHARS), text: full, model, context })
   }
 
   turnStart(turn: number): AgentEvent {

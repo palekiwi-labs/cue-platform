@@ -233,7 +233,7 @@ export type ActivityItem =
       status: "running" | "ok" | "error"
       durationMs?: number
     }
-  | { kind: "input"; source: string; preview: string }
+  | { kind: "input"; source: string; preview: string; text?: string }
   | { kind: "thinking" }
   | { kind: "error"; message: string }
   | { kind: "settled"; aborted: boolean }
@@ -281,7 +281,7 @@ export class ActivityLog {
         return
       }
       case "input":
-        this.push({ kind: "input", source: str(event.source), preview: str(event.preview) })
+        this.push({ kind: "input", source: str(event.source), preview: str(event.preview), text: str(event.text) || undefined })
         return
       case "thinking":
         this.push({ kind: "thinking" })

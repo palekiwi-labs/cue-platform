@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent"
-import { type Component, matchesKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui"
+import { type Component, matchesKey, type TUI, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import {
   type ActivityItem,
   type Batch,
@@ -49,6 +49,9 @@ export class AgentMonitorView implements Component {
   private connecting = true
   private running = true
   private preview = true
+  private expandInputs = false
+  /** Preview lines scrolled up from the tail; 0 follows new activity. */
+  private previewScroll = 0
   private selectedId: string | undefined
   private foldOverride = new Map<string, boolean>()
   private timer: ReturnType<typeof setInterval> | undefined
@@ -154,11 +157,21 @@ export class AgentMonitorView implements Component {
       this.preview = !this.preview
       return this.tui.requestRender()
     }
+    if (matchesKey(data, "alt+e")) {
+      this.expandInputs = !this.expandInputs
+      this.previewScroll = 0
+      return this.tui.requestRender()
+    }
+    if (matchesKey(data, "shift+up") || matchesKey(data, "shift+down")) {
+      this.previewScroll = Math.max(0, this.previewScroll + (matchesKey(data, "shift+up") ? 1 : -1))
+      return this.tui.requestRender()
+    }
     const delta = matchesKey(data, "up") || data === "k" ? -1 : matchesKey(data, "down") || data === "j" ? 1 : 0
     if (delta === 0) return
     const entries = this.entries(groupRuns(this.views(), this.running))
     if (entries.length === 0) return
     const i = Math.max(0, Math.min(entries.length - 1, this.selectedIndex(entries) + delta))
+    if (entries[i]!.id !== this.selectedId) this.previewScroll = 0
     this.selectedId = entries[i]!.id
     this.tui.requestRender()
   }
@@ -179,7 +192,12 @@ export class AgentMonitorView implements Component {
     const body = height - 4
     const listH = this.preview ? Math.max(3, Math.floor(body * 0.4)) : body
     const keys = ["j/k select", `tab ${this.running ? "all" : "running"}`, "alt+z fold", "shift+tab fold all"]
-    keys.push(`alt+p ${this.preview ? "hide" : "show"} preview`, "q/esc close")
+    keys.push(
+      `alt+p ${this.preview ? "hide" : "show"} preview`,
+      `alt+e ${this.expandInputs ? "collapse" : "expand"} prompts`,
+      "shift+up/down scroll",
+      "q/esc close",
+    )
     const lines = [
       this.headerLine(views),
       t.fg("dim", keys.join(" | ")),
@@ -256,8 +274,22 @@ export class AgentMonitorView implements Component {
     ]
     const room = Math.max(0, height - head.length)
     const items = this.source?.activity().items ?? []
-    const activity = items.length === 0 ? [t.fg("dim", "no activity")] : items.slice(-room).map((i) => this.activityLine(i))
-    return [...head, ...activity].slice(0, height)
+    if (items.length === 0) return [...head, t.fg("dim", "no activity")].slice(0, height)
+    const activity = items.flatMap((i) => this.activityLines(i, width))
+    const max = Math.max(0, activity.length - room)
+    this.previewScroll = Math.min(this.previewScroll, max)
+    const end = activity.length - this.previewScroll
+    return [...head, ...activity.slice(Math.max(0, end - room), end)].slice(0, height)
+  }
+
+  private activityLines(item: ActivityItem, width: number): string[] {
+    if (item.kind !== "input" || !this.expandInputs) return [this.activityLine(item)]
+    const t = this.theme
+    const body = item.text ?? item.preview
+    return [
+      t.fg("accent", `> [${item.source || "input"}]`),
+      ...body.split("\n").flatMap((l) => wrapTextWithAnsi(`  ${l}`, Math.max(10, width))),
+    ]
   }
 
   private activityLine(item: ActivityItem): string {
