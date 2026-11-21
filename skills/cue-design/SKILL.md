@@ -78,7 +78,16 @@ filter idea notes directly using cue:
      - Reopen triggers for closed ideas.
    - The operator confirms or corrects the batch in a single interaction.
 
-3. **Promote** (Rare)
+3. **Slice** (Before leaving discussion)
+   - Name a thin slice: the smallest thing that can be built and tried in
+     a day or less, plus one sentence on what trying it will teach.
+   - Record it as a task and hand it to a builder (a build session or a
+     delegated builder) while discussion pauses. Resume with the result.
+   - If no slice can be named, the idea is not ready; say so instead of
+     designing further.
+   - When many exchanges pass without a slice, propose one.
+
+4. **Promote** (Rare)
    - Fundamental constraints that pass the membership test are proposed for
      `note/invariants.md`.
    - Promoted ONLY upon explicit confirmation by the operator.
@@ -96,4 +105,5 @@ A design task is complete when:
 - Storing multiple independent ideas in a single prose note or register.
 - Asking the operator to classify or confirm status after every single exchange.
 - Promoting invariants without explicit operator sign-off.
+- Compounding imagined complexity across sessions without building a slice.
 - Inventing custom status names instead of using standard cue frontmatter.
