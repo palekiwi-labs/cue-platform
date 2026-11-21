@@ -199,7 +199,7 @@ export function formatCache(r: Report, opts: FormatOptions = {}): string[] {
     }
   }
   const limit = opts.turns ?? 12
-  const shown = limit === "all" ? c.turns : c.turns.slice(-limit)
+  const shown = limit === "all" ? c.turns : limit > 0 ? c.turns.slice(-limit) : []
   if (shown.length) {
     lines.push("")
     lines.push(

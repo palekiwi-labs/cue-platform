@@ -313,5 +313,6 @@ describe("report", () => {
     const text = formatReport(r)
     expect(text).toContain("== breakdown ==")
     expect(text).toContain("tool bash added")
+    expect(formatReport(r, { turns: 0 })).not.toContain("cWrite")
   })
 })
