@@ -5,6 +5,7 @@ import { feedbackNote, writeFeedbackNote } from "../turn-summary/feedback"
 import { SUMMARIZER_ENV, summarizerPrompt, summarizeTurn } from "../turn-summary/summarize"
 import { storedSummaries, TURN_SUMMARY_TYPE, type Turn, type TurnSummaryData, turnsOf } from "../turn-summary/turns"
 import { speakNotes, type TurnSpeaker } from "./turn-reader"
+import type { SpeechProgress } from "../speech/nats-sender"
 
 /** Open the turn summary popup. */
 export const SUMMARY_SHORTCUT = "alt+u"
@@ -41,10 +42,53 @@ type Reported = { turn: Turn; summary: TurnSummaryData }
 
 type Slot = { state: "ready"; data: TurnSummaryData } | { state: "loading" } | { state: "error"; text: string }
 
+export interface WrappedLine {
+  text: string
+  start: number
+  end: number
+}
+
+/** Greedy word wrap of plain text, each visual line with its source offsets. */
+export function wrapLines(text: string, width: number): WrappedLine[] {
+  const out: WrappedLine[] = []
+  if (width < 1) return out
+  let pos = 0
+  for (const para of text.split("\n")) {
+    if (para === "") {
+      out.push({ text: "", start: pos, end: pos + 1 })
+      pos += 1
+      continue
+    }
+    let start = pos
+    let line = ""
+    for (const word of para.split(" ")) {
+      const next = line === "" ? word : line + " " + word
+      if (line !== "" && next.length > width) {
+        out.push({ text: line, start, end: start + line.length })
+        start += line.length + 1
+        line = word
+      } else {
+        line = next
+      }
+    }
+    out.push({ text: line, start, end: start + line.length })
+    pos += para.length + 1
+  }
+  return out
+}
+
+/** Rows of body the popup may show: terminal height minus chrome and margin. */
+function bodyRows(rows: number): number {
+  return Math.max(1, rows - 8)
+}
+
 class SummaryPopup implements Component {
   private index: number
   private slots = new Map<string, Slot>()
   private flash = ""
+  private active: [number, number] | null = null
+  private scroll = 0
+  private closed = false
 
   constructor(
     private pi: ExtensionAPI,
@@ -53,7 +97,7 @@ class SummaryPopup implements Component {
     private theme: Theme,
     private turns: Turn[],
     stored: Map<string, TurnSummaryData>,
-    private speakable = false,
+    private speak?: (text: string, onProgress: (event: SpeechProgress) => void) => void,
   ) {
     this.index = turns.length - 1
     for (const [id, data] of stored) this.slots.set(id, { state: "ready", data })
@@ -61,6 +105,11 @@ class SummaryPopup implements Component {
   }
 
   invalidate(): void {}
+
+  close(): void {
+    this.closed = true
+    this.active = null
+  }
 
   clearFlash(): void {
     this.flash = ""
@@ -70,7 +119,30 @@ class SummaryPopup implements Component {
     const next = Math.min(this.turns.length - 1, Math.max(0, this.index + delta))
     if (next === this.index) return
     this.index = next
+    this.active = null
+    this.scroll = 0
     this.load()
+  }
+
+  speakCurrent(): void {
+    const r = this.current()
+    if (r && this.speak) this.speak(r.summary.text, (event) => this.onProgress(event))
+  }
+
+  private onProgress(event: SpeechProgress): void {
+    if (this.closed) return
+    const summary = this.slots.get(this.turns[this.index]!.id)
+    if (summary?.state !== "ready") return
+    if (event.type === "chunk" && event.text) {
+      const from = this.active?.[1] ?? 0
+      const at = summary.data.text.indexOf(event.text, from)
+      const start = at >= 0 ? at : summary.data.text.indexOf(event.text)
+      if (start >= 0) this.active = [start, start + event.text.length]
+    } else {
+      this.active = null
+      this.scroll = 0
+    }
+    this.tui.requestRender()
   }
 
   copy(): void {
@@ -107,14 +179,35 @@ class SummaryPopup implements Component {
     const slot = this.slots.get(turn.id)
     const head = ` turn ${this.index + 1}/${this.turns.length} `
     const prompt = t.fg("dim", truncateToWidth(turn.prompt.replace(/\s+/g, " "), inner, "…"))
-    const body =
-      slot?.state === "ready"
-        ? wrapTextWithAnsi(slot.data.text, inner)
-        : slot?.state === "error"
-          ? wrapTextWithAnsi(t.fg("error", `summary failed: ${slot.text}`), inner)
-          : [t.fg("dim", "summarizing…")]
+    let body: string[]
+    if (slot?.state === "ready") {
+      const wrapped = wrapLines(slot.data.text, inner)
+      const avail = bodyRows(this.tui.terminal.rows)
+      if (this.active) {
+        const [aStart, aEnd] = this.active
+        const first = wrapped.findIndex((l) => l.start < aEnd && l.end > aStart)
+        if (first >= 0) {
+          if (first < this.scroll) this.scroll = first
+          else if (first >= this.scroll + avail) this.scroll = first - avail + 1
+        }
+        const last = this.scroll + avail
+        body = wrapped.slice(this.scroll, last).map((l, i) => {
+          const lit = l.start < aEnd && l.end > aStart
+          const line = lit ? t.fg("accent", t.bold(l.text)) : t.fg("dim", l.text)
+          return line + (i === avail - 1 && last < wrapped.length ? " ↓" : "")
+        })
+      } else {
+        this.scroll = 0
+        body = wrapped.slice(0, avail).map((l) => l.text)
+        if (wrapped.length > avail) body[avail - 1] = (body[avail - 1] ?? "") + " ↓"
+      }
+    } else if (slot?.state === "error") {
+      body = wrapTextWithAnsi(t.fg("error", `summary failed: ${slot.text}`), inner)
+    } else {
+      body = [t.fg("dim", "summarizing…")]
+    }
     const border = (s: string) => t.fg("border", s)
-    const foot = ` ${this.flash || footer(this.speakable)} `
+    const foot = ` ${this.flash || footer(!!this.speak)} `
     const top = border("╭─") + t.fg("accent", t.bold(head)) +
       border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮")
     const bottom = border("╰" + "─".repeat(Math.max(0, width - 3 - visibleWidth(foot)))) +
@@ -138,17 +231,13 @@ function popupComponent(
   tui: TUI,
   kb: KeybindingsManager,
   done: (r?: Reported) => void,
-  speak?: (text: string) => void,
 ): Component {
   return {
     render: (width) => popup.render(width),
     invalidate: () => popup.invalidate(),
     handleInput(data: string) {
       popup.clearFlash()
-      if (speak && data === SUMMARY_SPEAK_KEY) {
-        const r = popup.current()
-        if (r) speak(r.summary.text)
-      }
+      if (matchesKey(data, SUMMARY_SPEAK_KEY)) popup.speakCurrent()
       else if (matchesKey(data, "ctrl+y")) popup.copy()
       else if (matchesKey(data, "ctrl+r")) {
         const r = popup.current()
@@ -180,16 +269,17 @@ export async function openTurnSummary(pi: ExtensionAPI, ctx: ExtensionContext, s
         { anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
       )
       const speak = speaker
-        ? (text: string) => {
-            const [note, level] = SPEAK_NOTES[speaker.request([text], ctx)]
+        ? (text: string, onProgress: (event: SpeechProgress) => void) => {
+            const [note, level] = SPEAK_NOTES[speaker.request([text], ctx, onProgress)]
             ctx.ui.notify(note, level)
           }
         : undefined
-      const popup = new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored, !!speaker)
+      const popup = new SummaryPopup(pi, ctx.cwd, tui, theme, turns, stored, speak)
       return popupComponent(popup, tui, kb, (r) => {
+        popup.close()
         backdrop.hide()
         done(r)
-      }, speak)
+      })
     },
     { overlay: true, overlayOptions: () => ({ anchor: "center", width: popupWidth() }) },
   )

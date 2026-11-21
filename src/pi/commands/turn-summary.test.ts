@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { SpeakResult } from "../speech"
+import type { SpeechProgress } from "../speech/nats-sender"
 import { TURN_SUMMARY_TYPE } from "../turn-summary/turns"
-import { openTurnSummary, registerTurnSummary, SUMMARY_SHORTCUT, SUMMARY_SPEAK_KEY } from "./turn-summary"
+import { openTurnSummary, registerTurnSummary, SUMMARY_SHORTCUT, SUMMARY_SPEAK_KEY, wrapLines } from "./turn-summary"
 
 const ESC = "\x1b"
 
@@ -91,5 +92,134 @@ describe("registerTurnSummary", () => {
     expect(commands).toEqual(["cue:summary"])
     expect(shortcuts).toEqual([SUMMARY_SHORTCUT])
     expect(SUMMARY_SHORTCUT).toBe("alt+u")
+  })
+})
+
+describe("wrapLines", () => {
+  test("wraps paragraphs and reports source offsets", () => {
+    const text = "one two three\n\nfour five"
+    const lines = wrapLines(text, 8)
+    expect(lines.map((l) => l.text)).toEqual(["one two", "three", "", "four", "five"])
+    expect(lines.map((l) => [l.start, l.end])).toEqual([
+      [0, 7],
+      [8, 13],
+      [14, 15],
+      [15, 19],
+      [20, 24],
+    ])
+    for (const l of lines) expect(text.slice(l.start, Math.min(l.end, text.length)).startsWith(l.text) || l.text === "").toBe(true)
+  })
+
+  test("width 0 yields nothing", () => {
+    expect(wrapLines("abc", 0)).toEqual([])
+  })
+})
+
+describe("karaoke highlighting in the summary popup", () => {
+  interface Run {
+    lines(): string[]
+  }
+
+  function karaoke(rows: number, width = 40): { start(): Promise<Run>; events: SpeechProgress[] } {
+    const events: SpeechProgress[] = []
+    let progress: ((event: SpeechProgress) => void) | undefined
+    let rendered: string[] = []
+    const tui = {
+      terminal: { rows },
+      requestRender: () => {},
+      showOverlay: () => ({ hide: () => {} }),
+    }
+    const theme = {
+      fg: (color: string, s: string) => `<${color}>${s}`,
+      bold: (s: string) => `*${s}*`,
+    }
+    const kb = { matches: (data: string, id: string) => id === "tui.select.cancel" && data === ESC }
+    const ctx = {
+      hasUI: true,
+      cwd: "/tmp",
+      isIdle: () => true,
+      sessionManager: { getBranch: () => branch },
+      ui: {
+        notify: () => {},
+        custom: async (factory: Function) => {
+          const component = factory(tui, theme, kb, () => {})
+          component.handleInput(SUMMARY_SPEAK_KEY)
+          for (const event of events) progress?.(event)
+          rendered = component.render(width)
+        },
+      },
+    } as unknown as ExtensionContext
+    const speaker = {
+      request: (_texts: readonly string[], _ctx: unknown, onProgress?: (event: SpeechProgress) => void) => {
+        progress = onProgress
+        return "sent" as const
+      },
+    }
+    return {
+      events,
+      start: async () => {
+        await openTurnSummary(pi, ctx, speaker)
+        return { lines: () => rendered }
+      },
+    }
+  }
+
+  test("chunk events highlight the spoken chunk and dim the rest", async () => {
+    const k = karaoke(30)
+    k.events.push({ type: "chunk", utt: "u", seq: 0, text: "summary two" })
+    const r = await k.start()
+    const all = r.lines().join("\n")
+    expect(all).toContain("<accent>*summary two*")
+    expect(all).not.toContain("summary one")
+  })
+
+  test("finished speech clears the highlight and scroll", async () => {
+    const k = karaoke(30)
+    k.events.push({ type: "chunk", utt: "u", seq: 0, text: "summary two" }, { type: "finished", utt: "u" })
+    const r = await k.start()
+    const all = r.lines().join("\n")
+    expect(all).not.toContain("<accent>*summary")
+    expect(all).toContain("   summary two")
+  })
+
+  test("long summaries scroll to follow the spoken chunk", async () => {
+    const long = Array.from({ length: 30 }, (_, i) => `paragraph ${i} of a fairly long summary`).join("\n\n")
+    const longBranch = [
+      { type: "message", id: "u1", message: { role: "user", content: "prompt" } },
+      { type: "message", id: "a1", message: { role: "assistant", content: [{ type: "text", text: "reply" }] } },
+      { type: "custom", id: "s1", customType: TURN_SUMMARY_TYPE, data: { turnId: "u1", text: long } },
+    ]
+    const events: SpeechProgress[] = []
+    let progress: ((event: SpeechProgress) => void) | undefined
+    let rendered: string[] = []
+    const tui = { terminal: { rows: 16 }, requestRender: () => {}, showOverlay: () => ({ hide: () => {} }) }
+    const theme = { fg: (_c: string, s: string) => s, bold: (s: string) => s }
+    const kb = { matches: (data: string, id: string) => id === "tui.select.cancel" && data === ESC }
+    const ctx = {
+      hasUI: true,
+      cwd: "/tmp",
+      isIdle: () => true,
+      sessionManager: { getBranch: () => longBranch },
+      ui: {
+        notify: () => {},
+        custom: async (factory: Function) => {
+          const component = factory(tui, theme, kb, () => {})
+          component.handleInput(SUMMARY_SPEAK_KEY)
+          for (const event of events) progress?.(event)
+          rendered = component.render(40)
+        },
+      },
+    } as unknown as ExtensionContext
+    const speaker = {
+      request: (_t: readonly string[], _c: unknown, onProgress?: (e: SpeechProgress) => void) => {
+        progress = onProgress
+        return "sent" as const
+      },
+    }
+    events.push({ type: "chunk", utt: "u", seq: 0, text: "paragraph 25 of a fairly long summary" })
+    await openTurnSummary(pi, ctx, speaker)
+    const body = rendered.filter((l) => l.includes("│"))
+    expect(body.some((l) => l.includes("paragraph 25"))).toBe(true)
+    expect(body.every((l) => !l.includes("paragraph 0 of"))).toBe(true)
   })
 })

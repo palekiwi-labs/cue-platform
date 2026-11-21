@@ -1,7 +1,7 @@
 import type { AgentSettledEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { SpokenChunker, spokenChunks } from "./chunks"
 import { SpeechSender, type SenderOptions } from "./sender"
-import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
+import { NatsSpeechSender, speechTransport, type SpeechProgress, type SpeechPublisher } from "./nats-sender"
 import { SessionSpeechMode, SessionSpeechVoice, type SpeechMode, type SpeechVoice } from "./settings"
 
 /** Set in the turn summarizer's own pi, which must never speak. */
@@ -97,13 +97,21 @@ export class Speech {
    * speech mode. Refused while the agent runs, so live speech of the
    * streaming reply is never cut or interleaved.
    */
-  request(texts: readonly string[], ctx: RequestContext): SpeakResult {
+  request(texts: readonly string[], ctx: RequestContext, onProgress?: (event: SpeechProgress) => void): SpeakResult {
     if (ctx.mode !== "tui") return "unavailable"
     if (!ctx.isIdle() || this.current) return "busy"
     const chunks = texts.flatMap((text) => spokenChunks(text))
     if (chunks.length === 0) return "empty"
     this.notifyCtx = ctx
     const id = this.sender.newMessage(this.voice())
+    if (this.sender instanceof NatsSpeechSender) {
+      const utt = this.sender.currentUtt()
+      this.sender.onProgress = onProgress && utt
+        ? (event) => {
+            if (event.utt === utt) onProgress(event)
+          }
+        : undefined
+    }
     this.sender.say(chunks, id)
     this.sender.complete(id)
     return "sent"
