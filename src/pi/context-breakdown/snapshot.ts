@@ -170,7 +170,7 @@ export function diffSnapshots(a: Snapshot, b: Snapshot): SnapshotDiff {
   const tools = diffParts(a.tools, b.tools)
   const activeAdded = b.activeTools.filter((t) => !a.activeTools.includes(t))
   const activeRemoved = a.activeTools.filter((t) => !b.activeTools.includes(t))
-  const model = a.model !== b.model ? { before: a.model, after: b.model } : null
+  const model = a.model && b.model && a.model !== b.model ? { before: a.model, after: b.model } : null
   return {
     same: !model && !sections.length && !tools.length && !activeAdded.length && !activeRemoved.length,
     model,

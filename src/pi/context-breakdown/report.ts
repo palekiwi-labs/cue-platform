@@ -10,6 +10,7 @@ export type Report = {
   breakdown: Breakdown
   cache: CacheSummary
   snapshots: number
+  /** Prefix changes between the snapshots in effect at successive requests. */
   prefixChanges: { entryId: string; timestamp: string; diff: SnapshotDiff }[]
 }
 
@@ -26,13 +27,21 @@ export function buildReport(input: {
   const cache = analyseCache(entries)
   const prefixChanges: Report["prefixChanges"] = []
   let prev: Snapshot | null = null
+  let pending: { entry: Entry; snapshot: Snapshot } | null = null
   let snapshots = 0
   for (const e of branchPath(entries)) {
-    if (e.type !== "custom" || e.customType !== SNAPSHOT_TYPE || !isSnapshot(e.data)) continue
-    const s = e.data
-    snapshots++
-    if (prev && prev.hash !== s.hash) prefixChanges.push({ entryId: e.id, timestamp: e.timestamp, diff: diffSnapshots(prev, s) })
+    if (e.type === "custom" && e.customType === SNAPSHOT_TYPE && isSnapshot(e.data)) {
+      snapshots++
+      pending = { entry: e, snapshot: e.data }
+      continue
+    }
+    if (!pending || !(e.type === "message" && e.message?.role === "assistant")) continue
+    const s = pending.snapshot
+    if (prev && prev.hash !== s.hash) {
+      prefixChanges.push({ entryId: pending.entry.id, timestamp: pending.entry.timestamp, diff: diffSnapshots(prev, s) })
+    }
     prev = s
+    pending = null
   }
   return {
     file: input.file ?? null,
