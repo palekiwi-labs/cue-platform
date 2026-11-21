@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { NatsSpeechSender, speechTransport, type SpeechPublisher } from "./nats-sender"
+import { NatsSpeechSender, progressEvent, speechTransport, type SpeechPublisher } from "./nats-sender"
 import { registerSpeech, SPEECH_STOP_COMMAND, SPEECH_STOP_SHORTCUT } from "./index"
 import { SPEECH_VOICE_ENTRY } from "./settings"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { connect } from "@nats-io/transport-node"
-import { createNatsClient } from "../../nats/client"
+import { createNatsClient, type NatsClient } from "../../nats/client"
 import { natsServerBin, startJetStreamServer, waitFor } from "../../nats/test-server"
 
 function fixture() {
@@ -230,4 +230,51 @@ describe("NATS speech", () => {
     expect(bodies.map((b) => b.final)).toEqual([false, false, true])
     expect(bodies.every((b) => b.voice === "af_heart")).toBe(true)
   })
+})
+
+describe("progressEvent", () => {
+  test("keeps chunk, stopped and finished for the given utterance only", () => {
+    expect(progressEvent("speech.evt.chunk", { utt: "u1", seq: 2, text: "hi" }, "u1")).toEqual({
+      type: "chunk",
+      utt: "u1",
+      seq: 2,
+      text: "hi",
+    })
+    expect(progressEvent("speech.evt.finished", { utt: "u1" }, "u1")).toEqual({ type: "finished", utt: "u1" })
+    expect(progressEvent("speech.evt.chunk", { utt: "u2", text: "hi" }, "u1")).toBeUndefined()
+    expect(progressEvent("speech.evt.rejected", { utt: "u1" }, "u1")).toBeUndefined()
+    expect(progressEvent("speech.evt.chunk", "junk", "u1")).toBeUndefined()
+    expect(progressEvent("speech.evt.chunk", { utt: "u1" }, undefined)).toBeDefined()
+  })
+})
+
+test.skipIf(!natsServerBin)("progress events for the current utterance reach onProgress", async () => {
+  const server = await startJetStreamServer()
+  const nc = await connect({ servers: server.url })
+  const previous = process.env.CUE_NATS_URL
+  process.env.CUE_NATS_URL = server.url
+  const sender = new NatsSpeechSender({})
+  try {
+    const seen: { type: string; utt: string; seq?: number; text?: string }[] = []
+    sender.onProgress = (event) => seen.push(event)
+    nc.subscribe("speech.intent.say", {
+      callback: (_err, msg) => {
+        const body = msg.json() as { utt: string; seq: number; text: string; final?: boolean }
+        nc.publish("speech.evt.chunk", JSON.stringify({ utt: body.utt, seq: body.seq, text: body.text }))
+        if (body.final) nc.publish("speech.evt.finished", JSON.stringify({ utt: body.utt }))
+      },
+    })
+    await nc.flush()
+    await waitFor(() => (sender as unknown as { client: NatsClient }).client.isConnected())
+    sender.say(["Hello there, this is spoken aloud.", "And a second sentence follows."])
+    await waitFor(() => seen.length >= 3, 5000)
+    expect(seen[0]).toEqual({ type: "chunk", utt: seen[0]!.utt, seq: 0, text: "Hello there, this is spoken aloud." })
+    expect(seen.at(-1)).toEqual({ type: "finished", utt: seen[0]!.utt })
+  } finally {
+    if (previous === undefined) delete process.env.CUE_NATS_URL
+    else process.env.CUE_NATS_URL = previous
+    await sender.close()
+    await nc.close()
+    await server.stop()
+  }
 })
