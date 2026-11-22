@@ -5,7 +5,7 @@
  * /context, an overlay breaking the live context down by source with the
  * per-turn cache summary.
  */
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent"
+import { copyToClipboard, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent"
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import type { Entry, ToolDef } from "../src/pi/context-breakdown/entries"
 import { buildReport, formatBreakdown, formatCache, fmtTokens } from "../src/pi/context-breakdown/report"
@@ -62,6 +62,7 @@ class ContextOverlay {
     private done: () => void,
     lines: string[],
     private title: string,
+    private copy: (text: string) => void,
   ) {
     this.lines = lines
   }
@@ -77,6 +78,10 @@ class ContextOverlay {
   handleInput(data: string): void {
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "return") || data === "q") {
       this.done()
+      return
+    }
+    if (data === "y") {
+      this.copy([this.title, "", ...this.lines].join("\n"))
       return
     }
     const max = this.maxOffset()
@@ -98,7 +103,7 @@ class ContextOverlay {
     const head = ` ${this.title} `
     const scrolls = this.lines.length > viewport
     const pos = scrolls ? `${this.offset + 1}-${Math.min(this.lines.length, this.offset + viewport)}/${this.lines.length}` : ""
-    const foot = ` esc/q close${scrolls ? ` · j/k g/G · ${pos}` : ""} `
+    const foot = ` esc/q close · y copy${scrolls ? ` · j/k g/G · ${pos}` : ""} `
     const top =
       border("╭─") + th.fg("accent", th.bold(head)) + border("─".repeat(Math.max(0, width - 3 - visibleWidth(head))) + "╮")
     const bottom =
@@ -156,7 +161,13 @@ export default function (pi: ExtensionAPI) {
             backdrop.hide()
             done()
           }
-          return new ContextOverlay(theme, () => tui.terminal.rows, close, lines, title)
+          const copy = (text: string) => {
+            copyToClipboard(text).then(
+              () => ctx.ui.notify("context report copied", "info"),
+              (err) => ctx.ui.notify(`copy failed: ${err instanceof Error ? err.message : String(err)}`, "error"),
+            )
+          }
+          return new ContextOverlay(theme, () => tui.terminal.rows, close, lines, title, copy)
         },
         {
           overlay: true,
