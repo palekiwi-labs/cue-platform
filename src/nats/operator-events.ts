@@ -43,12 +43,25 @@ export function parseOperatorEvent(value: unknown, context: string): FindingStat
 export class PendingOperatorChanges {
   private readonly entries = new Map<string, FindingStatusChanged>()
   private overflow = 0
+  private readonly storeLines = new Map<string, string>()
+  private storeOverflow = 0
+  private readonly seen = new Set<string>()
 
-  constructor(private readonly limit = 100) {}
+  constructor(private readonly limit = 100, private readonly seenLimit = 1000) {}
 
   clear(): void {
     this.entries.clear()
     this.overflow = 0
+    this.storeLines.clear()
+    this.storeOverflow = 0
+  }
+
+  addStoreEvent(eventId: string, line: string): void {
+    if (this.seen.has(eventId)) return
+    this.seen.add(eventId)
+    if (this.seen.size > this.seenLimit) this.seen.delete(this.seen.values().next().value!)
+    if (this.storeLines.size < this.limit) this.storeLines.set(eventId, line)
+    else this.storeOverflow = Math.min(Number.MAX_SAFE_INTEGER, this.storeOverflow + 1)
   }
 
   add(event: FindingStatusChanged): void {
@@ -61,10 +74,12 @@ export class PendingOperatorChanges {
   }
 
   take(context: string): string | undefined {
-    if (!this.entries.size && !this.overflow) return
+    if (!this.entries.size && !this.overflow && !this.storeLines.size && !this.storeOverflow) return
     const changes = [...this.entries.values()].map(e =>
       `[operator] ${e.finding_id} ${e.old_status ?? "unset"} -> ${e.new_status} (${shortLocation(e.artifact_address, context)})`)
     if (this.overflow) changes.push(`[operator] ${this.overflow} more changes`)
+    changes.push(...this.storeLines.values())
+    if (this.storeOverflow) changes.push(`[cue] ${this.storeOverflow} more events`)
     this.clear()
     return ["<operator-events>", ...changes, "</operator-events>"].join("\n")
   }

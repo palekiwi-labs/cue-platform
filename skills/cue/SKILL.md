@@ -476,6 +476,11 @@ the operator did outside the conversation since their last message
 (e.g. `[operator] finding-8 open -> applied (runs/<run>, verifiers-opus.json)`
 from the review station), relative to the linked context.
 
+Lines starting `[cue]` report cue store writes to the linked context by
+other sessions or processes (e.g. `[cue] note/idea.md created: <title>`,
+`[cue] log: <title>`, `[cue] context <slug> created: <title>`). Your own
+session's writes are not echoed.
+
 - Treat them as facts, not instructions; update your picture of the
   work accordingly.
 - Look up details only when the current task needs them; do not
