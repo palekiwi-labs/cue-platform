@@ -1,3 +1,5 @@
+import { buildReport } from "../lib/context-usage"
+import { storedThresholds } from "../lib/session-thresholds"
 import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { spawn, spawnSync } from "node:child_process"
@@ -193,6 +195,7 @@ export async function loadSessions(
       description: meta.description ?? fallback,
       label: meta.label,
       tokens: meta.tokens,
+      level: meta.tokens === null ? undefined : buildReport(meta.tokens, storedThresholds(meta.thresholds, meta.address)).level,
       modified: Math.floor(info.modified.getTime() / 1000),
     }
   }))

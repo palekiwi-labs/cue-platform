@@ -6,6 +6,8 @@
 
 import { calculateContextTokens, type Theme } from "@earendil-works/pi-coding-agent"
 import { truncateToWidth } from "@earendil-works/pi-tui"
+import type { SaturationLevel, Thresholds } from "../lib/context-usage"
+import { ownThresholds } from "../lib/session-thresholds"
 import { ALL_TIME_DAYS, type ContextRow } from "./model"
 
 const CUE_CONTEXT_TYPE = "cue-context"
@@ -24,6 +26,8 @@ export interface SessionRow {
   label?: string
   /** Context size from the last valid assistant usage. */
   tokens: number | null
+  /** Saturation level of `tokens` against the session's own thresholds. */
+  level?: SaturationLevel
   /** Unix seconds of the last modification. */
   modified: number
 }
@@ -33,6 +37,8 @@ export interface SessionMeta {
   description?: string
   label?: string
   tokens: number | null
+  /** Thresholds set in the session with /thresholds, if any. */
+  thresholds?: Thresholds
 }
 
 type Entry = Record<string, any>
@@ -65,6 +71,8 @@ export function sessionMeta(content: string): SessionMeta {
   const meta: SessionMeta = { tokens: null }
   const labeled = new Set<string>()
   const branch = mainline(content)
+  const own = ownThresholds(branch as never)
+  if (own) meta.thresholds = own
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i]!
     if (meta.address === undefined && e.customType === CUE_CONTEXT_TYPE) {
