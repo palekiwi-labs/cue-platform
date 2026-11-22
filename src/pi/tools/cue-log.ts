@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { Type } from "typebox"
 import { contextFlag, dirFlag, storeFlag } from "../lib/cue-args"
 import { runCue } from "../lib/cue-exec"
-import { buildReport, contextNote } from "../lib/context-usage"
+import { buildReport, contextNote, type Thresholds } from "../lib/context-usage"
 import { withTempFile } from "../lib/temp"
 
 const parameters = Type.Object({
@@ -72,19 +72,25 @@ const parameters = Type.Object({
  * Uses pi's native ctx.getContextUsage(); fails silent — a note is never
  * worth failing the log over (tokens can be null right after compaction).
  */
-function contextStateLine(ctx: { getContextUsage?: () => { tokens: number | null } | undefined }): string {
+function contextStateLine(
+  ctx: { getContextUsage?: () => { tokens: number | null } | undefined },
+  thresholds: Thresholds,
+): string {
   try {
     const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined
     if (!usage || usage.tokens == null) {
       return ""
     }
-    return contextNote(buildReport(usage.tokens).level)
+    return contextNote(buildReport(usage.tokens, thresholds).level)
   } catch {
     return ""
   }
 }
 
-export function cueLogTool(pi: ExtensionAPI): ToolDefinition<typeof parameters> {
+export function cueLogTool(
+  pi: ExtensionAPI,
+  thresholds: () => Thresholds,
+): ToolDefinition<typeof parameters> {
   return {
     name: "cue-log",
     label: "cue log",
@@ -113,7 +119,7 @@ export function cueLogTool(pi: ExtensionAPI): ToolDefinition<typeof parameters> 
         return runCue(pi, ["log", "add", ...flags, "--file", tempPath], ctx.cwd)
       })
 
-      const note = contextStateLine(ctx)
+      const note = contextStateLine(ctx, thresholds())
       const text = note
         ? `Logged milestone: ${args.title}\n${note}`
         : `Logged milestone: ${args.title}`

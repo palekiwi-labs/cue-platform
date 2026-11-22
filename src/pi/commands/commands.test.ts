@@ -145,6 +145,7 @@ describe("command registration", () => {
       "review:miss",
       "review:run",
       "speech-stop",
+      "thresholds",
     ])
   })
 })
