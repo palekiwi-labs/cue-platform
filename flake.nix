@@ -6,7 +6,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     nvf.url = "github:NotAShelf/nvf";
     cue = {
-      url = "github:palekiwi-labs/cue/cue-agent-prototype";
+      url = "github:palekiwi-labs/cue/feat/cue-hooks";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     cast = {
