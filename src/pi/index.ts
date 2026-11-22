@@ -19,6 +19,7 @@ import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
+import { registerSessionEnv } from "./session-env"
 import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
 import { registerResponseStyle } from "./response-style"
@@ -86,4 +87,5 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerResponseStyle(pi)
   registerSessionNaming(pi)
   registerSessionLabel(pi)
+  registerSessionEnv(pi)
 }
