@@ -2,9 +2,25 @@ import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent"
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent"
 import { readFile } from "node:fs/promises"
 import { runCue } from "./lib/cue-exec"
+import { currentTask } from "./lib/session-task"
 
 /** Name of the foundational skill injected into every session. */
 export const CUE_SKILL_NAME = "cue"
+
+/**
+ * Session state for the system prompt. With an active task only its
+ * address is given: the task's context is implied. Otherwise the raw
+ * `cue status` output (null when unavailable) and `active task: none`.
+ */
+export function sessionState(status: string | null, task: string | undefined): string {
+  if (task) return `active task: ${task}`
+  const context =
+    status === null || status === ""
+      ? "cue status unavailable: no active context is resolved. Do not " +
+        "attempt context-less writes; create a context or ask the operator."
+      : status
+  return `${context}\nactive task: none`
+}
 
 /**
  * Build the system prompt block carrying the full cue skill and the live
@@ -12,19 +28,13 @@ export const CUE_SKILL_NAME = "cue"
  *
  * The skill body is injected verbatim (frontmatter stripped): the protocol
  * is essential and agents reading SKILL.md through a generic read tool
- * truncate it. `status` is the raw `cue status` output, or null when it
- * could not be obtained.
+ * truncate it.
  */
 export function buildCueSkillBlock(
   skillBody: string,
   skillPath: string,
-  status: string | null,
+  state: string,
 ): string {
-  const state =
-    status === null || status === ""
-      ? "cue status unavailable: no active context is resolved. Do not " +
-        "attempt context-less writes; create a context or ask the operator."
-      : status
   return [
     `<cue-skill path="${skillPath}">`,
     "The `cue` skill below is already loaded in full. Do not read its",
@@ -88,8 +98,9 @@ export function registerCueSkillInjection(pi: ExtensionAPI): void {
       return undefined
     }
 
-    const status = await cueStatus(pi, ctx.cwd)
-    const block = buildCueSkillBlock(body, skill.filePath, status)
+    const task = currentTask(ctx.sessionManager.getBranch())
+    const status = task ? null : await cueStatus(pi, ctx.cwd)
+    const block = buildCueSkillBlock(body, skill.filePath, sessionState(status, task))
     return { systemPrompt: `${event.systemPrompt}\n\n${block}` }
   })
 }
