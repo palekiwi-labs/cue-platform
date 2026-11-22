@@ -182,6 +182,7 @@ describe("/thresholds end to end", () => {
       on: (event: string, fn: () => void) => { (handlers[event] ??= []).push(fn) },
       exec: async () => ({ stdout: "ok", stderr: "", code: 0, killed: false }),
       appendEntry: (customType: string, data: unknown) => branch.push({ type: "custom", customType, data }),
+      events: { on: () => {}, emit: () => {} },
     } as unknown as ExtensionAPI
     cuePlugins(pi)
     const sessionManager = { getSessionId: () => "s", getBranch: () => branch }

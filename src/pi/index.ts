@@ -21,6 +21,7 @@ import { registerSessionNaming } from "./session-name"
 import { registerInjectFlag } from "./inject-flag"
 import { registerConfig } from "./lib/config"
 import { thresholdsOf } from "./lib/session-thresholds"
+import { registerTmuxLevel } from "./tmux-level"
 import { registerFooter } from "./footer"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
@@ -92,6 +93,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerCompactionTrigger(pi)
   registerStoreCommit(pi)
   registerFooter(pi, thresholdsOf)
+  registerTmuxLevel(pi, thresholdsOf)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)

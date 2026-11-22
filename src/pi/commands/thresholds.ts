@@ -7,6 +7,7 @@ import {
   thresholdsError,
   type ThresholdsSource,
 } from "../lib/session-thresholds"
+import { THRESHOLDS_CHANGED_EVENT } from "../tmux-level"
 
 /** Context window assumed when the model does not report one. */
 export const FALLBACK_WINDOW = 200_000
@@ -239,6 +240,7 @@ async function openThresholds(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
   )
   const shown = applyResult(pi, result, state.contextWindow)
   if (shown) ctx.ui.notify(shown.message, shown.type)
+  if (shown?.type === "info") pi.events.emit(THRESHOLDS_CHANGED_EVENT, ctx)
 }
 
 /** Register `/thresholds`: adjust this session's saturation thresholds in a popup. */
