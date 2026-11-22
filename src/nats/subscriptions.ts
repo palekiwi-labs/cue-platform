@@ -48,7 +48,6 @@ export function registerSessionSubscriptions(
   let active = false
   let context: string | undefined
   let connection: NatsConnection | undefined
-  let sessionId: string | undefined
   let client: NatsClient | undefined
   let ui: ExtensionContext["ui"] | undefined
   let subs: Active[] = []
@@ -77,7 +76,6 @@ export function registerSessionSubscriptions(
           try {
             const event = parseStoreEvent(message.json(), linked)
             if (!event || message.subject !== storeSubject(linked, event.event)) return
-            if (sessionId && event.origin_session === sessionId) return
             if (!pending.add(event.event_id, storeEventLine(event, linked))) return
             sub.events++
             sub.lastEventAt = new Date()
@@ -115,7 +113,6 @@ export function registerSessionSubscriptions(
   pi.on("session_start", (_event, ctx) => {
     active = true
     ui = ctx.hasUI ? ctx.ui : undefined
-    sessionId = ctx.sessionManager.getSessionId()
     context = undefined
     unsubscribe()
     pending.clear()

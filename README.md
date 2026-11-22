@@ -218,7 +218,7 @@ Events arrive on core NATS (`$CUE_NATS_URL`, default
 `nats://127.0.0.1:4222`); there is no replay. On the next idle-session user
 message pi inserts a visible `<session-events>` block, one line per event,
 tagged by actor (`[cue]` for store writes, `[operator]` for operator
-actions). Writes made by the session itself are not echoed. Custom-message
+actions). The session's own writes are included. Custom-message
 runs and steering messages do not consume pending events.
 
 Producers:
