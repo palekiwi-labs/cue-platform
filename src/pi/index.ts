@@ -20,6 +20,7 @@ import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerInjectFlag } from "./inject-flag"
 import { registerSessionThresholds } from "./lib/session-thresholds"
+import { registerFooter } from "./footer"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
 import { registerStoreCommit } from "./store-commit"
@@ -86,6 +87,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
   registerStoreCommit(pi)
+  registerFooter(pi, effective)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)

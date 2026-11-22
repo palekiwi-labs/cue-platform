@@ -21,7 +21,7 @@ def main():
         shutil.copy(ROOT / "package.json", package)
         for resource in ("extensions", "src", "skills", "prompts"):
             shutil.copytree(ROOT / resource, package / resource)
-        footer = package / "extensions/footer.ts"
+        footer = package / "src/pi/footer.ts"
         source = footer.read_text()
         marker = 'const tokenParts: string[] = [];'
         assert source.count(marker) == 1

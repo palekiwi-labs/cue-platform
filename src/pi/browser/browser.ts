@@ -1719,7 +1719,7 @@ export class CueBrowser implements Component {
     const here = this.deps.sessionAddress()
     const current = this.deps.currentSession()
     const flat = v.subset === "labeled" || this.sessionsFlat || v.query.trim() !== ""
-    // Same thresholds as the footer (extensions/footer.ts).
+    // Same thresholds as the footer (src/pi/footer.ts).
     const tokColor = (tokens: number | null) =>
       tokens == null ? "muted"
         : tokens >= 100_000 ? "error"

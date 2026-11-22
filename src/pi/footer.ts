@@ -8,12 +8,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { scopeOf, scopeOfRemote } from "../src/pi/browser/sessions";
-import { currentContext } from "../src/pi/lib/current-context";
-import { effectiveThresholds } from "../src/pi/lib/session-thresholds";
-import { activeStyle, DEFAULT_STYLE } from "../src/pi/response-style";
-import { speechActive } from "../src/pi/speech/footer";
-import { SPEECH_STATUS_KEY } from "../src/pi/speech/settings";
+import { scopeOf, scopeOfRemote } from "./browser/sessions";
+import { currentContext } from "./lib/current-context";
+import type { Thresholds } from "./lib/context-usage";
+import { activeStyle, DEFAULT_STYLE } from "./response-style";
+import { speechActive } from "./speech/footer";
+import { SPEECH_STATUS_KEY } from "./speech/settings";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -130,7 +130,8 @@ function joinLR(left: string, right: string, width: number): string {
   return l + " ".repeat(Math.max(0, width - lw - visibleWidth(r))) + r;
 }
 
-export default function (pi: ExtensionAPI) {
+/** Custom two-line footer; context tokens are coloured by the session thresholds. */
+export function registerFooter(pi: ExtensionAPI, thresholds: () => Thresholds): void {
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) return;
     ctx.ui.setFooter((tui, theme, footerData) => {
@@ -197,7 +198,7 @@ export default function (pi: ExtensionAPI) {
           if (tokens == null) {
             ctxStr = dim("?");
           } else {
-            const THRESHOLDS = effectiveThresholds();
+            const THRESHOLDS = thresholds();
             const color =
               tokens >= THRESHOLDS.soft
                 ? "error"
