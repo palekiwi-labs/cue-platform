@@ -25,9 +25,10 @@ test("writes before publishing, preserves fields and clears dismissal on reopen"
       calls++;
       assert.equal(JSON.parse(readFileSync(f.file, "utf8")).findings[0].status, "dismissed");
       assert.equal(event.context, "org/repo/review-pr-1");
-      assert.equal(event.artifact_address, `${address}/verifiers-a.json`);
-      assert.equal(event.old_status, "open");
-      assert.match(subject, /^operator\.evt\.v1\.[^.]+\.finding_status_changed$/);
+      assert.equal(event.address, `${address}/verifiers-a.json`);
+      assert.match(subject, /^cue\.evt\.v1\.[^.]+\.artifact_update$/);
+      assert.equal(event.actor, "operator");
+      assert.equal(event.summary, "F3 open -> dismissed");
       return false;
     }, f.root);
     assert.equal(calls, 1);

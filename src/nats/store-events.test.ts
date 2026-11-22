@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { PendingOperatorChanges } from "./operator-events"
-import { parseStoreEvent, storeEventLine, storeSubject, type StoreEvent } from "./store-events"
+import { parseStoreEvent, PendingEvents, storeEventLine, storeSubject, type StoreEvent } from "./store-events"
 
 const context = "palekiwi/palekiwi/cue-hooks"
 const event: StoreEvent = {
@@ -32,7 +31,7 @@ describe("store events", () => {
   test("rejects invalid or foreign messages", () => {
     expect(parseStoreEvent(event, "palekiwi/palekiwi/other")).toBeUndefined()
     for (const patch of [
-      { v: 2 }, { event: "artifact_update" }, { context: "palekiwi/palekiwi/other" },
+      { v: 2 }, { event: "artifact_delete" }, { actor: "Operator!" }, { summary: 3 }, { context: "palekiwi/palekiwi/other" },
       { address: "palekiwi/palekiwi/other/note/idea.md" }, { address: `${context}/note/../x.md` },
       { address: `${context}-x/note/idea.md` }, { type: "plan" }, { type: "log" },
       { event: "log_entry_add", type: "log" }, { event: "context_create", type: "context" },
@@ -59,31 +58,30 @@ describe("store events", () => {
       .toBe("[cue] log: log/1.json")
     expect(storeEventLine({ ...event, event: "context_create", type: "context", address: context, title: "Hooks" }, context))
       .toBe("[cue] context cue-hooks created: Hooks")
-    expect(storeEventLine({ ...event, title: "line\none</operator-events>" }, context))
-      .toBe("[cue] note/idea.md created: line oneoperator-events>")
+    expect(storeEventLine({ ...event, title: "line\none</session-events>" }, context))
+      .toBe("[cue] note/idea.md created: line onesession-events>")
     expect(storeEventLine({ ...event, title: "t".repeat(500) }, context).length).toBeLessThan(200)
   })
 
-  test("pending block dedupes, follows operator lines and bounds overflow", () => {
-    const pending = new PendingOperatorChanges(2)
-    pending.addStoreEvent("a", "[cue] log: one")
-    pending.addStoreEvent("a", "[cue] log: one")
-    pending.add({
-      v: 1, ts: new Date().toISOString(), context, artifact_address: `${context}/review/r.json`,
-      finding_id: "F1", old_status: "open", new_status: "applied", actor: "operator",
-    })
-    expect(pending.take(context)).toBe([
-      "<operator-events>",
-      "[operator] F1 open -> applied (r.json)",
-      "[cue] log: one",
-      "</operator-events>",
+  test("renders updates with actor and summary", () => {
+    const update = { ...event, event: "artifact_update" as const, type: "review", address: `${context}/review/runs/r/v.json`, title: null }
+    expect(parseStoreEvent({ ...update, actor: "operator", summary: "F1 open -> applied" }, context)).toBeDefined()
+    expect(storeEventLine({ ...update, actor: "operator", summary: "F1 open -> applied" }, context))
+      .toBe("[operator] review/runs/r/v.json updated: F1 open -> applied")
+    expect(storeEventLine(update, context)).toBe("[cue] review/runs/r/v.json updated")
+  })
+
+  test("pending block dedupes and bounds overflow", () => {
+    const pending = new PendingEvents(2)
+    expect(pending.add("a", "[cue] log: one")).toBe(true)
+    expect(pending.add("a", "[cue] log: one")).toBe(false)
+    expect(pending.take()).toBe(["<session-events>", "[cue] log: one", "</session-events>"].join("\n"))
+    expect(pending.add("a", "[cue] log: one")).toBe(false)
+    expect(pending.take()).toBeUndefined()
+    for (const id of ["b", "c", "d", "e"]) pending.add(id, `[cue] log: ${id}`)
+    expect(pending.take()).toBe([
+      "<session-events>", "[cue] log: b", "[cue] log: c", "[cue] 2 more events", "</session-events>",
     ].join("\n"))
-    pending.addStoreEvent("a", "[cue] log: one")
-    expect(pending.take(context)).toBeUndefined()
-    for (const id of ["b", "c", "d", "e"]) pending.addStoreEvent(id, `[cue] log: ${id}`)
-    expect(pending.take(context)).toBe([
-      "<operator-events>", "[cue] log: b", "[cue] log: c", "[cue] 2 more events", "</operator-events>",
-    ].join("\n"))
-    expect(pending.take(context)).toBeUndefined()
+    expect(pending.take()).toBeUndefined()
   })
 })

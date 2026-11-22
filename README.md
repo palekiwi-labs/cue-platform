@@ -205,61 +205,32 @@ NATS sender never uses it. Do not use HTTP to circumvent coordination.
 The HTTP sender sends only the text: the HTTP bridge speaks with its own
 configured voice and ignores the session voice.
 
-## Operator events v1
+## Session subscriptions
 
-The review station's findings view supports `s` on the highlighted finding.
-Choose `a` open, `b` applied, or `c` dismissed, then press Enter in the
-confirmation popup to save. Any other key cancels either popup; navigation
-never writes. The footer lists `s status`. Dismissal supplies a default
-reason; opening or applying clears the dismissal reason.
+A pi session subscribes to events about the store subjects it works on.
+Subscriptions are derived from session state: linking a cue context
+subscribes to `cue.evt.v1.<base64url-context>.>`; relinking or switching
+the tree moves the subscription and discards pending events. The footer
+shows `N sub(s)` while subscribed, and `/subscriptions` lists each
+subscription with its subject, event count and time of the last event.
 
-The selected `verifiers-*.json` remains the source of truth. The station
-atomically replaces it before publishing, preserving other fields. The
-artifact address is the loaded review run address plus that filename; the
-first three address segments identify its owning canonical context. A
-publish failure shows a warning without rolling back the saved change.
+Events arrive on core NATS (`$CUE_NATS_URL`, default
+`nats://127.0.0.1:4222`); there is no replay. On the next idle-session user
+message pi inserts a visible `<session-events>` block, one line per event,
+tagged by actor (`[cue]` for store writes, `[operator]` for operator
+actions). Writes made by the session itself are not echoed. Custom-message
+runs and steering messages do not consume pending events.
 
-`src/nats/index.ts` registers the pi subscriber as part of the existing
-package extension; no separate feature flag is needed. Pi must load this
-checkout, not another checkout or the installed Git revision. Use `/reload`
-after changing the loaded checkout. Link the session to the review context
-with `cue-session-link` or the context browser's link action. The subscriber
-initializes from the session's linked context, not `$CUE_CONTEXT` or branch
-configuration, and clears pending facts on relink or tree/session switch.
-The footer shows `operator: connected` or `operator: disconnected` when
-linked.
+Producers:
 
-Both processes use `$CUE_NATS_URL` (default `nats://127.0.0.1:4222`). Core
-NATS subjects are `operator.evt.v1.<base64url-context>.finding_status_changed`;
-any leaf routing/permissions between the processes must allow these subjects.
-Publication success means local NATS acceptance, not a subscriber receipt.
-No JetStream, replay, offline queue, or acknowledgement is provided.
-
-On the next idle-session user message, pi inserts a visible factual summary.
-It coalesces up to 100 artifact/finding pairs, removes net-zero changes, and
-reports the count of further unretained change events. Custom-message runs
-and steering messages while busy do not consume pending changes. Reloads
-and session switches discard pending facts.
-
-For a manual check:
-
-1. Build station with `cd station && npm run build`, then return to the
-   worktree root. Ensure station and pi can reach the same NATS service.
-2. Load this worktree's pi package, start/reload pi, and link it to the
-   canonical context owning a review run. Wait for `operator: connected`.
-3. From a checkout containing the reviewed head commit, run
-   `node <worktree>/station/bin/station.js findings
-   <org>/<repo>/<context>/review/runs/<run-id>` on one command line.
-   Alternatively open the PR's findings tab in station.
-4. Highlight an open finding, press `s`, `c`, Enter. Verify the on-screen
-   status and the verifier JSON now say dismissed. Type `continue` in idle
-   pi: a visible `operator-events` summary should precede the response.
-5. Dismiss and reopen a finding before typing again: no summary for that
-   net-zero change. Cancel either popup: no write or event. Link pi to a
-   different context: changes in the old context must not appear.
-6. Stop/disconnect NATS and save another status: JSON still changes and
-   station warns that the event was not published. Reconnecting does not
-   replay the missed change.
+- `hooks/nats-publish`, a cue hook, publishes `artifact_create`,
+  `context_create` and `log_entry_add`.
+- The review station's findings view (`s` on a finding, choose a status,
+  confirm with Enter) rewrites the verifier JSON, then publishes
+  `artifact_update` with actor `operator` and a summary such as
+  `F3 open -> dismissed`. This is a stopgap until cue publishes artifact
+  updates itself. A publish failure shows a warning; the saved change
+  stays.
 
 ## GitHub snapshot service
 
