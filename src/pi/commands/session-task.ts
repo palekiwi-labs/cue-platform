@@ -12,7 +12,7 @@ import { cueBestEffort } from "./common"
 import { editInTerminal, storeRoot } from "./cue-browser"
 
 /** Open the active task in $EDITOR. */
-export const TASK_SHORTCUT = "alt+t"
+export const TASK_SHORTCUT = "ctrl+alt+t"
 
 const CLEAR = "\0clear"
 
