@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { defaultThresholds } from "./config"
 import { DEFAULT_THRESHOLDS, type Thresholds } from "./context-usage"
 
 /** Why a set of thresholds was rejected, or null when it is valid. */
@@ -26,11 +27,14 @@ interface BranchEntry {
 }
 
 /**
- * The thresholds most recently set on the branch, or the defaults when
+ * The thresholds most recently set on the branch, or `defaults` when
  * none is set. The session history is the only state store, so resume,
  * fork and tree navigation follow it.
  */
-export function sessionThresholds(branch: readonly BranchEntry[]): Thresholds {
+export function sessionThresholds(
+  branch: readonly BranchEntry[],
+  defaults: Thresholds = DEFAULT_THRESHOLDS,
+): Thresholds {
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i]!
     if (e.type !== "custom" || e.customType !== THRESHOLDS_TYPE) continue
@@ -38,7 +42,7 @@ export function sessionThresholds(branch: readonly BranchEntry[]): Thresholds {
     const t = { caution: d?.caution, soft: d?.soft, hard: d?.hard } as Thresholds
     if (thresholdsError(t) === null) return t
   }
-  return { ...DEFAULT_THRESHOLDS }
+  return { ...defaults }
 }
 
 /** Anything exposing the session branch, e.g. a tool or command context. */
@@ -49,7 +53,7 @@ export interface HasSession {
 /** The effective thresholds of the session behind a context. */
 export function thresholdsOf(ctx: HasSession): Thresholds {
   const branch = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : []
-  return sessionThresholds(branch)
+  return sessionThresholds(branch, defaultThresholds())
 }
 
 /** Validate and record thresholds in the session; returns the validation error, if any. */

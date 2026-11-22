@@ -127,6 +127,28 @@ with that message.
 `ACUITY_HOST` selects the observability endpoint. The MCP adapter discovers
 cast through `cast-mcp-client`; outside cast it remains inactive.
 
+## Configuration
+
+Settings are read from `$XDG_CONFIG_HOME/cue-platform/cue-platform.json`
+(default `~/.config/cue-platform/cue-platform.json`) at every session
+start, including `/reload`. The file is optional; missing or invalid
+values fall back to the built-in ones, and problems are shown as a
+warning.
+
+```json
+{
+  "context": {
+    "thresholds": { "caution": 80000, "soft": 100000, "hard": 140000 }
+  }
+}
+```
+
+`context.thresholds` are the default context saturation limits used by
+`cue-context-usage`, the `cue-log` note and the footer. `/thresholds`
+overrides them for one session; the override is stored in the session
+transcript, so it survives resume, and `r` in the popup resets to the
+configured defaults.
+
 Pi imports are supplied by the running harness; development dependencies
 pin its types to the packaged version.
 

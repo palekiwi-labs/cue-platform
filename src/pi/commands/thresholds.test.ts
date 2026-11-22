@@ -111,6 +111,13 @@ describe("ThresholdsPopup input", () => {
     expect(p.values).toEqual(DEFAULT_THRESHOLDS)
   })
 
+  test("r resets to the configured defaults when given", () => {
+    const defaults = { caution: 90_000, soft: 120_000, hard: 160_000 }
+    const p = popup({ thresholds: { caution: 10_000, soft: 20_000, hard: 30_000 }, defaults })
+    p.handleInput("r")
+    expect(p.values).toEqual(defaults)
+  })
+
   test("enter applies the edited values, esc cancels", () => {
     const p = popup()
     p.handleInput(KEY.right)
