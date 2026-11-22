@@ -1695,16 +1695,12 @@ export class CueBrowser implements Component {
     const here = this.deps.sessionAddress()
     const current = this.deps.currentSession()
     const flat = v.subset === "labeled" || this.sessionsFlat || v.query.trim() !== ""
-    // Same thresholds as the footer (src/pi/footer.ts).
-    const tokColor = (tokens: number | null) =>
-      tokens == null ? "muted"
-        : tokens >= 100_000 ? "error"
-          : tokens >= 80_000 ? "warning"
-            : "success"
     const right = (s: SessionRow | undefined) => {
       if (!s) return t.fg("muted", " ".repeat(11))
-      let tok = t.fg(tokColor(s.tokens), fmtTokens(s.tokens))
-      if (s.tokens != null && s.tokens >= 140_000) tok = t.bold(tok)
+      const spent = s.level === "exceeded_soft" || s.level === "critical"
+      let tok = s.tokens == null ? t.fg("muted", fmtTokens(s.tokens))
+        : spent ? t.fg("dim", fmtTokens(s.tokens))
+          : fmtTokens(s.tokens)
       tok = " ".repeat(Math.max(0, 6 - visibleWidth(fmtTokens(s.tokens)))) + tok
       return tok + " " + t.fg("muted", relativeAge(s.modified, now).padStart(4))
     }

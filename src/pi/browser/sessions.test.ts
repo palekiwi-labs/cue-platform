@@ -53,6 +53,14 @@ describe("sessionMeta", () => {
     expect(meta.tokens).toBeNull()
   })
 
+  test("takes the newest valid thresholds set in the session", () => {
+    const set = (caution: number) =>
+      ({ type: "custom", customType: "cue-thresholds", data: { caution, soft: 120_000, hard: 160_000 } })
+    expect(sessionMeta(file(set(90_000), set(95_000))).thresholds?.caution).toBe(95_000)
+    expect(sessionMeta(file(set(90_000), set(500_000))).thresholds?.caution).toBe(90_000)
+    expect(sessionMeta(file()).thresholds).toBeUndefined()
+  })
+
   test("skips aborted assistant usage", () => {
     const meta = sessionMeta(file(msg("assistant", "x", { usage, stopReason: "aborted" })))
     expect(meta.tokens).toBeNull()

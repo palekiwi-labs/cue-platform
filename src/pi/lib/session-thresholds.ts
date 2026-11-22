@@ -38,7 +38,7 @@ export function sessionThresholds(
   branch: readonly BranchEntry[],
   defaults: Thresholds = DEFAULT_THRESHOLDS,
 ): Thresholds {
-  return sessionEntry(branch) ?? { ...defaults }
+  return ownThresholds(branch) ?? { ...defaults }
 }
 
 /** Anything exposing the session branch, e.g. a tool or command context. */
@@ -55,7 +55,8 @@ export function sessionMode(branch: readonly BranchEntry[]): string | undefined 
   return address === undefined ? undefined : contextMode(address)
 }
 
-function sessionEntry(branch: readonly BranchEntry[]): Thresholds | undefined {
+/** The thresholds set with /thresholds on the branch, if any. */
+export function ownThresholds(branch: readonly BranchEntry[]): Thresholds | undefined {
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i]!
     if (e.type !== "custom" || e.customType !== THRESHOLDS_TYPE) continue
@@ -78,9 +79,14 @@ export function resolveThresholds(ctx: HasSession): {
 } {
   const branch = branchOf(ctx)
   const d = resolveDefaults(sessionMode(branch))
-  const own = sessionEntry(branch)
+  const own = ownThresholds(branch)
   if (own) return { thresholds: own, defaults: d.thresholds, source: { kind: "session" } }
   return { thresholds: d.thresholds, defaults: d.thresholds, source: d.source }
+}
+
+/** Effective thresholds of a session given its own entry and linked context, as read from its file. */
+export function storedThresholds(own: Thresholds | undefined, address: string | undefined): Thresholds {
+  return own ?? resolveDefaults(address === undefined ? undefined : contextMode(address)).thresholds
 }
 
 /** The effective thresholds of the session behind a context. */

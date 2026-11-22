@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { registerConfig } from "./config"
 import { contextMode, parseContextMode } from "./context-mode"
 import { CUE_CONTEXT_TYPE } from "./current-context"
-import { resolveThresholds } from "./session-thresholds"
+import { resolveThresholds, storedThresholds } from "./session-thresholds"
 
 describe("parseContextMode", () => {
   test("reads mode from frontmatter only", () => {
@@ -48,6 +48,9 @@ describe("contextMode and resolveThresholds", () => {
       const r = resolveThresholds(ctx([link("o/r/b"), own]))
       expect(r.source).toEqual({ kind: "session" })
       expect(r.defaults.hard).toBe(170_000)
+      expect(storedThresholds(undefined, "o/r/b").hard).toBe(170_000)
+      expect(storedThresholds(undefined, undefined).hard).toBe(140_000)
+      expect(storedThresholds({ caution: 1, soft: 2, hard: 3 }, "o/r/b").hard).toBe(3)
     } finally {
       if (prev === undefined) delete process.env.CUE_STORE
       else process.env.CUE_STORE = prev
