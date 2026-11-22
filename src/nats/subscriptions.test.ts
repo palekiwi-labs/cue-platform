@@ -101,10 +101,10 @@ test.skipIf(!natsServerBin)("store events reach the linked session once, includi
     expect(result.message).toMatchObject({ customType: "session-events", display: true })
     expect(result.message.content).toBe([
       "<session-events>",
-      "[cue] note/idea.md created: An idea",
-      "[cue] note/own.md created: Own",
-      "[cue] log: Shipped",
-      "[operator] review/runs/r/v.json updated: F3 open -> dismissed",
+      `[cue] created: ${a}/note/idea.md`,
+      `[cue] created: ${a}/note/own.md`,
+      `[cue] logged: ${a}/log/1.json`,
+      `[operator] updated: ${a}/review/runs/r/v.json (F3 open -> dismissed)`,
       "</session-events>",
     ].join("\n"))
     await send(first)
@@ -117,7 +117,7 @@ test.skipIf(!natsServerBin)("store events reach the linked session once, includi
     await send(event(a))
     expect(self.emit("before_agent_start", { messageType: "user" })).toBeUndefined()
     await send(event(b))
-    expect(self.emit("before_agent_start", { messageType: "user" }).message.content).toContain("note/idea.md created")
+    expect(self.emit("before_agent_start", { messageType: "user" }).message.content).toContain(`[cue] created: ${b}/note/idea.md`)
     await send(event(b))
     self.tree(a)
     expect(self.emit("before_agent_start", { messageType: "user" })).toBeUndefined()

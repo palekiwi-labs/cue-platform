@@ -495,12 +495,12 @@ A session linked to a context may receive a `<session-events>` block
 with the operator's next message. Each line is a fact about a change to
 the linked context since the last message, tagged by who made it:
 
-- `[cue]` lines report store writes by any session or process
-  (e.g. `[cue] note/idea.md created: <title>`, `[cue] log: <title>`,
-  `[cue] context <slug> created: <title>`).
+- `[cue]` lines report store writes by any session or process, as a
+  verb and the canonical address (e.g. `[cue] created: <address>`,
+  `[cue] logged: <scope>/<context>/log/<file>.json`).
 - `[operator]` lines report operator actions (e.g.
-  `[operator] review/runs/<run>/verifiers-opus.json updated: finding-8
-  open -> applied` from the review station).
+  `[operator] updated: <address> (finding-8 open -> applied)` from the
+  review station).
 
 Your own session's writes are included; the operator may have made
 them (e.g. from the artifact browser).

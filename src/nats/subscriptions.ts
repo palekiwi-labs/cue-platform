@@ -76,7 +76,7 @@ export function registerSessionSubscriptions(
           try {
             const event = parseStoreEvent(message.json(), linked)
             if (!event || message.subject !== storeSubject(linked, event.event)) return
-            if (!pending.add(event.event_id, storeEventLine(event, linked))) return
+            if (!pending.add(event.event_id, storeEventLine(event))) return
             sub.events++
             sub.lastEventAt = new Date()
           } catch {}
