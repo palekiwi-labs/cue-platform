@@ -13,6 +13,7 @@ import { registerPrBrowser } from "./commands/prs"
 import { registerReviewRunCommand } from "./commands/review-run"
 import { registerViewsLauncher } from "./commands/views-launcher"
 import { registerSessionMenus } from "./commands/session-menus"
+import { registerThresholdsCommand } from "./commands/thresholds"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerSessionThresholds } from "./lib/session-thresholds"
@@ -68,6 +69,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerSessionMenus(pi)
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
+  registerThresholdsCommand(pi, thresholds)
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
