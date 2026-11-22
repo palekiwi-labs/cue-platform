@@ -17,6 +17,7 @@ import { registerThresholdsCommand } from "./commands/thresholds"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerSessionThresholds } from "./lib/session-thresholds"
+import { registerFooter } from "./footer"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
 import { registerCueSkillInjection } from "./skill-injection"
@@ -73,6 +74,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
+  registerFooter(pi, effective)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)

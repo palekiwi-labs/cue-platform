@@ -111,9 +111,10 @@ both versions would register duplicate tools, commands and handlers.
 `src/pi/index.ts` registers the cue artifact tools, `cue-recall`,
 `delegate`, context orientation commands (`/cue:context:current`, `/cue:context:inject`,
 `/cue:context:pins`), `/cue:idea`, and `/review:run`. It also supplies cue skill
-injection, session naming, Acuity idle reporting, and the cast MCP adapter.
+injection, the footer, session naming, Acuity idle reporting, and the cast
+MCP adapter.
 `prompts/pi/` supplies `/cue:init`; `skills/` contains the nine cue skills.
-`extensions/` holds the footer, tmux-state and session-describe
+`extensions/` holds tmux-state and session-describe
 (`/describe`). Sessions are browsed in the cue browser (ctrl+r).
 
 The extensions call cue, cue-agent, cue-recall, git and tmux from PATH;
