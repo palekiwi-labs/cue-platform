@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { DEFAULT_THRESHOLDS, type Thresholds } from "../lib/context-usage"
-import { type SessionThresholds, thresholdsError } from "../lib/session-thresholds"
+import { setSessionThresholds, thresholdsError, thresholdsOf } from "../lib/session-thresholds"
 
 /** Context window assumed when the model does not report one. */
 export const FALLBACK_WINDOW = 200_000
@@ -179,16 +179,16 @@ export function popupState(ctx: ExtensionCommandContext, thresholds: Thresholds)
   }
 }
 
-/** Apply a popup result to the session holder and notify; returns the message shown. */
+/** Record a popup result in the session; returns the message to show. */
 export function applyResult(
-  holder: SessionThresholds,
+  pi: Pick<ExtensionAPI, "appendEntry">,
   result: PopupResult,
   contextWindow: number,
 ): { message: string; type: "info" | "error" } | null {
   if (result.kind === "cancel") return null
-  const error = holder.set(result.thresholds, contextWindow)
+  const error = setSessionThresholds(pi, result.thresholds, contextWindow)
   if (error !== null) return { message: `Thresholds not applied: ${error}`, type: "error" }
-  const t = holder.get()
+  const t = result.thresholds
   return {
     message: `Context thresholds for this session: caution ${fmt(t.caution)} / ` +
       `soft ${fmt(t.soft)} / hard ${fmt(t.hard)}`,
@@ -196,9 +196,9 @@ export function applyResult(
   }
 }
 
-async function openThresholds(holder: SessionThresholds, ctx: ExtensionCommandContext): Promise<void> {
+async function openThresholds(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
   if (!ctx.hasUI) return
-  const state = popupState(ctx, holder.get())
+  const state = popupState(ctx, thresholdsOf(ctx))
   const result = await ctx.ui.custom<PopupResult>(
     (tui, theme, _kb, done) => {
       const popup = new ThresholdsPopup(theme, state)
@@ -217,14 +217,14 @@ async function openThresholds(holder: SessionThresholds, ctx: ExtensionCommandCo
       overlayOptions: () => ({ anchor: "center", width: popupWidth(process.stdout.columns || 80) }),
     },
   )
-  const shown = applyResult(holder, result, state.contextWindow)
+  const shown = applyResult(pi, result, state.contextWindow)
   if (shown) ctx.ui.notify(shown.message, shown.type)
 }
 
 /** Register `/thresholds`: adjust this session's saturation thresholds in a popup. */
-export function registerThresholdsCommand(pi: ExtensionAPI, holder: SessionThresholds): void {
+export function registerThresholdsCommand(pi: ExtensionAPI): void {
   pi.registerCommand("thresholds", {
     description: "Adjust this session's context saturation thresholds",
-    handler: async (_args, ctx) => openThresholds(holder, ctx),
+    handler: async (_args, ctx) => openThresholds(pi, ctx),
   })
 }

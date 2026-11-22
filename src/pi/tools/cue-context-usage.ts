@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
+import type { HasSession } from "../lib/session-thresholds"
 import { buildReport, formatReport, type Thresholds } from "../lib/context-usage"
 
 const parameters = Type.Object({})
@@ -11,7 +12,7 @@ interface ContextUsageLike {
 }
 
 export function cueContextUsageTool(
-  thresholds: () => Thresholds,
+  thresholds: (ctx: HasSession) => Thresholds,
 ): ToolDefinition<typeof parameters> {
   return {
     name: "cue-context-usage",
@@ -42,7 +43,7 @@ export function cueContextUsageTool(
         }
       }
 
-      const limits = thresholds()
+      const limits = thresholds(ctx)
       const report = buildReport(usage.tokens, limits)
       const text = formatReport(report, limits)
       return {

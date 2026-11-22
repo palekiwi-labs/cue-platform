@@ -11,6 +11,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { scopeOf, scopeOfRemote } from "./browser/sessions";
 import { currentContext } from "./lib/current-context";
 import type { Thresholds } from "./lib/context-usage";
+import type { HasSession } from "./lib/session-thresholds";
 import { activeStyle, DEFAULT_STYLE } from "./response-style";
 import type {
   ExtensionAPI,
@@ -129,7 +130,7 @@ function joinLR(left: string, right: string, width: number): string {
 }
 
 /** Custom two-line footer; context tokens are coloured by the session thresholds. */
-export function registerFooter(pi: ExtensionAPI, thresholds: () => Thresholds): void {
+export function registerFooter(pi: ExtensionAPI, thresholds: (ctx: HasSession) => Thresholds): void {
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) return;
     ctx.ui.setFooter((tui, theme, footerData) => {
@@ -193,7 +194,7 @@ export function registerFooter(pi: ExtensionAPI, thresholds: () => Thresholds): 
           if (tokens == null) {
             ctxStr = dim("?");
           } else {
-            const THRESHOLDS = thresholds();
+            const THRESHOLDS = thresholds(ctx);
             const color =
               tokens >= THRESHOLDS.soft
                 ? "error"

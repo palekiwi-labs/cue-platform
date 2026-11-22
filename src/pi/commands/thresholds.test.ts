@@ -8,7 +8,6 @@ import type {
 import { visibleWidth } from "@earendil-works/pi-tui"
 import cuePlugins from "../index"
 import { DEFAULT_THRESHOLDS } from "../lib/context-usage"
-import { SessionThresholds } from "../lib/session-thresholds"
 import { applyResult, popupWidth, type PopupState, ThresholdsPopup } from "./thresholds"
 
 const plain = { fg: (_c: unknown, s: string) => s, bold: (s: string) => s }
@@ -136,27 +135,33 @@ describe("ThresholdsPopup input", () => {
 })
 
 describe("applyResult", () => {
-  test("cancel leaves the holder alone and shows nothing", () => {
-    const h = new SessionThresholds()
-    expect(applyResult(h, { kind: "cancel" }, 200_000)).toBeNull()
-    expect(h.get()).toEqual(DEFAULT_THRESHOLDS)
+  function recorder() {
+    const appended: unknown[] = []
+    return { appended, pi: { appendEntry: (_t: string, d: unknown) => appended.push(d) } }
+  }
+
+  test("cancel records nothing and shows nothing", () => {
+    const { appended, pi } = recorder()
+    expect(applyResult(pi, { kind: "cancel" }, 200_000)).toBeNull()
+    expect(appended).toEqual([])
   })
 
-  test("apply sets the holder and reports the values", () => {
-    const h = new SessionThresholds()
+  test("apply records the values and reports them", () => {
+    const { appended, pi } = recorder()
     const shown = applyResult(
-      h,
+      pi,
       { kind: "apply", thresholds: { caution: 90_000, soft: 120_000, hard: 160_000 } },
       200_000,
     )
     expect(shown?.type).toBe("info")
     expect(shown?.message).toContain("caution 90,000 / soft 120,000 / hard 160,000")
-    expect(h.get().soft).toBe(120_000)
+    expect(appended).toEqual([{ caution: 90_000, soft: 120_000, hard: 160_000 }])
   })
 })
 
 describe("/thresholds end to end", () => {
   function harness() {
+    const branch: { type: string; customType?: string; data?: unknown }[] = []
     const tools: ToolDefinition<any>[] = []
     const commands: Record<string, { handler: (a: string, c: ExtensionCommandContext) => Promise<void> }> = {}
     const handlers: Record<string, (() => void)[]> = {}
@@ -167,14 +172,18 @@ describe("/thresholds end to end", () => {
       sendUserMessage: () => {},
       on: (event: string, fn: () => void) => { (handlers[event] ??= []).push(fn) },
       exec: async () => ({ stdout: "ok", stderr: "", code: 0, killed: false }),
+      appendEntry: (customType: string, data: unknown) => branch.push({ type: "custom", customType, data }),
     } as unknown as ExtensionAPI
     cuePlugins(pi)
-    return { tools, commands, handlers }
-  }
-
-  function commandCtx(keys: string[], notes: string[]): ExtensionCommandContext {
-    return {
+    const sessionManager = { getSessionId: () => "s", getBranch: () => branch }
+    const toolCtx = {
       cwd: "/work",
+      sessionManager,
+      getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000, percent: 45 }),
+    } as unknown as ExtensionToolContext
+    const commandCtx = (keys: string[], notes: string[]) => ({
+      cwd: "/work",
+      sessionManager,
       hasUI: true,
       model: { contextWindow: 200_000 },
       getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000, percent: 45 }),
@@ -188,17 +197,12 @@ describe("/thresholds end to end", () => {
             for (const k of keys) c.handleInput(k)
           }),
       },
-    } as unknown as ExtensionCommandContext
+    }) as unknown as ExtensionCommandContext
+    return { tools, commands, branch, toolCtx, commandCtx }
   }
 
-  const toolCtx = {
-    cwd: "/work",
-    sessionManager: { getSessionId: () => "s" },
-    getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000, percent: 45 }),
-  } as unknown as ExtensionToolContext
-
-  test("applied thresholds change the cue-context-usage report until a new session", async () => {
-    const { tools, commands, handlers } = harness()
+  test("applied thresholds are recorded in the session and change the tool reports", async () => {
+    const { tools, commands, branch, toolCtx, commandCtx } = harness()
     const usage = tools.find((t) => t.name === "cue-context-usage")!
     const log = tools.find((t) => t.name === "cue-log")!
 
@@ -217,16 +221,17 @@ describe("/thresholds end to end", () => {
     const logged: any = await log.execute("id", { title: "t", context: "c" }, undefined, undefined, toolCtx)
     expect(logged.content[0].text).toContain("Context: nominal.")
 
-    handlers.session_start![0]!()
+    branch.length = 0
     const fresh: any = await usage.execute("id", {}, undefined, undefined, toolCtx)
     expect(fresh.details.caution_limit).toBe(DEFAULT_THRESHOLDS.caution)
   })
 
   test("esc leaves the thresholds unchanged", async () => {
-    const { tools, commands } = harness()
+    const { tools, commands, branch, toolCtx, commandCtx } = harness()
     const notes: string[] = []
     await commands.thresholds!.handler("", commandCtx([KEY.right, KEY.escape], notes))
     expect(notes).toEqual([])
+    expect(branch).toEqual([])
     const usage = tools.find((t) => t.name === "cue-context-usage")!
     const r: any = await usage.execute("id", {}, undefined, undefined, toolCtx)
     expect(r.details.caution_limit).toBe(DEFAULT_THRESHOLDS.caution)

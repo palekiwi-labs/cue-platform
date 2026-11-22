@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { DEFAULT_THRESHOLDS } from "./context-usage"
-import { registerSessionThresholds, SessionThresholds, thresholdsError } from "./session-thresholds"
+import {
+  sessionThresholds,
+  setSessionThresholds,
+  thresholdsError,
+  thresholdsOf,
+  THRESHOLDS_TYPE,
+} from "./session-thresholds"
 
 describe("thresholdsError", () => {
   test("accepts the defaults with and without a window", () => {
@@ -25,34 +30,35 @@ describe("thresholdsError", () => {
   })
 })
 
-describe("SessionThresholds", () => {
-  test("starts at the defaults", () => {
-    const h = new SessionThresholds()
-    expect(h.get()).toEqual(DEFAULT_THRESHOLDS)
-    expect(h.adjusted()).toBe(false)
+describe("session thresholds in the transcript", () => {
+  const entry = (data: unknown) => ({ type: "custom", customType: THRESHOLDS_TYPE, data })
+
+  test("defaults when the branch has no thresholds entry", () => {
+    expect(sessionThresholds([])).toEqual(DEFAULT_THRESHOLDS)
+    expect(thresholdsOf({})).toEqual(DEFAULT_THRESHOLDS)
   })
 
-  test("set applies valid values and keeps old ones on error", () => {
-    const h = new SessionThresholds()
-    expect(h.set({ caution: 90_000, soft: 120_000, hard: 160_000 }, 200_000)).toBeNull()
-    expect(h.get()).toEqual({ caution: 90_000, soft: 120_000, hard: 160_000 })
-    expect(h.adjusted()).toBe(true)
-    expect(h.set({ caution: 1, soft: 2, hard: 300_000 }, 200_000)).not.toBeNull()
-    expect(h.get().hard).toBe(160_000)
+  test("the newest valid entry wins", () => {
+    const branch = [
+      entry({ caution: 90_000, soft: 120_000, hard: 160_000 }),
+      { type: "message" },
+      entry({ caution: 95_000, soft: 125_000, hard: 170_000 }),
+      entry({ caution: 5, soft: 1, hard: 2 }),
+    ]
+    expect(sessionThresholds(branch)).toEqual({ caution: 95_000, soft: 125_000, hard: 170_000 })
   })
 
-  test("get returns a copy", () => {
-    const h = new SessionThresholds()
-    h.get().caution = 1
-    expect(h.get()).toEqual(DEFAULT_THRESHOLDS)
+  test("ignores other custom types and custom messages", () => {
+    const t = { caution: 90_000, soft: 120_000, hard: 160_000 }
+    expect(sessionThresholds([{ type: "custom", customType: "cue-context", data: t }])).toEqual(DEFAULT_THRESHOLDS)
+    expect(sessionThresholds([{ type: "custom_message", customType: THRESHOLDS_TYPE, data: t }])).toEqual(DEFAULT_THRESHOLDS)
   })
 
-  test("resets on session_start", () => {
-    const handlers: Record<string, () => void> = {}
-    const pi = { on: (event: string, fn: () => void) => { handlers[event] = fn } } as unknown as ExtensionAPI
-    const h = registerSessionThresholds(pi)
-    h.set({ caution: 10, soft: 20, hard: 30 })
-    handlers.session_start!()
-    expect(h.get()).toEqual(DEFAULT_THRESHOLDS)
+  test("setSessionThresholds appends valid values only", () => {
+    const appended: [string, unknown][] = []
+    const pi = { appendEntry: (type: string, data: unknown) => appended.push([type, data]) }
+    expect(setSessionThresholds(pi, { caution: 90_000, soft: 120_000, hard: 160_000 }, 200_000)).toBeNull()
+    expect(setSessionThresholds(pi, { caution: 1, soft: 2, hard: 300_000 }, 200_000)).not.toBeNull()
+    expect(appended).toEqual([[THRESHOLDS_TYPE, { caution: 90_000, soft: 120_000, hard: 160_000 }]])
   })
 })
