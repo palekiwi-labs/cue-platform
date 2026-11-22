@@ -66,16 +66,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1793116359,
-        "narHash": "sha256-1G9DlaLqICtV9eTdZ7RwaywnFgBcypyBvX5+yuGhXjU=",
+        "lastModified": 1795364790,
+        "narHash": "sha256-CPPQ44hfQHo7oDOB9TNVdJOuqh5mTa4cZ6ysLt/M72M=",
         "owner": "palekiwi-labs",
         "repo": "cue",
-        "rev": "10a611b11dd4d160e3524b9ed6bdb14284118a4c",
+        "rev": "0a4ea05151fa37eeb0fc4423b61cded9af006b40",
         "type": "github"
       },
       "original": {
         "owner": "palekiwi-labs",
-        "ref": "feat/cue-agent-claude-harness",
+        "ref": "feat/cue-hooks",
         "repo": "cue",
         "type": "github"
       }
