@@ -1,8 +1,12 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { DEFAULT_THRESHOLDS, type Thresholds } from "../lib/context-usage"
-import { defaultThresholds } from "../lib/config"
-import { setSessionThresholds, thresholdsError, thresholdsOf } from "../lib/session-thresholds"
+import {
+  resolveThresholds,
+  setSessionThresholds,
+  thresholdsError,
+  type ThresholdsSource,
+} from "../lib/session-thresholds"
 
 /** Context window assumed when the model does not report one. */
 export const FALLBACK_WINDOW = 200_000
@@ -28,6 +32,8 @@ export interface PopupState {
   thresholds: Thresholds
   /** What `r` resets to: the configured defaults. */
   defaults?: Thresholds
+  /** Where the shown values come from. */
+  source?: ThresholdsSource
   contextWindow: number
   /** Provider-reported context tokens; null when unknown. */
   tokens: number | null
@@ -35,6 +41,13 @@ export interface PopupState {
 
 /** Outcome of a key press: apply the edited values, cancel, or keep editing. */
 export type PopupResult = { kind: "apply"; thresholds: Thresholds } | { kind: "cancel" }
+
+/** Human label of a thresholds source. */
+export function sourceLabel(source: ThresholdsSource): string {
+  if (source.kind === "session") return "session"
+  if (source.kind === "mode") return `mode ${source.mode}`
+  return source.kind
+}
 
 function fmt(n: number): string {
   return n.toLocaleString("en-US")
@@ -137,7 +150,8 @@ export class ThresholdsPopup implements Component {
       ? "unknown"
       : `${fmt(tokens)} (${pct(tokens, contextWindow)})`
     const rows = [
-      t.fg("dim", `window ${fmt(contextWindow)} · usage ${usage}`),
+      t.fg("dim", `window ${fmt(contextWindow)} · usage ${usage}` +
+        (this.state.source ? ` · from ${sourceLabel(this.state.source)}` : "")),
       ...this.bar(inner),
       "",
     ]
@@ -173,11 +187,13 @@ export class ThresholdsPopup implements Component {
 }
 
 /** Popup state for a command context: model window (or the fallback) and provider usage. */
-export function popupState(ctx: ExtensionCommandContext, thresholds: Thresholds): PopupState {
+export function popupState(ctx: ExtensionCommandContext): PopupState {
   const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined
+  const { thresholds, defaults, source } = resolveThresholds(ctx)
   return {
     thresholds,
-    defaults: defaultThresholds(),
+    defaults,
+    source,
     contextWindow: ctx.model?.contextWindow || FALLBACK_WINDOW,
     tokens: usage?.tokens ?? null,
   }
@@ -202,7 +218,7 @@ export function applyResult(
 
 async function openThresholds(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
   if (!ctx.hasUI) return
-  const state = popupState(ctx, thresholdsOf(ctx))
+  const state = popupState(ctx)
   const result = await ctx.ui.custom<PopupResult>(
     (tui, theme, _kb, done) => {
       const popup = new ThresholdsPopup(theme, state)

@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { defaultThresholds } from "./config"
+import { type DefaultsSource, resolveDefaults } from "./config"
+import { contextMode } from "./context-mode"
+import { currentContext } from "./current-context"
 import { DEFAULT_THRESHOLDS, type Thresholds } from "./context-usage"
 
 /** Why a set of thresholds was rejected, or null when it is valid. */
@@ -24,6 +26,7 @@ interface BranchEntry {
   type: string
   customType?: string
   data?: unknown
+  details?: unknown
 }
 
 /**
@@ -35,14 +38,7 @@ export function sessionThresholds(
   branch: readonly BranchEntry[],
   defaults: Thresholds = DEFAULT_THRESHOLDS,
 ): Thresholds {
-  for (let i = branch.length - 1; i >= 0; i--) {
-    const e = branch[i]!
-    if (e.type !== "custom" || e.customType !== THRESHOLDS_TYPE) continue
-    const d = e.data as Partial<Thresholds> | undefined
-    const t = { caution: d?.caution, soft: d?.soft, hard: d?.hard } as Thresholds
-    if (thresholdsError(t) === null) return t
-  }
-  return { ...defaults }
+  return sessionEntry(branch) ?? { ...defaults }
 }
 
 /** Anything exposing the session branch, e.g. a tool or command context. */
@@ -50,10 +46,46 @@ export interface HasSession {
   sessionManager?: { getBranch?: () => readonly BranchEntry[] }
 }
 
+/** Where a session's effective thresholds come from. */
+export type ThresholdsSource = { kind: "session" } | DefaultsSource
+
+/** The session's mode: the `mode:` of its linked cue context, if any. */
+export function sessionMode(branch: readonly BranchEntry[]): string | undefined {
+  const address = currentContext(branch)
+  return address === undefined ? undefined : contextMode(address)
+}
+
+function sessionEntry(branch: readonly BranchEntry[]): Thresholds | undefined {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const e = branch[i]!
+    if (e.type !== "custom" || e.customType !== THRESHOLDS_TYPE) continue
+    const d = e.data as Partial<Thresholds> | undefined
+    const t = { caution: d?.caution, soft: d?.soft, hard: d?.hard } as Thresholds
+    if (thresholdsError(t) === null) return t
+  }
+  return undefined
+}
+
+function branchOf(ctx: HasSession): readonly BranchEntry[] {
+  return typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : []
+}
+
+/** The effective thresholds of a session, the defaults for its mode, and their source. */
+export function resolveThresholds(ctx: HasSession): {
+  thresholds: Thresholds
+  defaults: Thresholds
+  source: ThresholdsSource
+} {
+  const branch = branchOf(ctx)
+  const d = resolveDefaults(sessionMode(branch))
+  const own = sessionEntry(branch)
+  if (own) return { thresholds: own, defaults: d.thresholds, source: { kind: "session" } }
+  return { thresholds: d.thresholds, defaults: d.thresholds, source: d.source }
+}
+
 /** The effective thresholds of the session behind a context. */
 export function thresholdsOf(ctx: HasSession): Thresholds {
-  const branch = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : []
-  return sessionThresholds(branch, defaultThresholds())
+  return resolveThresholds(ctx).thresholds
 }
 
 /** Validate and record thresholds in the session; returns the validation error, if any. */

@@ -7,7 +7,13 @@ import { thresholdsError } from "./session-thresholds"
 
 /** Settings read from `cue-platform.json`, with built-in values filled in. */
 export interface CuePlatformConfig {
-  context: { thresholds: Thresholds }
+  context: {
+    thresholds: Thresholds
+    /** Whether `context.thresholds` came from the file rather than the built-ins. */
+    configured: boolean
+    /** Complete thresholds per session mode, missing fields filled from the global ones. */
+    modes: Record<string, Thresholds>
+  }
 }
 
 /** A loaded config and the problems found while reading it. */
@@ -23,7 +29,7 @@ export function configPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 function builtIn(): CuePlatformConfig {
-  return { context: { thresholds: { ...DEFAULT_THRESHOLDS } } }
+  return { context: { thresholds: { ...DEFAULT_THRESHOLDS }, configured: false, modes: {} } }
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -45,20 +51,50 @@ export function parseConfig(text: string): LoadedConfig {
   if (context === undefined) return { config, warnings }
   if (!isObject(context)) return { config, warnings: ["context must be an object"] }
   const t = context.thresholds
-  if (t === undefined) return { config, warnings }
-  if (!isObject(t)) return { config, warnings: ["context.thresholds must be an object"] }
+  if (t !== undefined) {
+    if (!isObject(t)) warnings.push("context.thresholds must be an object")
+    else {
+      const merged = mergeThresholds(config.context.thresholds, t, "context.thresholds", warnings)
+      const error = thresholdsError(merged)
+      if (error !== null) warnings.push(`context.thresholds: ${error}; using the built-in defaults`)
+      else {
+        config.context.thresholds = merged
+        config.context.configured = true
+      }
+    }
+  }
+  const modes = context.modes
+  if (modes === undefined) return { config, warnings }
+  if (!isObject(modes)) return { config, warnings: [...warnings, "context.modes must be an object"] }
+  for (const [mode, entry] of Object.entries(modes)) {
+    const where = `context.modes.${mode}.thresholds`
+    const mt = isObject(entry) ? entry.thresholds : undefined
+    if (!isObject(mt)) {
+      warnings.push(`${where} must be an object`)
+      continue
+    }
+    const merged = mergeThresholds(config.context.thresholds, mt, where, warnings)
+    const error = thresholdsError(merged)
+    if (error !== null) warnings.push(`${where}: ${error}; using the global defaults`)
+    else config.context.modes[mode] = merged
+  }
+  return { config, warnings }
+}
 
-  const merged = { ...config.context.thresholds }
+function mergeThresholds(
+  base: Thresholds,
+  t: Record<string, unknown>,
+  where: string,
+  warnings: string[],
+): Thresholds {
+  const merged = { ...base }
   for (const key of ["caution", "soft", "hard"] as const) {
     const v = t[key]
     if (v === undefined) continue
     if (typeof v === "number" && Number.isInteger(v) && v > 0) merged[key] = v
-    else warnings.push(`context.thresholds.${key} must be a positive whole token count`)
+    else warnings.push(`${where}.${key} must be a positive whole token count`)
   }
-  const error = thresholdsError(merged)
-  if (error !== null) warnings.push(`context.thresholds: ${error}; using the built-in defaults`)
-  else config.context.thresholds = merged
-  return { config, warnings }
+  return merged
 }
 
 /** Read the config file; a missing file yields the built-in config without warnings. */
@@ -80,9 +116,20 @@ export function config(): CuePlatformConfig {
   return current
 }
 
-/** The default thresholds new sessions start from. */
-export function defaultThresholds(): Thresholds {
-  return { ...current.context.thresholds }
+/** Where a set of default thresholds comes from. */
+export type DefaultsSource = { kind: "mode"; mode: string } | { kind: "config" } | { kind: "built-in" }
+
+/** The default thresholds for a session in `mode`, and where they come from. */
+export function resolveDefaults(mode?: string): { thresholds: Thresholds; source: DefaultsSource } {
+  const c = current.context
+  const byMode = mode === undefined ? undefined : Object.hasOwn(c.modes, mode) ? c.modes[mode] : undefined
+  if (byMode) return { thresholds: { ...byMode }, source: { kind: "mode", mode: mode! } }
+  return { thresholds: { ...c.thresholds }, source: { kind: c.configured ? "config" : "built-in" } }
+}
+
+/** The default thresholds new sessions start from, for an optional session mode. */
+export function defaultThresholds(mode?: string): Thresholds {
+  return resolveDefaults(mode).thresholds
 }
 
 /** Reload the config on every session start (incl. /reload) and report problems. */
