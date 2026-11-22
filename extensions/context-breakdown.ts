@@ -141,7 +141,7 @@ export default function (pi: ExtensionAPI) {
       })
       const lines = [
         "== breakdown ==",
-        ...formatBreakdown(report, { top: 5, barWidth: 16 }),
+        ...formatBreakdown(report, { top: 5, barWidth: 20 }),
         "",
         "== cache ==",
         ...formatCache(report, { turns: 15, misses: 8 }),
