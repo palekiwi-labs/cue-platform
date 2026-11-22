@@ -3,6 +3,7 @@ import type { NatsConnection, Subscription } from "@nats-io/transport-node"
 import { currentContext } from "../pi/lib/current-context"
 import { createNatsClient, type NatsClient, type NatsClientOptions } from "./client"
 import { isContextAddress, operatorSubject, parseOperatorEvent, PendingOperatorChanges } from "./operator-events"
+import { parseStoreEvent, storeEventLine, storeSubject } from "./store-events"
 
 export function registerOperatorEvents(
   pi: ExtensionAPI,
@@ -12,6 +13,8 @@ export function registerOperatorEvents(
   let context: string | undefined
   let connection: NatsConnection | undefined
   let subscription: Subscription | undefined
+  let storeSubscription: Subscription | undefined
+  let sessionId: string | undefined
   let client: NatsClient | undefined
   let ui: ExtensionContext["ui"] | undefined
   let statusTimer: ReturnType<typeof setInterval> | undefined
@@ -24,8 +27,22 @@ export function registerOperatorEvents(
   function subscribe(): void {
     subscription?.unsubscribe()
     subscription = undefined
+    storeSubscription?.unsubscribe()
+    storeSubscription = undefined
     if (!context || !connection || connection.isClosed()) return
     const linked = context
+    const store = connection.subscribe(storeSubject(linked), {
+      callback: (error, message) => {
+        if (error || storeSubscription !== store || context !== linked) return
+        try {
+          const event = parseStoreEvent(message.json(), linked)
+          if (!event || message.subject !== storeSubject(linked, event.event)) return
+          if (sessionId && event.origin_session === sessionId) return
+          pending.addStoreEvent(event.event_id, storeEventLine(event, linked))
+        } catch {}
+      },
+    })
+    storeSubscription = store
     const sub = connection.subscribe(operatorSubject(linked, ">"), {
       callback: (error, message) => {
         if (error || subscription !== sub || context !== linked || message.subject !== operatorSubject(linked)) return
@@ -52,6 +69,7 @@ export function registerOperatorEvents(
   pi.on("session_start", (_event, ctx) => {
     active = true
     ui = ctx.hasUI ? ctx.ui : undefined
+    sessionId = ctx.sessionManager.getSessionId()
     context = undefined
     pending.clear()
     client = factory({
@@ -85,6 +103,8 @@ export function registerOperatorEvents(
     if (statusTimer) clearInterval(statusTimer)
     subscription?.unsubscribe()
     subscription = undefined
+    storeSubscription?.unsubscribe()
+    storeSubscription = undefined
     connection = undefined
     context = undefined
     pending.clear()
