@@ -66,27 +66,23 @@ export function parseStoreEvent(value: unknown, context: string): StoreEvent | u
   return e as unknown as StoreEvent
 }
 
-function clean(text: string | null | undefined): string | undefined {
+function clean(text: string | undefined): string | undefined {
   if (text == null) return
   const flat = text.replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ").replace(/<\/?session-events/gi, "session-events").trim()
   if (!flat) return
   return flat.length > TITLE_SHOWN ? `${flat.slice(0, TITLE_SHOWN - 3)}...` : flat
 }
 
-export function storeEventLine(event: StoreEvent, context: string): string {
-  const tag = `[${event.actor ?? "cue"}]`
-  const title = clean(event.title)
-  const relative = event.address.slice(context.length + 1)
-  if (event.event === "context_create") {
-    const slug = event.address.slice(event.address.lastIndexOf("/") + 1)
-    return `${tag} context ${slug} created${title ? `: ${title}` : ""}`
-  }
-  if (event.event === "log_entry_add") return `${tag} log: ${title ?? relative}`
-  if (event.event === "artifact_update") {
-    const summary = clean(event.summary)
-    return `${tag} ${relative} updated${summary ? `: ${summary}` : title ? `: ${title}` : ""}`
-  }
-  return `${tag} ${relative} created${title ? `: ${title}` : ""}`
+const VERBS: Record<StoreEventName, string> = {
+  artifact_create: "created",
+  artifact_update: "updated",
+  context_create: "created",
+  log_entry_add: "logged",
+}
+
+export function storeEventLine(event: StoreEvent): string {
+  const summary = event.event === "artifact_update" ? clean(event.summary) : undefined
+  return `[${event.actor ?? "cue"}] ${VERBS[event.event]}: ${event.address}${summary ? ` (${summary})` : ""}`
 }
 
 export class PendingEvents {

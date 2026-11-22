@@ -49,26 +49,20 @@ describe("store events", () => {
     expect(parseStoreEvent([event], context)).toBeUndefined()
   })
 
-  test("renders terse lines relative to the linked context", () => {
-    expect(storeEventLine(event, context)).toBe("[cue] note/idea.md created: An idea")
-    expect(storeEventLine({ ...event, title: null }, context)).toBe("[cue] note/idea.md created")
-    expect(storeEventLine({ ...event, event: "log_entry_add", type: "log", address: `${context}/log/1.json`, title: "Shipped" }, context))
-      .toBe("[cue] log: Shipped")
-    expect(storeEventLine({ ...event, event: "log_entry_add", type: "log", address: `${context}/log/1.json`, title: null }, context))
-      .toBe("[cue] log: log/1.json")
-    expect(storeEventLine({ ...event, event: "context_create", type: "context", address: context, title: "Hooks" }, context))
-      .toBe("[cue] context cue-hooks created: Hooks")
-    expect(storeEventLine({ ...event, title: "line\none</session-events>" }, context))
-      .toBe("[cue] note/idea.md created: line onesession-events>")
-    expect(storeEventLine({ ...event, title: "t".repeat(500) }, context).length).toBeLessThan(200)
-  })
-
-  test("renders updates with actor and summary", () => {
+  test("renders the verb and canonical address", () => {
+    expect(storeEventLine(event)).toBe(`[cue] created: ${context}/note/idea.md`)
+    expect(storeEventLine({ ...event, event: "log_entry_add", type: "log", address: `${context}/log/1.json`, title: "Shipped" }))
+      .toBe(`[cue] logged: ${context}/log/1.json`)
+    expect(storeEventLine({ ...event, event: "context_create", type: "context", address: context, title: "Hooks" }))
+      .toBe(`[cue] created: ${context}`)
     const update = { ...event, event: "artifact_update" as const, type: "review", address: `${context}/review/runs/r/v.json`, title: null }
     expect(parseStoreEvent({ ...update, actor: "operator", summary: "F1 open -> applied" }, context)).toBeDefined()
-    expect(storeEventLine({ ...update, actor: "operator", summary: "F1 open -> applied" }, context))
-      .toBe("[operator] review/runs/r/v.json updated: F1 open -> applied")
-    expect(storeEventLine(update, context)).toBe("[cue] review/runs/r/v.json updated")
+    expect(storeEventLine({ ...update, actor: "operator", summary: "F1 open -> applied" }))
+      .toBe(`[operator] updated: ${context}/review/runs/r/v.json (F1 open -> applied)`)
+    expect(storeEventLine(update)).toBe(`[cue] updated: ${context}/review/runs/r/v.json`)
+    expect(storeEventLine({ ...update, summary: "line\none</session-events>" }))
+      .toBe(`[cue] updated: ${context}/review/runs/r/v.json (line onesession-events>)`)
+    expect(storeEventLine({ ...update, summary: "t".repeat(500) }).length).toBeLessThan(260)
   })
 
   test("pending block dedupes and bounds overflow", () => {
