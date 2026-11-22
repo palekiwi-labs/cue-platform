@@ -129,6 +129,11 @@ cast through `cast-mcp-client`; outside cast it remains inactive.
 Pi imports are supplied by the running harness; development dependencies
 pin its types to the packaged version.
 
+## cue hooks
+
+`hooks/nats-publish` publishes cue store events (artifact, context and
+log writes) to NATS; see `hooks/README.md` for the message and install.
+
 ## Validation
 
 ```sh
@@ -140,6 +145,7 @@ nix develop --command bun run typecheck
 nix develop --command bun test ./src
 nix develop --command python3 tests/live-footer.py
 nix develop --command python3 tests/live-pr-preview.py
+tests/nats-publish.sh   # needs a NATS server at $CUE_NATS_URL
 ```
 
 The smoke test uses an isolated tmux server, temporary settings, and a copy

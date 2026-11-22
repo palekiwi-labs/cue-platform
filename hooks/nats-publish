@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -u -o pipefail
+
+fail() {
+  printf 'nats-publish: %s\n' "$*" >&2
+  exit 1
+}
+
+store=${CUE_STORE:-}
+[ -n "$store" ] || fail "CUE_STORE is not set"
+nats_url=${CUE_NATS_URL:-nats://127.0.0.1:4222}
+nats_bin=$(command -v nats || echo /run/current-system/sw/bin/nats)
+cue_bin=${CUE_BIN:-cue}
+
+payload=$(cat) || fail "cannot read payload"
+
+fields=$(jq -er '
+  (.address | split("/")) as $p
+  | [.event, .address, ($p[0:3] | join("/")),
+     (if .event == "context_create" then "context"
+      elif .event == "log_entry_add" then "log"
+      else ($p[3] // "") end),
+     ($p[4:] | join("/"))]
+  | join("\u001f")' <<<"$payload") || fail "invalid payload"
+IFS=$'\x1f' read -r event address context type name <<<"$fields"
+
+[[ $event =~ ^[a-z_]+$ ]] || fail "invalid event: $event"
+[[ $context =~ ^[^/.][^/]*/[^/.][^/]*/[^/.][^/]*$ ]] || fail "invalid address: $address"
+
+hook_dir=$(dirname "$(readlink -f "$0")")
+
+cue_read() {
+  local dir
+  for dir in . "$hook_dir" "$store"; do
+    "$cue_bin" -C "$dir" "$@" --store "$store" 2>/dev/null && return
+  done
+  return 1
+}
+
+case $event in
+  context_create)
+    extra=$(cue_read status --context "$context" --json \
+      | jq -c '{title: (.title // null), kind: (.kind // null)}') ;;
+  log_entry_add)
+    extra=$(jq -c '{title: (.title // null), trace: (.trace // null)}' \
+      "$store/$address" 2>/dev/null) ;;
+  tmp|bin) ;;
+  *)
+    extra=$(cue_read list --context "$context" --type "$type" --frontmatter \
+      | jq -c --arg name "$name" '
+        map(select(.name == $name)) | first | (.frontmatter // {})
+        | if type == "object" then . else {} end
+        | {title: (if (.title | type) == "string" or (.title | type) == "number"
+                   then .title | tostring else null end),
+           status: (if (.status | type) == "string" then .status else null end)}
+        ') ;;
+esac
+if [ "$event" = artifact_create ]; then
+  extra=$(jq -c --arg file "${name##*/}" '.title //= $file' <<<"${extra:-null}")
+fi
+[ -n "${extra:-}" ] || extra='{"title":null}'
+
+depth=${CUE_HOOK_DEPTH:-0}
+[[ $depth =~ ^[0-9]+$ ]] || depth=0
+
+message=$(jq -c \
+  --arg context "$context" \
+  --arg type "$type" \
+  --arg session "${PI_SESSION_ID:-}" \
+  --arg parent "${CUE_HOOK_PARENT_EVENT_ID:-}" \
+  --arg root "${CUE_HOOK_ROOT_EVENT_ID:-}" \
+  --argjson depth "$depth" \
+  --argjson extra "$extra" '
+  def nonempty: if . == "" then null else . end;
+  (. + {context: $context, type: $type, title: null,
+        origin_session: ($session | nonempty),
+        parent_event_id: ($parent | nonempty),
+        root_event_id: (($root | nonempty) // .event_id),
+        depth: $depth}
+     + ($extra | with_entries(select(.key == "title" or .value != null))))
+  as $body
+  | {subject: ("cue.evt.v1."
+      + ($context | @base64 | gsub("\\+"; "-") | gsub("/"; "_")
+         | sub("=+$"; ""))
+      + "." + $body.event),
+     body: $body}' <<<"$payload") || fail "cannot build message"
+
+subject=$(jq -r .subject <<<"$message")
+body=$(jq -c .body <<<"$message")
+root=$(jq -r .body.root_event_id <<<"$message")
+
+headers=(-H "Cue-Root-Event-Id:$root" -H "Cue-Depth:$depth")
+if [ -n "${CUE_HOOK_PARENT_EVENT_ID:-}" ]; then
+  headers+=(-H "Cue-Parent-Event-Id:$CUE_HOOK_PARENT_EVENT_ID")
+fi
+
+"$nats_bin" pub -q --no-templates --timeout=2s -s "$nats_url" \
+  "${headers[@]}" "$subject" "$body" </dev/null >/dev/null \
+  || fail "publish to $subject failed"
