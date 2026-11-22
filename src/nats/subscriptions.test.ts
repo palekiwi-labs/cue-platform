@@ -58,7 +58,7 @@ test("status and listing formats", () => {
   ].join("\n"))
 })
 
-test.skipIf(!natsServerBin)("store events reach the linked session once, without echoes, and are counted", async () => {
+test.skipIf(!natsServerBin)("store events reach the linked session once, including the session's own writes, and are counted", async () => {
   const server = await startJetStreamServer()
   const a = "org/repo/hooks"
   const b = "org/repo/other"
@@ -86,7 +86,7 @@ test.skipIf(!natsServerBin)("store events reach the linked session once, without
     const first = event(a)
     await send(first)
     await send(first)
-    await send(event(a, { origin_session: "self-session", title: "Echo" }))
+    await send(event(a, { origin_session: "self-session", address: `${a}/note/own.md`, title: "Own" }))
     await send(event(a, { event: "log_entry_add", type: "log", address: `${a}/log/1.json`, title: "Shipped" }))
     await send(event(a, {
       event: "artifact_update", type: "review", address: `${a}/review/runs/r/v.json`, title: null,
@@ -94,7 +94,7 @@ test.skipIf(!natsServerBin)("store events reach the linked session once, without
     }))
     await send(event(a), storeSubject(a, "log_entry_add"))
     await send(event(b, { context: a }), storeSubject(b, "artifact_create"))
-    await waitFor(async () => (await self.list()).includes("events   3"))
+    await waitFor(async () => (await self.list()).includes("events   4"))
     expect(self.emit("before_agent_start", { messageType: "custom" })).toBeUndefined()
     expect(peer.emit("before_agent_start", { messageType: "user" })).toBeUndefined()
     const result = self.emit("before_agent_start", { messageType: "user" })
@@ -102,6 +102,7 @@ test.skipIf(!natsServerBin)("store events reach the linked session once, without
     expect(result.message.content).toBe([
       "<session-events>",
       "[cue] note/idea.md created: An idea",
+      "[cue] note/own.md created: Own",
       "[cue] log: Shipped",
       "[operator] review/runs/r/v.json updated: F3 open -> dismissed",
       "</session-events>",
