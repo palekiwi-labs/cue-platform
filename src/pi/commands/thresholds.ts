@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"
 import { type Component, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { DEFAULT_THRESHOLDS, type Thresholds } from "../lib/context-usage"
+import { defaultThresholds } from "../lib/config"
 import { setSessionThresholds, thresholdsError, thresholdsOf } from "../lib/session-thresholds"
 
 /** Context window assumed when the model does not report one. */
@@ -25,6 +26,8 @@ interface PopupTheme {
 /** What the popup shows: the session's thresholds against one context window. */
 export interface PopupState {
   thresholds: Thresholds
+  /** What `r` resets to: the configured defaults. */
+  defaults?: Thresholds
   contextWindow: number
   /** Provider-reported context tokens; null when unknown. */
   tokens: number | null
@@ -100,7 +103,7 @@ export class ThresholdsPopup implements Component {
     else if (matchesKey(data, "shift+right") || data === "L") this.move(FINE_STEP)
     else if (matchesKey(data, "left") || data === "h") this.move(-STEP)
     else if (matchesKey(data, "right") || data === "l") this.move(STEP)
-    else if (data === "r") this.values = { ...DEFAULT_THRESHOLDS }
+    else if (data === "r") this.values = { ...(this.state.defaults ?? DEFAULT_THRESHOLDS) }
     return undefined
   }
 
@@ -174,6 +177,7 @@ export function popupState(ctx: ExtensionCommandContext, thresholds: Thresholds)
   const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined
   return {
     thresholds,
+    defaults: defaultThresholds(),
     contextWindow: ctx.model?.contextWindow || FALLBACK_WINDOW,
     tokens: usage?.tokens ?? null,
   }

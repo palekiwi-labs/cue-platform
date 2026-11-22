@@ -19,6 +19,7 @@ import { registerThresholdsCommand } from "./commands/thresholds"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerInjectFlag } from "./inject-flag"
+import { registerConfig } from "./lib/config"
 import { thresholdsOf } from "./lib/session-thresholds"
 import { registerFooter } from "./footer"
 import { registerWelcomeHeader } from "./header"
@@ -51,6 +52,7 @@ import { delegateTool, supervisorStatusTool } from "./tools/delegate"
 export default function cuePlatform(pi: ExtensionAPI): void {
   // Registered individually: each factory yields a distinctly-typed
   // ToolDefinition, so a homogeneous loop would widen to an incompatible union.
+  registerConfig(pi)
   pi.registerTool(cueAddTool(pi))
   pi.registerTool(cueContextTool(pi))
   pi.registerTool(cueContextExploreTool(pi))
