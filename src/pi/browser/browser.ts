@@ -94,6 +94,8 @@ export interface BrowserDeps {
   setArchived(address: string, archived: boolean): Promise<string | undefined>
   /** Link a context to the session without telling the model. */
   link(address: string): Promise<void>
+  /** Why linking needs confirmation (an active task elsewhere), or undefined. */
+  linkBlocker(address: string): string | undefined
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
   editFile(path: string): Promise<void>
   /** Open a file in a new tmux window; returns an error message on failure. */
@@ -281,6 +283,8 @@ export class CueBrowser implements Component {
   /** Sessions loaded once per browser; deletes edit this copy. */
   private sessionsCache: Promise<SessionRow[]> | undefined
   private confirmDelete: SessionRow | undefined
+  /** Context awaiting confirmation to clear the active task and link. */
+  private confirmLink: { address: string; reason: string } | undefined
   /** Session being described, with its own prompt on the bottom line. */
   private describing: { session: SessionRow; input: Input } | undefined
   /** Creating a child of this context, with its own prompt on the bottom line. */
@@ -919,6 +923,7 @@ export class CueBrowser implements Component {
     if (this.busy) return
     if (this.wizard) return this.wizardInput(this.wizard, data)
     if (this.confirmDelete) return this.confirmInput(this.confirmDelete, data)
+    if (this.confirmLink) return this.confirmLinkInput(this.confirmLink.address, data)
     if (this.describing) return this.describeInput(this.describing, data)
     if (this.creating) return this.creatingInput(this.creating, data)
     const v = this.view
@@ -1394,8 +1399,25 @@ export class CueBrowser implements Component {
   private async onLink(): Promise<void> {
     const c = this.actionContext()
     if (!c) return
+    const reason = this.deps.linkBlocker(c.address)
+    if (reason) {
+      this.confirmLink = { address: c.address, reason }
+      this.tui.requestRender()
+      return
+    }
     await this.deps.link(c.address)
     this.done()
+  }
+
+  private confirmLinkInput(address: string, data: string): void {
+    if (matchesKey(data, "enter") || data === "y" || data === "Y") {
+      this.confirmLink = undefined
+      void this.deps.link(address).then(() => this.done())
+    } else if (matchesKey(data, "escape") || data === "n" || data === "N") {
+      this.confirmLink = undefined
+      this.status = ""
+    }
+    this.tui.requestRender()
   }
 
   // ---- rendering -------------------------------------------------------
@@ -1432,7 +1454,9 @@ export class CueBrowser implements Component {
     while (lines.length < height - 1) lines.push("")
     const confirm = this.confirmDelete
       ? t.fg("error", `delete session "${this.confirmDelete.description}"? y/enter confirm, n/esc cancel`)
-      : ""
+      : this.confirmLink
+        ? t.fg("warning", `${this.confirmLink.reason}: clear it and link? y/enter confirm, n/esc cancel`)
+        : ""
     const prompt = this.describing
       ? t.fg("accent", "description: ") + (this.describing.input.render(Math.max(1, width - 13))[0] ?? "").replace(/^> /, "")
       : this.creating

@@ -137,6 +137,7 @@ describe("command registration", () => {
       "mcp-cast",
       "resume-open",
       "review:run",
+      "session-task",
     ])
   })
 })

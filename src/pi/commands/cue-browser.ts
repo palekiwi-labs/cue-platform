@@ -20,6 +20,7 @@ import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browse
 import { currentContext, slugOf } from "../lib/current-context"
 import { cueBestEffort } from "./common"
 import { linkContext } from "./context-pins"
+import { currentTask, taskContextOf } from "../lib/session-task"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
 export const CONTEXTS_SHORTCUT = "ctrl+t"
@@ -322,6 +323,10 @@ export async function openBrowser(
           return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${cmd} failed`
         },
         link: (address) => linkContext(pi, ctx, address),
+        linkBlocker: (address) => {
+          const task = currentTask(ctx.sessionManager.getBranch())
+          return task && taskContextOf(task) !== address ? `active task ${slugOf(task)}` : undefined
+        },
         editFile: (path) => editInTerminal(tui, path),
         openInTmux,
         copy: copyToClipboard,

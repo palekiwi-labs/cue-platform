@@ -23,6 +23,8 @@ import { cuePlanTool } from "./tools/cue-plan"
 import { cueRecallTool } from "./tools/cue-recall"
 import { cueReviewTool } from "./tools/cue-review"
 import { cueSessionLinkTool } from "./tools/cue-session-link"
+import { cueSessionTaskTool } from "./tools/cue-session-task"
+import { registerSessionTask } from "./commands/session-task"
 import { cueTaskTool } from "./tools/cue-task"
 import { saveBranchDiffTool } from "./tools/save-branch-diff"
 import { delegateTool } from "./tools/delegate"
@@ -46,6 +48,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   pi.registerTool(cueRecallTool(pi))
   pi.registerTool(cueReviewTool(pi))
   pi.registerTool(cueSessionLinkTool(pi))
+  pi.registerTool(cueSessionTaskTool(pi))
   pi.registerTool(cueTaskTool(pi))
   pi.registerTool(saveBranchDiffTool(pi))
   pi.registerTool(delegateTool())
@@ -66,4 +69,5 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerCueSkillInjection(pi)
   registerSessionNaming(pi)
   registerSessionLabel(pi)
+  registerSessionTask(pi)
 }
