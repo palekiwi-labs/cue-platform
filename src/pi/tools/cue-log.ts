@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
+import type { HasSession } from "../lib/session-thresholds"
 import { contextFlag, dirFlag, storeFlag } from "../lib/cue-args"
 import { runCue } from "../lib/cue-exec"
 import { buildReport, contextNote, type Thresholds } from "../lib/context-usage"
@@ -89,7 +90,7 @@ function contextStateLine(
 
 export function cueLogTool(
   pi: ExtensionAPI,
-  thresholds: () => Thresholds,
+  thresholds: (ctx: HasSession) => Thresholds,
 ): ToolDefinition<typeof parameters> {
   return {
     name: "cue-log",
@@ -119,7 +120,7 @@ export function cueLogTool(
         return runCue(pi, ["log", "add", ...flags, "--file", tempPath], ctx.cwd)
       })
 
-      const note = contextStateLine(ctx, thresholds())
+      const note = contextStateLine(ctx, thresholds(ctx))
       const text = note
         ? `Logged milestone: ${args.title}\n${note}`
         : `Logged milestone: ${args.title}`

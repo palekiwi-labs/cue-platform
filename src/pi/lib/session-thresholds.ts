@@ -15,39 +15,50 @@ export function thresholdsError(t: Thresholds, contextWindow?: number): string |
   return null
 }
 
-/** In-memory saturation thresholds for the current session. */
-export class SessionThresholds {
-  private current: Thresholds = { ...DEFAULT_THRESHOLDS }
+/** Custom entry type carrying the session's thresholds in its `data`. */
+export const THRESHOLDS_TYPE = "cue-thresholds"
 
-  /** The effective thresholds. */
-  get(): Thresholds {
-    return { ...this.current }
-  }
-
-  /** Whether the effective thresholds differ from the defaults. */
-  adjusted(): boolean {
-    const t = this.current
-    return t.caution !== DEFAULT_THRESHOLDS.caution ||
-      t.soft !== DEFAULT_THRESHOLDS.soft ||
-      t.hard !== DEFAULT_THRESHOLDS.hard
-  }
-
-  /** Replace the thresholds; returns the validation error and keeps the old values when invalid. */
-  set(t: Thresholds, contextWindow?: number): string | null {
-    const error = thresholdsError(t, contextWindow)
-    if (error === null) this.current = { caution: t.caution, soft: t.soft, hard: t.hard }
-    return error
-  }
-
-  /** Restore the defaults. */
-  reset(): void {
-    this.current = { ...DEFAULT_THRESHOLDS }
-  }
+/** Minimal entry shape read from `sessionManager.getBranch()`. */
+interface BranchEntry {
+  type: string
+  customType?: string
+  data?: unknown
 }
 
-/** A thresholds holder that resets to the defaults whenever a session starts. */
-export function registerSessionThresholds(pi: ExtensionAPI): SessionThresholds {
-  const holder = new SessionThresholds()
-  pi.on("session_start", () => holder.reset())
-  return holder
+/**
+ * The thresholds most recently set on the branch, or the defaults when
+ * none is set. The session history is the only state store, so resume,
+ * fork and tree navigation follow it.
+ */
+export function sessionThresholds(branch: readonly BranchEntry[]): Thresholds {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const e = branch[i]!
+    if (e.type !== "custom" || e.customType !== THRESHOLDS_TYPE) continue
+    const d = e.data as Partial<Thresholds> | undefined
+    const t = { caution: d?.caution, soft: d?.soft, hard: d?.hard } as Thresholds
+    if (thresholdsError(t) === null) return t
+  }
+  return { ...DEFAULT_THRESHOLDS }
+}
+
+/** Anything exposing the session branch, e.g. a tool or command context. */
+export interface HasSession {
+  sessionManager?: { getBranch?: () => readonly BranchEntry[] }
+}
+
+/** The effective thresholds of the session behind a context. */
+export function thresholdsOf(ctx: HasSession): Thresholds {
+  const branch = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : []
+  return sessionThresholds(branch)
+}
+
+/** Validate and record thresholds in the session; returns the validation error, if any. */
+export function setSessionThresholds(
+  pi: Pick<ExtensionAPI, "appendEntry">,
+  t: Thresholds,
+  contextWindow?: number,
+): string | null {
+  const error = thresholdsError(t, contextWindow)
+  if (error === null) pi.appendEntry(THRESHOLDS_TYPE, { caution: t.caution, soft: t.soft, hard: t.hard })
+  return error
 }

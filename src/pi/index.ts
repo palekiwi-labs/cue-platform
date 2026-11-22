@@ -19,7 +19,7 @@ import { registerThresholdsCommand } from "./commands/thresholds"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
 import { registerInjectFlag } from "./inject-flag"
-import { registerSessionThresholds } from "./lib/session-thresholds"
+import { thresholdsOf } from "./lib/session-thresholds"
 import { registerFooter } from "./footer"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
@@ -51,13 +51,11 @@ import { delegateTool, supervisorStatusTool } from "./tools/delegate"
 export default function cuePlatform(pi: ExtensionAPI): void {
   // Registered individually: each factory yields a distinctly-typed
   // ToolDefinition, so a homogeneous loop would widen to an incompatible union.
-  const thresholds = registerSessionThresholds(pi)
-  const effective = () => thresholds.get()
   pi.registerTool(cueAddTool(pi))
   pi.registerTool(cueContextTool(pi))
   pi.registerTool(cueContextExploreTool(pi))
-  pi.registerTool(cueContextUsageTool(effective))
-  pi.registerTool(cueLogTool(pi, effective))
+  pi.registerTool(cueContextUsageTool(thresholdsOf))
+  pi.registerTool(cueLogTool(pi, thresholdsOf))
   pi.registerTool(cuePlanTool(pi))
   pi.registerTool(cueRecallTool(pi))
   pi.registerTool(cueReviewTool(pi))
@@ -82,12 +80,12 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerIdeaCommand(pi)
   registerReviewRunCommand(pi)
   registerReviewMissCommand(pi)
-  registerThresholdsCommand(pi, thresholds)
+  registerThresholdsCommand(pi)
   registerAcuityListener(pi)
   registerActivityRecording(pi)
   registerCompactionTrigger(pi)
   registerStoreCommit(pi)
-  registerFooter(pi, effective)
+  registerFooter(pi, thresholdsOf)
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)
