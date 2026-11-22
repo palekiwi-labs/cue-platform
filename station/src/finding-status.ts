@@ -1,11 +1,18 @@
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { FINDING_STATUSES, isFindingStatus, operatorSubject, type FindingStatus, type FindingStatusChanged } from "../../src/nats/operator-events.js";
+import { storeSubject, type StoreEvent } from "../../src/nats/store-events.js";
 import { loadRun, runDir, type Finding, type FindingsRun } from "./findings.js";
 import type { PopupContent } from "./popup.js";
 
-export type PublishFindingStatus = (subject: string, event: FindingStatusChanged) => boolean;
+export const FINDING_STATUSES = ["open", "applied", "dismissed"] as const;
+export type FindingStatus = typeof FINDING_STATUSES[number];
+
+export function isFindingStatus(value: unknown): value is FindingStatus {
+  return FINDING_STATUSES.includes(value as FindingStatus);
+}
+
+export type PublishFindingStatus = (subject: string, event: StoreEvent) => boolean;
 export type ShowStatusPopup = (content: PopupContent, dismissable: boolean, keys?: Record<string, () => void>) => void;
 
 export function saveFindingStatus(
@@ -37,10 +44,13 @@ export function saveFindingStatus(
   const context = run.address.replace(/\/+$/, "").split("/").slice(0, 3).join("/");
   let published = false;
   try {
-    published = publish(operatorSubject(context), {
-      v: 1, ts: new Date().toISOString(), context,
-      artifact_address: `${run.address.replace(/\/+$/, "")}/${run.source}`,
-      finding_id: findingId, old_status: oldStatus, new_status: status, actor: "operator",
+    const id = randomUUID();
+    published = publish(storeSubject(context, "artifact_update"), {
+      v: 1, event: "artifact_update", event_id: id,
+      address: `${run.address.replace(/\/+$/, "")}/${run.source}`,
+      occurred_at: new Date().toISOString(), context, type: "review", title: null,
+      origin_session: null, parent_event_id: null, root_event_id: id, depth: 0,
+      actor: "operator", summary: `${findingId} ${oldStatus ?? "unset"} -> ${status}`,
     });
   } catch {}
   return { run: loadRun(run.address, store), published };

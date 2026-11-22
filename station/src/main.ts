@@ -161,7 +161,7 @@ interface Screen extends Component {
 }
 
 class Router {
-  readonly publisher = createNatsClient({ name: "review station operator events" });
+  readonly publisher = createNatsClient({ name: "review station" });
   readonly tui = new TuiAltScreen(new ProcessTerminal());
   private screen: Screen | null = null;
   private popup: { handles: OverlayHandle[]; dismissable: boolean; keys: Record<string, () => void> } | null = null;
