@@ -6,6 +6,7 @@ import {
   getSelectListTheme,
 } from "@earendil-works/pi-coding-agent"
 import { Editor, matchesKey } from "@earendil-works/pi-tui"
+import { copyText } from "../turn-reader/chunks"
 import { appendReply, replyText, TurnComments } from "../turn-reader/comments"
 import { latestTurnKey, latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
 import {
@@ -154,7 +155,7 @@ export async function openTurnReader(
           else if (data === COPY_KEY) {
             const text = reader.focusedSource()
             if (text !== undefined) {
-              void copyChunk(ctx, text, copy).then((flash) => {
+              void copyChunk(ctx, copyText(text), copy).then((flash) => {
                 reader.showFlash(flash)
                 tui.requestRender()
               })

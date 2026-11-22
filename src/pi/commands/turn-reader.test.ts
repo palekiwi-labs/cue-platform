@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { setKittyProtocolActive } from "@earendil-works/pi-tui"
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { type ExtensionAPI, type ExtensionContext, initTheme } from "@earendil-works/pi-coding-agent"
 import type { SpeakResult } from "../speech"
 import { COPY_KEY } from "../turn-reader/reader"
 import { openTurnReader, READER_SHORTCUT, READER_SPEAK_KEY, registerTurnReader } from "./turn-reader"
+
+initTheme("dark", false)
 
 const CTRL_U = "\x15"
 const ESC = "\x1b"
@@ -432,6 +434,15 @@ describe("copying from the reader", () => {
     expect(c.copied).toEqual(["two", "three"])
     expect(notes).toEqual(["Copied the focused chunk", "Copied the focused chunk"])
     expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("y copies a code block chunk without its fences", async () => {
+    const text = "Run:\n\n```\nbun run context --latest\n```"
+    const { ctx, keys } = fakeCtx([turn[0], { type: "message", message: { role: "assistant", content: [{ type: "text", text }] } }])
+    const c = clipboard()
+    keys.push(COPY_KEY, "j", COPY_KEY, "q")
+    await openTurnReader(ctx, undefined, c.copy)
+    expect(c.copied).toEqual(["Run:", "bun run context --latest"])
   })
 
   test("y does nothing with focus off", async () => {
