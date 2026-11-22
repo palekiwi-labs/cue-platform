@@ -22,6 +22,8 @@ import type {
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const RIGHT_STATUS_KEY = "plan-usage";
+// Session context and active task, shown right after the context tokens.
+const SESSION_KEY = "cue-session";
 
 function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
@@ -146,13 +148,11 @@ export function registerFooter(pi: ExtensionAPI, thresholds: (ctx: HasSession) =
           const model = ctx.model;
           const dim = (s: string) => theme.fg("dim", s);
 
-          // Line 1: cwd (branch) • session    ...    (provider) model • level
+          // Line 1: cwd (branch)    ...    (provider) model • level
           const cwd = ctx.sessionManager.getCwd();
           let pwd = formatCwd(cwd, process.env.HOME);
           const branch = footerData.getGitBranch();
           if (branch) pwd = `${pwd} (${branch})`;
-          const name = ctx.sessionManager.getSessionName();
-          const nameSuffix = name ? ` • ${name}` : "";
 
           const modelName = model?.id || "no-model";
           let modelText = modelName;
@@ -174,9 +174,7 @@ export function registerFooter(pi: ExtensionAPI, thresholds: (ctx: HasSession) =
           const repo = address ? cwdScope(cwd) : undefined;
           const drifted = repo !== undefined && repo !== scopeOf(address!);
           const speaking = speechActive(statuses.get(SPEECH_STATUS_KEY));
-          const left1 =
-            (drifted ? theme.fg("error", pwd) : dim(pwd)) +
-            (speaking && nameSuffix ? theme.fg("warning", nameSuffix) : dim(nameSuffix));
+          const left1 = drifted ? theme.fg("error", pwd) : dim(pwd);
           // Marker sits in front of the (provider) model part.
           const pre = mcp ? `${mcp} ` : "";
           const right1 = pre + dim(withProvider);
@@ -211,7 +209,10 @@ export function registerFooter(pi: ExtensionAPI, thresholds: (ctx: HasSession) =
           }
 
           const others = Array.from(statuses.entries())
-            .filter(([k]) => k !== RIGHT_STATUS_KEY && k !== MCP_KEY && k !== SPEECH_STATUS_KEY)
+            .filter(
+              ([k]) =>
+                k !== RIGHT_STATUS_KEY && k !== MCP_KEY && k !== SPEECH_STATUS_KEY && k !== SESSION_KEY,
+            )
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([k, t]) => styleStatus(k, sanitizeStatusText(t), theme));
           const right = statuses.get(RIGHT_STATUS_KEY) ?? "";
@@ -221,6 +222,11 @@ export function registerFooter(pi: ExtensionAPI, thresholds: (ctx: HasSession) =
               tokenParts.length ? dim(tokenParts.join(" ")) : "",
               withCost && cost ? dim(cost) : "",
               ctxStr,
+              statuses.has(SESSION_KEY)
+                ? speaking
+                  ? theme.fg("warning", sanitizeStatusText(statuses.get(SESSION_KEY)!))
+                  : sanitizeStatusText(statuses.get(SESSION_KEY)!)
+                : "",
               ...others,
             ]
               .filter(Boolean)
