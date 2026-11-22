@@ -15,6 +15,16 @@ export function thresholdsError(t: Thresholds, contextWindow?: number): string |
   return null
 }
 
+const STATE = Symbol.for("cue-platform.session-thresholds")
+const shared = ((globalThis as Record<symbol, { holder: SessionThresholds | null }>)[STATE] ??= {
+  holder: null,
+})
+
+/** The session's effective thresholds, readable from any extension in the process. */
+export function effectiveThresholds(): Thresholds {
+  return shared.holder ? shared.holder.get() : { ...DEFAULT_THRESHOLDS }
+}
+
 /** In-memory saturation thresholds for the current session. */
 export class SessionThresholds {
   private current: Thresholds = { ...DEFAULT_THRESHOLDS }
@@ -48,6 +58,7 @@ export class SessionThresholds {
 /** A thresholds holder that resets to the defaults whenever a session starts. */
 export function registerSessionThresholds(pi: ExtensionAPI): SessionThresholds {
   const holder = new SessionThresholds()
+  shared.holder = holder
   pi.on("session_start", () => holder.reset())
   return holder
 }

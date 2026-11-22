@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { scopeOf, scopeOfRemote } from "../src/pi/browser/sessions";
 import { currentContext } from "../src/pi/lib/current-context";
+import { effectiveThresholds } from "../src/pi/lib/session-thresholds";
 import { activeStyle, DEFAULT_STYLE } from "../src/pi/response-style";
 import type {
   ExtensionAPI,
@@ -17,8 +18,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-// Mirrors src/pi/lib/context-usage.ts DEFAULT_THRESHOLDS.
-const THRESHOLDS = { caution: 80_000, soft: 100_000, hard: 140_000 };
 const RIGHT_STATUS_KEY = "plan-usage";
 
 function sanitizeStatusText(text: string): string {
@@ -193,6 +192,7 @@ export default function (pi: ExtensionAPI) {
           if (tokens == null) {
             ctxStr = dim("?");
           } else {
+            const THRESHOLDS = effectiveThresholds();
             const color =
               tokens >= THRESHOLDS.soft
                 ? "error"
