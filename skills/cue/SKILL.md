@@ -265,7 +265,8 @@ Agents operate under strict context isolation:
    intent ("let's work on <address>"), never because a context was merely
    mentioned or explored. Always say in your reply which context you
    linked. Linking only labels the session: keep passing `context`
-   explicitly on every cue tool call.
+   explicitly on every cue tool call. While an active task is set,
+   linking a different context fails: clear the task first.
 4. **Subagent Scope Propagation**: When delegating work to subagents, the
    primary agent MUST include the context directive in the subagent prompt
    and set `$CUE_CONTEXT` for child processes when supported.
@@ -278,6 +279,26 @@ Agents operate under strict context isolation:
 - Defined by a goal and a completion condition.
 - Carries `status: open|in-progress|complete|closed` and `priority: critical|high|normal|low`.
 - Namespaced to its context, eliminating global slug collisions.
+
+### Active Task
+
+A session works on one active task at a time. The task is the focus of
+the session; its context is the task's context.
+
+- `<cue-session-state>` shows `active task: <address>` when one is set
+  (the context is implied by the address), or the context state followed
+  by `active task: none`.
+- Set it with `cue-session-task` and a task address when the operator
+  states working intent for a task ("let's work on <task address>").
+  Setting it links the task's context; switching to a task in another
+  context is allowed. Say in your reply which task you set.
+- Clear it with `cue-session-task` and no address when the work on it
+  ends, or before linking a context that is not the task's.
+- Work without an active task is a warning sign: when the work at hand
+  maps to a task, propose setting it; when it maps to none, ask whether
+  one should be created.
+- `$CUE_TASK` carries the active task address to shell commands, so
+  hooks and scripts can correlate their events with the task.
 
 ## Session Mode (`mode:`)
 
@@ -533,6 +554,7 @@ session's writes are not echoed.
 - **DO** pass `context: "<slug>"` explicitly on all cue tool calls (`cue-add`, `cue-log`, `cue-plan`, `cue-task`).
 - **DO** log after every commit and during active discovery; omit empty fields.
 - **DO** link the session with `cue-session-link` when the operator says to work on a context, and announce the link.
+- **DO** set the active task with `cue-session-task` when the operator says to work on a task, clear it when that work ends, and announce both.
 - **DO** resolve all open tasks or capture remaining work before concluding a session.
 - **DON'T** log test passes, linter output, or transient plan next-steps in context logs.
 - **DON'T** run `cue context switch` or alter git branch configuration (owned exclusively by the human operator).

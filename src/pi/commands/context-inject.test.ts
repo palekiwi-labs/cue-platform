@@ -98,7 +98,7 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
     cwd: "/w",
     isIdle: () => opts.idle ?? true,
     ui: { notify: (m: string) => notes.push(m) },
-    sessionManager: { getSessionId: () => "s1" },
+    sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
   } as unknown as ExtensionCommandContext
   registerContextInjectCommand(pi)
   return { run: (a: string) => handler(a, ctx), sent, notes, names, calls }

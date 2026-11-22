@@ -7,11 +7,14 @@ import {
   buildCueSkillBlock,
   findCueSkill,
   registerCueSkillInjection,
+  sessionState,
 } from "./skill-injection"
+import { CUE_CONTEXT_TYPE } from "./lib/current-context"
+import { SESSION_TASK_TYPE } from "./lib/session-task"
 
 type Handler = (event: any, ctx: any) => Promise<any>
 
-function setup(statusCode = 0) {
+function setup(statusCode = 0, branch: unknown[] = []) {
   let handler: Handler | undefined
   const notes: string[] = []
   const pi = {
@@ -30,6 +33,7 @@ function setup(statusCode = 0) {
     cwd: "/work",
     hasUI: true,
     ui: { notify: (m: string) => notes.push(m) },
+    sessionManager: { getBranch: () => branch },
   }
   return { run: (event: any) => handler!(event, ctx), notes }
 }
@@ -52,8 +56,21 @@ describe("buildCueSkillBlock", () => {
   })
 
   test("explains an unresolved context", () => {
-    const b = buildCueSkillBlock("x", "/p", null)
-    expect(b).toContain("no active context")
+    expect(sessionState(null, undefined)).toContain("no active context")
+  })
+})
+
+describe("sessionState", () => {
+  test("gives only the task address when a task is active", () => {
+    expect(sessionState("active context: x", "o/r/c/task/t.md")).toBe(
+      "active task: o/r/c/task/t.md",
+    )
+  })
+
+  test("appends active task: none to the context status", () => {
+    expect(sessionState("active context: x", undefined)).toBe(
+      "active context: x\nactive task: none",
+    )
   })
 })
 
@@ -76,6 +93,21 @@ describe("before_agent_start injection", () => {
     expect(out.systemPrompt).toContain("Full body line.")
     expect(out.systemPrompt).not.toContain("description: d")
     expect(out.systemPrompt).toContain("active context: demo")
+  })
+
+  test("injects only the active task when one is set", async () => {
+    const { run } = setup(0, [
+      { type: "custom", customType: CUE_CONTEXT_TYPE, data: { address: "o/r/c" } },
+      { type: "custom", customType: SESSION_TASK_TYPE, data: { address: "o/r/c/task/t.md" } },
+    ])
+    const out = await run({
+      systemPrompt: "BASE",
+      systemPromptOptions: { skills: [skillFile(SKILL)] },
+    })
+    expect(out.systemPrompt).toContain(
+      "<cue-session-state>\nactive task: o/r/c/task/t.md\n</cue-session-state>",
+    )
+    expect(out.systemPrompt).not.toContain("active context: demo")
   })
 
   test("still injects the skill when cue status fails", async () => {

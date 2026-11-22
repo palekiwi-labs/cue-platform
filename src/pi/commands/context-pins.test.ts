@@ -37,7 +37,10 @@ describe("linkContext", () => {
           ? new Promise((resolve) => releases.push(() => resolve(ok)))
           : Promise.resolve(ok),
     } as unknown as ExtensionAPI
-    const ctx = { cwd: "/w", sessionManager: { getSessionId: () => "s1" } }
+    const ctx = {
+      cwd: "/w",
+      sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
+    }
     const first = linkContext(pi, ctx, "a/b/one")
     const second = linkContext(pi, ctx, "a/b/two")
     releases[1]!()
@@ -222,9 +225,10 @@ function setup(opts: {
     cwd: "/w",
     isIdle: () => opts.idle ?? true,
     hasUI: true,
-    sessionManager: { getSessionId: () => "s1" },
+    sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
     ui: {
       notify: (m: string) => notes.push(m),
+      setStatus: () => {},
       custom: async () => {
         selectCalls++
         return opts.pick

@@ -10,6 +10,11 @@ import {
   slugOf,
 } from "../lib/current-context"
 import { applyContextName } from "../session-name"
+import {
+  clearTaskOutside,
+  type SessionStateCtx,
+  syncSessionState,
+} from "../lib/session-task"
 import { parseTree, treePrefix, type TreeEntry } from "../lib/context-tree"
 import { fuzzySelect, type PickItem } from "../lib/fuzzy-select"
 import { formatGitContext, gitContext } from "../lib/git-context"
@@ -47,13 +52,14 @@ export async function contextOrientation(
  */
 export async function injectContext(
   pi: ExtensionAPI,
-  ctx: ActivityCtx,
+  ctx: ActivityCtx & SessionStateCtx,
   address: string,
   note?: string,
   handoff?: { address: string; briefing: string },
 ): Promise<void> {
   const details: CueContextDetails = { address }
   const orientation = await contextOrientation(pi, ctx.cwd, address)
+  clearTaskOutside(pi, ctx, address)
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
     content: [orientation, handoff?.briefing, note].filter(Boolean).join("\n\n"),
@@ -61,6 +67,7 @@ export async function injectContext(
     details,
   })
   pi.events.emit("cue:context-linked", { address })
+  syncSessionState(ctx)
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "inject",
@@ -79,12 +86,14 @@ export async function injectContext(
  */
 export async function linkContext(
   pi: ExtensionAPI,
-  ctx: ActivityCtx,
+  ctx: ActivityCtx & SessionStateCtx,
   address: string,
 ): Promise<void> {
   const data: CueContextDetails = { address }
+  clearTaskOutside(pi, ctx, address)
   pi.appendEntry(CUE_CONTEXT_TYPE, data)
   pi.events.emit("cue:context-linked", { address })
+  syncSessionState(ctx)
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "link",

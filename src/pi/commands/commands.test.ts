@@ -144,6 +144,7 @@ describe("command registration", () => {
       "resume-open",
       "review:miss",
       "review:run",
+      "session-task",
       "speech-stop",
       "thresholds",
     ])

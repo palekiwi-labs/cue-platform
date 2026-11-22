@@ -3,10 +3,11 @@ import { injectContext } from "./commands/context-pins"
 import { parseAddress } from "./commands/context-inject"
 import type { ActivityCtx } from "./lib/activity"
 import { type BranchEntry, currentContext } from "./lib/current-context"
+import type { SessionStateCtx } from "./lib/session-task"
 
 export const INJECT_FLAG = "cue-inject"
 
-type StartCtx = ActivityCtx & {
+type StartCtx = ActivityCtx & SessionStateCtx & {
   sessionManager: ActivityCtx["sessionManager"] & {
     getBranch(): readonly BranchEntry[]
   }
