@@ -495,7 +495,7 @@ A session linked to a context may receive a `<session-events>` block
 with the operator's next message. Each line is a fact about a change to
 the linked context since the last message, tagged by who made it:
 
-- `[cue]` lines report store writes by other sessions or processes
+- `[cue]` lines report store writes by any session or process
   (e.g. `[cue] note/idea.md created: <title>`, `[cue] log: <title>`,
   `[cue] context <slug> created: <title>`).
 - `[operator]` lines report operator actions (e.g.
