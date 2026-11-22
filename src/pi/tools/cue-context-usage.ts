@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
-import { buildReport, formatReport, DEFAULT_THRESHOLDS } from "../lib/context-usage"
+import { buildReport, formatReport, type Thresholds } from "../lib/context-usage"
 
 const parameters = Type.Object({})
 
@@ -10,7 +10,9 @@ interface ContextUsageLike {
   percent: number | null
 }
 
-export function cueContextUsageTool(): ToolDefinition<typeof parameters> {
+export function cueContextUsageTool(
+  thresholds: () => Thresholds,
+): ToolDefinition<typeof parameters> {
   return {
     name: "cue-context-usage",
     label: "cue context usage",
@@ -40,17 +42,18 @@ export function cueContextUsageTool(): ToolDefinition<typeof parameters> {
         }
       }
 
-      const report = buildReport(usage.tokens)
-      const text = formatReport(report)
+      const limits = thresholds()
+      const report = buildReport(usage.tokens, limits)
+      const text = formatReport(report, limits)
       return {
         content: [{ type: "text", text }],
         details: {
           tokens: report.tokens,
           context_window: usage.contextWindow,
           percent: usage.percent,
-          caution_limit: DEFAULT_THRESHOLDS.caution,
-          soft_limit: DEFAULT_THRESHOLDS.soft,
-          hard_limit: DEFAULT_THRESHOLDS.hard,
+          caution_limit: limits.caution,
+          soft_limit: limits.soft,
+          hard_limit: limits.hard,
           headroom_soft: report.headroom.soft,
           headroom_hard: report.headroom.hard,
           level: report.level,

@@ -15,6 +15,7 @@ import { registerViewsLauncher } from "./commands/views-launcher"
 import { registerSessionMenus } from "./commands/session-menus"
 import { registerMcpCastAdapter } from "./mcp"
 import { registerSessionNaming } from "./session-name"
+import { registerSessionThresholds } from "./lib/session-thresholds"
 import { registerWelcomeHeader } from "./header"
 import { registerSessionLabel } from "./session-label"
 import { registerCueSkillInjection } from "./skill-injection"
@@ -42,11 +43,13 @@ import { delegateTool } from "./tools/delegate"
 export default function cuePlatform(pi: ExtensionAPI): void {
   // Registered individually: each factory yields a distinctly-typed
   // ToolDefinition, so a homogeneous loop would widen to an incompatible union.
+  const thresholds = registerSessionThresholds(pi)
+  const effective = () => thresholds.get()
   pi.registerTool(cueAddTool(pi))
   pi.registerTool(cueContextTool(pi))
   pi.registerTool(cueContextExploreTool(pi))
-  pi.registerTool(cueContextUsageTool())
-  pi.registerTool(cueLogTool(pi))
+  pi.registerTool(cueContextUsageTool(effective))
+  pi.registerTool(cueLogTool(pi, effective))
   pi.registerTool(cuePlanTool(pi))
   pi.registerTool(cueRecallTool(pi))
   pi.registerTool(cueReviewTool(pi))
