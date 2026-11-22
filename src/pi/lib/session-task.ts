@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { execFile } from "node:child_process"
 import { type BranchEntry, currentContext, slugOf } from "./current-context"
 
 /**
@@ -11,6 +12,9 @@ export const SESSION_TASK_TYPE = "cue-session-task"
 
 /** Environment variable carrying the active task address to child processes. */
 export const TASK_ENV = "CUE_TASK"
+
+/** tmux window option carrying the active task slug, read by the window picker. */
+export const TMUX_TASK_OPTION = "@pi_task"
 
 /** Footer status key for the session's context and task. */
 export const SESSION_STATUS_KEY = "cue-session"
@@ -56,7 +60,7 @@ export function sessionStatusText(
 ): string | undefined {
   if (!context) return undefined
   if (!task) return slugOf(context)
-  return `${slugOf(context)} / ${slugOf(task).replace(/\.md$/, "")}`
+  return `${slugOf(context)} / ${taskSlug(task)}`
 }
 
 export interface SessionStateCtx {
@@ -81,6 +85,7 @@ export function syncSessionState(
   const task = currentTask(branch)
   if (task) env[TASK_ENV] = task
   else delete env[TASK_ENV]
+  publishTmuxTask(task, env)
   if (!ctx.hasUI || !ctx.ui) return
   const text =
     sessionStatusText(currentContext(branch), task) ??
@@ -130,5 +135,30 @@ export function linkGuardError(
     `active task ${task} belongs to ${taskContextOf(task)}; ` +
     "clear it first (cue-session-task with no address) or set a task in " +
     `${context} instead`
+  )
+}
+
+/** Task slug for display: the task file name without `.md`. */
+export function taskSlug(address: string): string {
+  return slugOf(address).replace(/\.md$/, "")
+}
+
+/**
+ * Publish the active task slug on the tmux window (unset without one).
+ * Only the interactive pi owning the pane publishes: child pi processes
+ * inherit TMUX_PANE and would overwrite the parent's value.
+ */
+export function publishTmuxTask(
+  task: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  run: (args: string[]) => void = (args) => {
+    execFile("tmux", args, () => {})
+  },
+): void {
+  if (!env.TMUX || !env.TMUX_PANE || !process.stdout.isTTY) return
+  run(
+    task
+      ? ["set-option", "-wq", "-t", env.TMUX_PANE, TMUX_TASK_OPTION, taskSlug(task)]
+      : ["set-option", "-wqu", "-t", env.TMUX_PANE, TMUX_TASK_OPTION],
   )
 }

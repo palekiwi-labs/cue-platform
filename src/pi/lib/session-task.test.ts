@@ -5,6 +5,7 @@ import {
   SESSION_TASK_TYPE,
   currentTask,
   linkGuardError,
+  publishTmuxTask,
   normalizeTaskAddress,
   sessionStatusText,
   syncSessionState,
@@ -90,5 +91,34 @@ describe("footer and env", () => {
     syncSessionState(ctx, env)
     expect(env.CUE_TASK).toBeUndefined()
     expect(statuses).toEqual(["c / a", "<red>no context</red>"])
+  })
+})
+
+describe("publishTmuxTask", () => {
+  const tty = process.stdout.isTTY
+  const run = (task: string | undefined, env: NodeJS.ProcessEnv) => {
+    const calls: string[][] = []
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true })
+    try {
+      publishTmuxTask(task, env, (args) => calls.push(args))
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true })
+    }
+    return calls
+  }
+  const tmux = { TMUX: "/tmp/t", TMUX_PANE: "%1" }
+
+  test("sets the task slug on the window", () => {
+    expect(run("o/r/c/task/a.md", tmux)).toEqual([
+      ["set-option", "-wq", "-t", "%1", "@pi_task", "a"],
+    ])
+  })
+
+  test("unsets it without a task", () => {
+    expect(run(undefined, tmux)).toEqual([["set-option", "-wqu", "-t", "%1", "@pi_task"]])
+  })
+
+  test("does nothing outside tmux", () => {
+    expect(run("o/r/c/task/a.md", {})).toEqual([])
   })
 })

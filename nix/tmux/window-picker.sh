@@ -5,6 +5,7 @@
 # Reads window user options set by other parts of the platform:
 #   @pi_state, @pi_unseen, @pi_ctx   extensions/tmux-state.ts
 #   @pi_desc                         extensions/session-describe.ts
+#   @pi_task                         src/pi/lib/session-task.ts
 #   @pi_last                         extensions/tmux-state.ts
 #   @review_state, @review_context,
 #   @review_title, @review_run       cue-review (row-level only)
@@ -12,8 +13,8 @@
 #
 # Rows are coloured like the tabs, show context tokens coloured like the
 # pi footer, an age marker (time since the last completed turn) and the
-# session description. The preview pane repeats the row info plus the
-# last user prompt (@pi_prompt).
+# active task, else the session description. The preview pane repeats
+# the row info plus the last user prompt (@pi_prompt).
 
 # Preview: window description plus recent turns from the session file
 # (@pi_session, published by extensions/tmux-state.ts), one line per
@@ -73,7 +74,7 @@ fi
 # Rows: id, coloured label (hidden id field used for preview).
 rows() {
 tmux list-windows -F \
-  '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}' \
+  '#{window_id}	#{@pi_state}	#{@pi_unseen}	#{window_active}	#{@pi_ctx}	#W	#{@review_state}	#{@review_context}	#{@pi_desc}	#{@pi_last}	#{@pi_task}' \
   | awk -v now="$(date +%s)" -v other="$1" -F '\t' '(other != "") == ($2 == "") {
       c = "";
       if ($7 == "failed") c = "\033[31m";
@@ -99,8 +100,10 @@ tmux list-windows -F \
         pct = sprintf("  %s%s\033[0m", pc, t);
       }
       rv = ($8 != "") ? sprintf("  \033[2m%s\033[0m", $8) : "";
-      # Session description, dimmed right after the window name.
-      dv = ($9 != "") ? sprintf("  \033[2m%s\033[0m", $9) : "";
+      # Active task right after the window name, else the dimmed
+      # session description.
+      if ($11 != "") dv = sprintf("  \033[36m%s\033[0m", $11);
+      else dv = ($9 != "") ? sprintf("  \033[2m%s\033[0m", $9) : "";
       # Age since the last completed turn, dimmed.
       av = "";
       if ($10 != "") {
