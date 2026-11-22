@@ -1745,10 +1745,12 @@ export class CueBrowser implements Component {
     const flat = v.subset === "labeled" || this.sessionsFlat || v.query.trim() !== ""
     const right = (s: SessionRow | undefined) => {
       if (!s) return t.fg("muted", " ".repeat(11))
-      const spent = s.level === "exceeded_soft" || s.level === "critical"
-      let tok = s.tokens == null ? t.fg("muted", fmtTokens(s.tokens))
-        : spent ? t.fg("dim", fmtTokens(s.tokens))
-          : fmtTokens(s.tokens)
+      const color = s.tokens == null ? "muted"
+        : s.level === "critical" || s.level === "exceeded_soft" ? "error"
+          : s.level === "caution" ? "warning"
+            : "success"
+      let tok = t.fg(color, fmtTokens(s.tokens))
+      if (s.level === "critical") tok = t.bold(tok)
       tok = " ".repeat(Math.max(0, 6 - visibleWidth(fmtTokens(s.tokens)))) + tok
       return tok + " " + t.fg("muted", relativeAge(s.modified, now).padStart(4))
     }
