@@ -157,36 +157,24 @@ export function collapsedLines(
   return [head, totals, ...rows]
 }
 
-type HintOptions = { keyHint?: (keybinding: string, description: string) => string }
-
-function contentText(content: string | { type: string; text?: string }[]): string {
-  if (typeof content === "string") return content
-  return content.map((c) => (c.type === "text" ? c.text ?? "" : "")).join("\n")
-}
-
 /**
- * Render cue-context injections collapsed to a token breakdown; the
- * expand key shows the full injected text.
+ * Render cue-context injections collapsed to the token breakdown recorded
+ * in their details; the expand key shows the full injected text.
  */
 export function registerInjectionRenderer(pi: ExtensionAPI): void {
-  const cache = new Map<string, InjectionSummary>()
   pi.registerMessageRenderer<CueContextDetails>(
     CUE_CONTEXT_TYPE,
     (message, options: MessageRenderOptions, theme) => {
-      const text = contentText(message.content)
-      let summary = cache.get(text)
-      if (!summary) {
-        summary = summarizeInjection(text)
-        if (!summary.address && message.details?.address) summary.address = message.details.address
-        if (cache.size > 64) cache.clear()
-        cache.set(text, summary)
-      }
+      const summary = message.details?.summary
+      if (!summary) return undefined
       const lines = collapsedLines(theme, summary, skillBlockTokens())
       if (options.expanded) {
+        const text = typeof message.content === "string"
+          ? message.content
+          : message.content.map((c) => (c.type === "text" ? c.text : "")).join("\n")
         lines.push("", text)
       } else {
-        const hint = (options as HintOptions).keyHint?.("app.tools.expand", "to expand") ?? "expand to see the full text"
-        lines.push(theme.fg("dim", `  ${hint}`))
+        lines.push(theme.fg("dim", `  ${options.keyHint("app.tools.expand", "to expand")}`))
       }
       return new Text(lines.join("\n"), options.outputPad, 0)
     },

@@ -66,7 +66,8 @@ describe("/cue:context:current", () => {
     })
     await s.run()
     expect(s.sent).toHaveLength(1)
-    expect(s.sent[0].details).toEqual({ address: "x/y/linked" })
+    expect(s.sent[0].details.address).toBe("x/y/linked")
+    expect(s.sent[0].details.summary.total).toBeGreaterThan(0)
     expect(s.calls).not.toContainEqual(["status", "--json"])
   })
 
@@ -75,7 +76,8 @@ describe("/cue:context:current", () => {
     await s.run()
     expect(s.sent).toHaveLength(1)
     expect(s.sent[0].customType).toBe(CUE_CONTEXT_TYPE)
-    expect(s.sent[0].details).toEqual({ address: "x/y/env" })
+    expect(s.sent[0].details.address).toBe("x/y/env")
+    expect(s.sent[0].details.summary.total).toBeGreaterThan(0)
     expect(s.sent[0].content).toContain(
       "Active cue context for this session: env",
     )

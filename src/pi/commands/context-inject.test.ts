@@ -68,7 +68,8 @@ describe("/cue:context:inject", () => {
     const { message, options } = s.sent[0]!
     expect(options).toBeUndefined()
     expect(message.customType).toBe(CUE_CONTEXT_TYPE)
-    expect(message.details).toEqual({ address: "x/y/other" })
+    expect(message.details.address).toBe("x/y/other")
+    expect(message.details.summary.total).toBeGreaterThan(0)
     expect(message.content).toContain(
       "Active cue context for this session: other",
     )

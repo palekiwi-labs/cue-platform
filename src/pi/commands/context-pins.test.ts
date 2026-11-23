@@ -224,7 +224,8 @@ describe("/cue:context:pins", () => {
     expect(options).toBeUndefined()
     expect(message.customType).toBe(CUE_CONTEXT_TYPE)
     expect(message.display).toBe(true)
-    expect(message.details).toEqual({ address: "a/b/two" })
+    expect(message.details.address).toBe("a/b/two")
+    expect(message.details.summary.total).toBeGreaterThan(0)
     expect(message.content).toContain("Active cue context for this session: two")
     expect(s.names).toEqual(["two"])
     expect(s.activity).toEqual([

@@ -10,6 +10,7 @@ import {
   slugOf,
 } from "../lib/current-context"
 import { applyContextName } from "../session-name"
+import { summarizeInjection } from "../injection-render"
 import { parseTree, treePrefix, type TreeEntry } from "../lib/context-tree"
 import { fuzzySelect, type PickItem } from "../lib/fuzzy-select"
 import { formatGitContext, gitContext } from "../lib/git-context"
@@ -50,11 +51,12 @@ export async function injectContext(
   address: string,
   note?: string,
 ): Promise<void> {
-  const details: CueContextDetails = { address }
   const orientation = await contextOrientation(pi, ctx.cwd, address)
+  const content = note ? `${orientation}\n\n${note}` : orientation
+  const details: CueContextDetails = { address, summary: summarizeInjection(content) }
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
-    content: note ? `${orientation}\n\n${note}` : orientation,
+    content,
     display: true,
     details,
   })
