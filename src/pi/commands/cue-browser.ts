@@ -21,6 +21,9 @@ import { parseLog, sortLog } from "../browser/log"
 import { parseArtifacts, parseContextTree } from "../browser/model"
 import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browser/sessions"
 import { currentContext, slugOf } from "../lib/current-context"
+import { storeRoot } from "../lib/store-root"
+
+export { storeRoot }
 import { cueBestEffort } from "./common"
 import { injectArgs } from "./context-inject"
 import { linkContext } from "./context-pins"
@@ -95,8 +98,9 @@ export function newSession(
   target: Target,
   note?: string,
   handoff?: string,
+  task?: string,
 ): string | undefined {
-  const args = injectArgs(address, { handoff, note })
+  const args = injectArgs(address, { handoff, note, task })
   if (target === "tmux") {
     const inject = `/cue:context:inject ${args}`
     return tmuxWindow(slugOf(address) || "pi", ctx.cwd, `pi ${shellQuote(inject)}`)
@@ -200,21 +204,6 @@ export async function loadSessions(
     }
   }))
   return inScopes(rows, scopes, cwdScope)
-}
-
-/** Root of the cue store, as cue itself resolves it; cached. */
-let cachedStoreRoot: string | undefined
-export function storeRoot(cwd: string): string {
-  if (cachedStoreRoot) return cachedStoreRoot
-  const r = spawnSync("cue", ["status", "--json"], { cwd, encoding: "utf8" })
-  try {
-    const store = JSON.parse(r.stdout ?? "{}").store
-    if (typeof store === "string" && store !== "") cachedStoreRoot = store
-  } catch {
-    // fall through to the default
-  }
-  cachedStoreRoot ??= process.env.CUE_STORE || join(homedir(), ".cue")
-  return cachedStoreRoot
 }
 
 /** `git show` for an activity commit; null when it fails. */
@@ -356,8 +345,8 @@ export async function openBrowser(
         copy: copyToClipboard,
         create: (address, type, filename) =>
           createArtifact(pi, ctx.cwd, address, type, filename),
-        newSession: (address, target, handoff) =>
-          newSession(pi, ctx, address, target, undefined, handoff),
+        newSession: (address, target, handoff, task) =>
+          newSession(pi, ctx, address, target, undefined, handoff, task),
         loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
         currentSession: () => ctx.sessionManager.getSessionFile(),
         currentCwd: () => {

@@ -13,6 +13,7 @@ import { applyContextName } from "../session-name"
 import {
   clearTaskOutside,
   type SessionStateCtx,
+  setSessionTask,
   syncSessionState,
 } from "../lib/session-task"
 import { summarizeInjection } from "../injection-render"
@@ -48,8 +49,10 @@ export async function contextOrientation(
  * idle with no delivery options, pi persists it as a displayed
  * custom_message entry immediately (`deliverAs: "nextTurn"` would hold it
  * in memory, unseen and unpersisted, until the next prompt). A selected
- * hand-off (its address and rendered briefing) follows the orientation,
- * and an optional note comes last.
+ * hand-off (its address and rendered briefing) or task (its address and
+ * full body) follows the orientation, and an optional note comes last.
+ * A task also becomes the session's active task: the entry is appended
+ * after the orientation message, so the session is born with it.
  */
 export async function injectContext(
   pi: ExtensionAPI,
@@ -57,10 +60,11 @@ export async function injectContext(
   address: string,
   note?: string,
   handoff?: { address: string; briefing: string },
+  task?: { address: string; briefing: string },
 ): Promise<void> {
   const orientation = await contextOrientation(pi, ctx.cwd, address)
   clearTaskOutside(pi, ctx, address)
-  const content = [orientation, handoff?.briefing, note].filter(Boolean).join("\n\n")
+  const content = [orientation, task?.briefing, handoff?.briefing, note].filter(Boolean).join("\n\n")
   const details: CueContextDetails = { address, summary: summarizeInjection(content) }
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
@@ -69,11 +73,13 @@ export async function injectContext(
     details,
   })
   pi.events.emit("cue:context-linked", { address })
+  if (task) setSessionTask(pi, ctx, task.address)
   syncSessionState(ctx)
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {
     method: "inject",
     ...(handoff ? { handoff: handoff.address } : {}),
+    ...(task ? { task: task.address } : {}),
   })
   await naming
 }

@@ -118,9 +118,10 @@ export interface BrowserDeps {
   /**
    * Start a fresh pi session with the context injected, here or in a
    * new tmux window, with the selected hand-off (if any) injected in
-   * full; returns an error message on failure.
+   * full, or focused on the selected task; returns an error message on
+   * failure.
    */
-  newSession(address: string, target: Target, handoff?: string): string | undefined
+  newSession(address: string, target: Target, handoff?: string, task?: string): string | undefined
   /** Sessions in the browser's scopes (only the repository's when `repoScope`). */
   loadSessions(repoScope: boolean): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
@@ -806,7 +807,8 @@ export class CueBrowser implements Component {
     }
     if (k === "contexts") add("ctrl+n", "new context", "act", () => this.startCreateContext(), m("act"))
     else add("ctrl+n", "new artifact", "act", () => this.startWizard(), m("act"))
-    add("ctrl+s", "new session", "act", () => this.onNewSession(), m("act"))
+    const onTask = v.kind === "artifacts" && this.selectedArtifact()?.type === "task"
+    add("ctrl+s", onTask ? "new session on task" : "new session", "act", () => this.onNewSession(), m("act"))
     add("alt+r", "reload", "view", () => this.reload(), m("view"))
     if (k !== "artifacts") {
       add("ctrl+up", "recency up", "view", () => this.stepRecency(1))
@@ -1172,6 +1174,11 @@ export class CueBrowser implements Component {
   private async onNewSession(): Promise<void> {
     const c = this.actionContext()
     if (!c) return
+    if (this.view.kind === "artifacts") {
+      const a = this.selectedArtifact()
+      const address = a?.type === "task" ? this.selectedAddress() : undefined
+      if (address) return this.startSession(c, undefined, address)
+    }
     this.busy = true
     let rows: ArtifactRow[]
     try {
@@ -1200,8 +1207,8 @@ export class CueBrowser implements Component {
     this.tui.requestRender()
   }
 
-  private startSession(c: ContextRef, handoff?: string): void {
-    const err = this.deps.newSession(c.address, this.target, handoff)
+  private startSession(c: ContextRef, handoff?: string, task?: string): void {
+    const err = this.deps.newSession(c.address, this.target, handoff, task)
     if (err) return this.notify(err)
     if (this.target === "here") return this.done()
     this.notify(`started a session for ${c.slug} in tmux`)
