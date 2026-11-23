@@ -154,6 +154,53 @@ supplied bytes verbatim, keeps the filename exactly as given, and marks the
 file executable; `tmp` writes into a fresh
 `tmp/<created_at>-<commit_hash>/` directory.
 
+### `cue update`
+Changes frontmatter fields of an existing artifact or context. The body is
+never touched. The address decides the target: 5 segments
+`<org>/<repo>/<context>/<type>/<name>` is an artifact (`task`, `plan`,
+`note` only), 3 segments `<org>/<repo>/<context>` is a context
+(`context.md`).
+
+```bash
+cue update <ADDRESS> [FIELD FLAGS...] [--dry-run] [--json]
+```
+
+**Fields:**
+- `--title <TEXT>`: all targets.
+- `--status open|in-progress|complete|closed`: task, plan, note.
+- `--priority critical|high|normal|low`: task only.
+- `--description <TEXT>`, `--kind work|coord|reference`,
+  `--mode research|design|build|review|learn`: context only.
+- `--parent <ADDRESS>` / `--no-parent`: a task, plan or note's parent is a
+  task or a context; a context's parent is a context. The parent must exist
+  and may not be the target or anything below it.
+- `--add-ref <ADDRESS>` / `--remove-ref <ADDRESS>` (repeatable): edit refs,
+  keeping the rest. Adding a present ref or removing an absent one is a no-op.
+- `--set-refs <ADDRESS>` (repeatable) / `--clear-refs`: replace or empty the
+  whole list; cannot be combined with `--add-ref` / `--remove-ref`.
+
+Added, set and parent targets must exist (archived counts). All flags in one
+call are validated first and written in one atomic replacement; an update
+that changes nothing writes nothing. An edit that would push the frontmatter
+past the 64-line read cap is refused.
+
+**Output:** one line per changed field (`<address> <field>: <old> -> <new>`);
+`--json` prints `{mutation_id, address, changes: [{field, old, new}]}`.
+`--dry-run` reports without writing.
+
+```bash
+# Complete a task
+cue update palekiwi/palekiwi/auth/task/login.md --status complete
+
+# Attach a plan to a task and add a ref in one write
+cue update palekiwi/palekiwi/auth/plan/impl.md \
+  --parent palekiwi/palekiwi/auth/task/login.md \
+  --add-ref palekiwi/palekiwi/auth/spec/index.md
+
+# Reparent a context
+cue update palekiwi/palekiwi/auth --parent palekiwi/palekiwi/platform
+```
+
 ### `cue render`
 Renders artifacts as framed blocks for injection into an agent session.
 
