@@ -10,6 +10,7 @@ import type { Target } from "../lib/default-target"
  */
 
 import { readFileSync } from "node:fs"
+import type { SessionRowsProgress } from "../lib/session-files"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import {
@@ -122,8 +123,12 @@ export interface BrowserDeps {
    * failure.
    */
   newSession(address: string, target: Target, handoff?: string, task?: string): string | undefined
-  /** Sessions in the browser's scopes (only the repository's when `repoScope`). */
-  loadSessions(repoScope: boolean): Promise<SessionRow[]>
+  /**
+   * Sessions in the browser's scopes (only the repository's when
+   * `repoScope`), newest first. `onProgress` receives the rows loaded
+   * so far while the load runs.
+   */
+  loadSessions(repoScope: boolean, onProgress?: SessionRowsProgress): Promise<SessionRow[]>
   /** Path of this pi's active session file. */
   currentSession(): string | undefined
   /** Working directory of this pi's active session and its repo scope. */
@@ -283,6 +288,11 @@ export class CueBrowser implements Component {
   private sessionFolds: Set<string> | undefined
   /** Sessions loaded once per browser; deletes edit this copy. */
   private sessionsCache: Promise<SessionRow[]> | undefined
+  /** Rows and progress of the running sessions load, for views waiting on it. */
+  private sessionsPartial: { rows: SessionRow[]; loaded: number; total: number } | undefined
+  /** Sessions views waiting on the load, with their loaded context trees. */
+  private sessionsWaiting = new Map<SessionsView, ContextRow[]>()
+  private sessionsRun: object | undefined
   private confirmDelete: SessionRow | undefined
   /** Context awaiting confirmation to clear the active task and link. */
   private confirmLink: { address: string; reason: string } | undefined
@@ -408,22 +418,20 @@ export class CueBrowser implements Component {
   private async loadSessions(v: SessionsView, focus = false): Promise<void> {
     v.loading = true
     v.repoScope = this.repoScope
-    this.sessionsCache ??= this.deps.loadSessions(this.repoScope)
-    const [contexts, sessions] = await Promise.all([
-      this.deps.loadContexts(false, this.repoScope).then(pinnedFirst),
-      this.sessionsCache,
-    ])
-    v.contexts = contexts
-    v.sessions = sessions
-    if (v.context) {
-      // The context's subtree: its row and every deeper row after it.
-      const i = contexts.findIndex((c) => c.address === v.context!.address)
-      let j = i + 1
-      while (i >= 0 && j < contexts.length && contexts[j]!.depth > contexts[i]!.depth) j++
-      v.contexts = i >= 0 ? contexts.slice(i, j) : []
-      const keep = new Set(v.contexts.map((c) => c.address))
-      v.sessions = sessions.filter((s) => s.address !== undefined && keep.has(s.address))
+    const cache = this.sessionsLoad()
+    const contexts = await this.deps.loadContexts(false, this.repoScope).then(pinnedFirst)
+    if (this.sessionsPartial) {
+      this.setSessions(v, contexts, this.sessionsPartial.rows)
+      this.refresh()
     }
+    this.sessionsWaiting.set(v, contexts)
+    let sessions: SessionRow[]
+    try {
+      sessions = await cache
+    } finally {
+      if (this.sessionsWaiting.get(v) === contexts) this.sessionsWaiting.delete(v)
+    }
+    this.setSessions(v, contexts, sessions)
     v.loading = false
     const here = this.deps.sessionAddress()
     if (!this.sessionFolds) {
@@ -504,6 +512,39 @@ export class CueBrowser implements Component {
     v.rows = await this.deps.loadArtifacts(v.context.address)
     v.loading = false
     this.refresh()
+  }
+
+  /** The cached sessions, starting a load that feeds waiting views when there is none. */
+  private sessionsLoad(): Promise<SessionRow[]> {
+    if (this.sessionsCache) return this.sessionsCache
+    const run = {}
+    this.sessionsRun = run
+    this.sessionsPartial = undefined
+    const load = this.deps.loadSessions(this.repoScope, (loaded, total, partial) => {
+      if (this.sessionsRun !== run) return
+      this.sessionsPartial = { rows: partial ?? this.sessionsPartial?.rows ?? [], loaded, total }
+      if (partial) for (const [w, contexts] of this.sessionsWaiting) this.setSessions(w, contexts, partial)
+      this.refresh()
+    })
+    this.sessionsCache = load
+    void load.finally(() => {
+      if (this.sessionsRun === run) this.sessionsPartial = undefined
+    }).catch(() => {})
+    return load
+  }
+
+  /** Show `sessions` in `v`, limited to the view's context subtree. */
+  private setSessions(v: SessionsView, contexts: ContextRow[], sessions: SessionRow[]): void {
+    v.contexts = contexts
+    v.sessions = sessions
+    if (!v.context) return
+    // The context's subtree: its row and every deeper row after it.
+    const i = contexts.findIndex((c) => c.address === v.context!.address)
+    let j = i + 1
+    while (i >= 0 && j < contexts.length && contexts[j]!.depth > contexts[i]!.depth) j++
+    v.contexts = i >= 0 ? contexts.slice(i, j) : []
+    const keep = new Set(v.contexts.map((c) => c.address))
+    v.sessions = sessions.filter((s) => s.address !== undefined && keep.has(s.address))
   }
 
   private refresh(): void {
@@ -1370,8 +1411,7 @@ export class CueBrowser implements Component {
   private async onResumeContext(): Promise<void> {
     const c = this.selectedContext()
     if (!c) return
-    this.sessionsCache ??= this.deps.loadSessions(this.repoScope)
-    const sessions = await this.sessionsCache
+    const sessions = await this.sessionsLoad()
     const newest = sessions
       .filter((s) => s.address === c.address)
       .reduce<SessionRow | undefined>((a, s) => (a && a.modified >= s.modified ? a : s), undefined)
@@ -1704,7 +1744,7 @@ export class CueBrowser implements Component {
     const title = v.kind === "contexts"
       ? `Cue contexts ${t.fg("muted", `(${recencyLabel(this.recencyDays)})`)}${t.fg("muted", this.contextsFlat ? " flat" : " tree")}${this.showArchived ? t.fg("muted", " +archived") : ""}`
       : v.kind === "sessions"
-        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? recencyLabel(this.recencyDays) : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}`
+        ? `Cue sessions ${t.fg("muted", `(${v.subset === "recent" ? recencyLabel(this.recencyDays) : v.subset}) ${!this.sessionsFlat && v.subset !== "labeled" ? "tree" : "flat"}${v.context ? ` ${v.context.address}` : ""}`)}${this.sessionsProgressTag(v)}`
         : v.kind === "activity"
           ? `Cue activity ${t.fg("muted", `${recencyLabel(this.recencyDays)} ${v.context.address}`)}`
           : v.kind === "log"
@@ -1715,6 +1755,12 @@ export class CueBrowser implements Component {
     const left = t.fg("accent", t.bold(title)) + "  " + target + this.scopeTag()
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right))
     return left + " ".repeat(gap) + right
+  }
+
+  private sessionsProgressTag(v: SessionsView): string {
+    if (!v.loading) return ""
+    const p = this.sessionsPartial
+    return this.theme.fg("accent", ` loading ${p ? `${p.loaded}/${p.total}` : "…"}`)
   }
 
   private helpLine(width: number): string {
@@ -1763,6 +1809,7 @@ export class CueBrowser implements Component {
     const t = this.theme
     if (v.loading && v.sessions.length === 0) return [t.fg("dim", "loading…")]
     const rows = this.shownSessions(v)
+    if (rows.length === 0 && v.loading) return [t.fg("dim", "loading…")]
     if (rows.length === 0) return [t.fg("warning", v.subset === "labeled" ? "no labeled sessions (tab: window)" : "no sessions (ctrl+up: widen, tab: labeled)")]
     v.selected = Math.min(v.selected, rows.length - 1)
     const now = Math.floor(Date.now() / 1000)

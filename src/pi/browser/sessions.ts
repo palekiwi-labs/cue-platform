@@ -43,19 +43,28 @@ export interface SessionMeta {
 
 type Entry = Record<string, any>
 
-/** Mainline of a session file, root first: the tip's parentId chain. */
-export function mainline(content: string): Entry[] {
-  const byId = new Map<string, Entry>()
-  let tip: Entry | undefined
+/** JSON object entries of a session file in file order; malformed lines are skipped. */
+export function parseEntries(content: string): Entry[] {
+  const entries: Entry[] = []
   for (const line of content.split("\n")) {
-    if (!line) continue
-    let entry: Entry
+    if (!line.trim()) continue
+    let entry: unknown
     try {
       entry = JSON.parse(line)
     } catch {
       continue
     }
-    if (!entry?.id) continue
+    if (entry && typeof entry === "object") entries.push(entry as Entry)
+  }
+  return entries
+}
+
+/** Mainline of a session file, root first: the tip's parentId chain. */
+export function mainline(content: string | Entry[]): Entry[] {
+  const byId = new Map<string, Entry>()
+  let tip: Entry | undefined
+  for (const entry of typeof content === "string" ? parseEntries(content) : content) {
+    if (!entry.id) continue
     byId.set(entry.id, entry)
     tip = entry
   }
@@ -67,7 +76,7 @@ export function mainline(content: string): Entry[] {
 }
 
 /** List metadata, newest entry winning for each field. */
-export function sessionMeta(content: string): SessionMeta {
+export function sessionMeta(content: string | Entry[]): SessionMeta {
   const meta: SessionMeta = { tokens: null }
   const labeled = new Set<string>()
   const branch = mainline(content)
@@ -102,13 +111,69 @@ export function sessionMeta(content: string): SessionMeta {
   return meta
 }
 
-const textOf = (content: unknown): string => {
+const textOf = (content: unknown, sep = "\n\n"): string => {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
   return content
     .filter((p) => p?.type === "text" && typeof p.text === "string")
     .map((p) => p.text)
-    .join("\n\n")
+    .join(sep)
+}
+
+/** What one parse of a session file gives the sessions list. */
+export interface ParsedSession {
+  cwd: string
+  /** Newest session_info name in the file; an empty name clears it. */
+  name?: string
+  /** Text of the first user message with text, or "". */
+  firstMessage: string
+  /**
+   * Epoch milliseconds of the newest user or assistant message, else of
+   * the header; undefined when neither is known (callers use the mtime).
+   */
+  modified?: number
+  meta: SessionMeta
+}
+
+/**
+ * Everything the sessions list needs from one session file, in a single
+ * parse. Name, first message and modified time follow pi's own session
+ * list; null when the file does not start with a session header.
+ */
+export function parseSession(content: string): ParsedSession | null {
+  const entries = parseEntries(content)
+  const header = entries[0]
+  if (header?.type !== "session") return null
+  let name: string | undefined
+  let firstMessage = ""
+  let lastActivity: number | undefined
+  for (let i = 1; i < entries.length; i++) {
+    const e = entries[i]!
+    if (e.type === "session_info") name = typeof e.name === "string" ? e.name.trim() || undefined : undefined
+    if (e.type !== "message") continue
+    const m = e.message
+    if (typeof m?.role !== "string" || !("content" in m)) continue
+    if (m.role !== "user" && m.role !== "assistant") continue
+    const time = typeof m.timestamp === "number" ? m.timestamp : new Date(e.timestamp).getTime()
+    if (!Number.isNaN(time)) lastActivity = Math.max(lastActivity ?? 0, time)
+    if (!firstMessage && m.role === "user") firstMessage = textOf(m.content, " ")
+  }
+  const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN
+  const modified = lastActivity !== undefined && lastActivity > 0
+    ? lastActivity
+    : Number.isNaN(headerTime) ? undefined : headerTime
+  return {
+    cwd: typeof header.cwd === "string" ? header.cwd : "",
+    name,
+    firstMessage,
+    modified,
+    meta: sessionMeta(entries),
+  }
+}
+
+/** Description of a session without a session-description: its name, else first message. */
+export function fallbackDescription(name: string | undefined, firstMessage: string): string {
+  return (name || firstMessage || "(no messages)").replace(/\s+/g, " ").slice(0, 80)
 }
 
 /**
