@@ -8,7 +8,7 @@ import {
 import { Editor, matchesKey } from "@earendil-works/pi-tui"
 import { copyText } from "../turn-reader/chunks"
 import { appendReply, replyText, TurnComments } from "../turn-reader/comments"
-import { latestTurnKey, latestTurnTexts, type ReaderMessage } from "../turn-reader/latest-turn"
+import { branchTurns, type ReaderMessage } from "../turn-reader/latest-turn"
 import {
   COMMENT_KEY,
   COPY_KEY,
@@ -17,14 +17,16 @@ import {
   MARGIN_Y,
   MODE_KEY,
   NEXT_COMMENT_KEY,
+  NEXT_TURN_KEY,
   PREV_COMMENT_KEY,
+  PREV_TURN_KEY,
   readerWidth,
   REPLY_KEY,
   TurnReader,
 } from "../turn-reader/reader"
 import type { SpeakResult, Speech } from "../speech"
 
-/** Open the latest turn reader. */
+/** Open the turn reader on the latest turn. */
 export const READER_SHORTCUT = "ctrl+u"
 /** Reader key that speaks the focused chunk in focus mode, else the displayed text. */
 export const READER_SPEAK_KEY = "s"
@@ -44,14 +46,14 @@ export function speakNotes(subject: string): SpeakNotes {
 }
 
 const SPEAK_NOTES = speakNotes("the latest turn")
+const SPEAK_TURN_NOTES = speakNotes("the turn")
 const SPEAK_CHUNK_NOTES = speakNotes("the focused chunk")
 
 let live: ReaderMessage | undefined
 
 const drafts = new Map<string, TurnComments>()
 
-function turnComments(key: string | undefined): TurnComments {
-  if (key === undefined) return new TurnComments()
+function turnComments(key: string): TurnComments {
   let comments = drafts.get(key)
   if (!comments) drafts.set(key, (comments = new TurnComments()))
   return comments
@@ -105,14 +107,17 @@ export async function openTurnReader(
   copy: ClipboardWriter = copyToClipboard,
 ): Promise<void> {
   if (!ctx.hasUI) return
-  const branch = ctx.sessionManager.getBranch() as Parameters<typeof latestTurnTexts>[0]
-  const messages = latestTurnTexts(branch, live)
-  if (messages.length === 0) {
+  const branch = ctx.sessionManager.getBranch() as Parameters<typeof branchTurns>[0]
+  const turns = branchTurns(branch, live).filter((t) => t.texts.length > 0)
+  if (!turns.at(-1)?.latest) {
     ctx.ui.notify("No assistant text in the latest turn yet", "info")
     return
   }
   const running = !ctx.isIdle()
-  const comments = turnComments(latestTurnKey(branch))
+  let at = turns.length - 1
+  const position = () => ({ index: at, total: turns.length, latest: turns[at]!.latest })
+  const shown = () => turns[at]!
+  const comments = () => turnComments(shown().key)
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const backdrop = tui.showOverlay(
@@ -120,8 +125,16 @@ export async function openTurnReader(
         { anchor: "top-left", width: "100%", maxHeight: "100%", nonCapturing: true },
       )
       const reader = new TurnReader(
-        theme, getMarkdownTheme(), messages, () => tui.terminal.rows, running, !!speaker, comments,
+        theme, getMarkdownTheme(), shown().texts, () => tui.terminal.rows, running, !!speaker, comments(),
+        position(),
       )
+      const go = (direction: 1 | -1) => {
+        const next = at + direction
+        if (next < 0) return reader.showFlash("already at the first turn")
+        if (next >= turns.length) return reader.showFlash("already at the latest turn")
+        at = next
+        reader.showTurn(shown().texts, comments(), position(), running && shown().latest)
+      }
       const editorTheme = { borderColor: (s: string) => theme.fg("border", s), selectList: getSelectListTheme() }
       const close = () => {
         backdrop.hide()
@@ -140,10 +153,12 @@ export async function openTurnReader(
           else if (data === COMMENT_KEY) reader.comment(new Editor(tui, editorTheme))
           else if (data === DELETE_KEY) reader.deleteComment()
           else if (matchesKey(data, REPLY_KEY)) {
-            if (insertReply(ctx, comments)) return close()
+            if (insertReply(ctx, comments())) return close()
           }
           else if (matchesKey(data, PREV_COMMENT_KEY)) reader.jumpComment(-1)
           else if (matchesKey(data, NEXT_COMMENT_KEY)) reader.jumpComment(1)
+          else if (matchesKey(data, PREV_TURN_KEY)) go(-1)
+          else if (matchesKey(data, NEXT_TURN_KEY)) go(1)
           else if (kb.matches(data, "tui.select.up") || data === "k") reader.move(-1)
           else if (kb.matches(data, "tui.select.down") || data === "j") reader.move(1)
           else if (kb.matches(data, "tui.select.pageUp") || data === "b") reader.page(-1)
@@ -162,7 +177,7 @@ export async function openTurnReader(
             }
           }
           else if (speaker && data === READER_SPEAK_KEY) {
-            const notes = reader.focused() ? SPEAK_CHUNK_NOTES : SPEAK_NOTES
+            const notes = reader.focused() ? SPEAK_CHUNK_NOTES : reader.latest() ? SPEAK_NOTES : SPEAK_TURN_NOTES
             const [note, level] = notes[speaker.request(reader.spoken(), ctx)]
             ctx.ui.notify(note, level)
           }

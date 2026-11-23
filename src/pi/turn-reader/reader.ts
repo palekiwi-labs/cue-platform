@@ -93,6 +93,19 @@ export const COPY_KEY = "y"
 export const PREV_COMMENT_KEY = "ctrl+up"
 /** Reader key that focuses the next commented chunk of the displayed messages. */
 export const NEXT_COMMENT_KEY = "ctrl+down"
+/** Reader key that shows the previous turn of the session branch. */
+export const PREV_TURN_KEY = "left"
+/** Reader key that shows the next turn of the session branch. */
+export const NEXT_TURN_KEY = "right"
+
+/** Where the displayed turn sits among the turns the reader can show. */
+export interface TurnPosition {
+  /** 0-based index of the turn, oldest first. */
+  index: number
+  total: number
+  /** Whether the turn is the last turn of the session branch. */
+  latest: boolean
+}
 
 /** The text editor the reader composes comments in. */
 export interface CommentEditor {
@@ -130,7 +143,7 @@ interface Body {
 }
 
 /**
- * Boxed, scrollable view of the latest turn's assistant messages, rendered as
+ * Boxed, scrollable view of one turn's assistant messages, rendered as
  * Markdown and separated by a rule. Shows the last message until toggled to
  * all messages. Grows with the content up to the rows `rows()` reports, then
  * scrolls. Opens in focus mode on the first chunk: the arrows step through
@@ -138,7 +151,8 @@ interface Body {
  * every chunk but the focused one is dimmed; ctrl+up and ctrl+down jump
  * between commented chunks. Each chunk
  * may carry one draft comment, shown under it and composed in an editor at
- * the bottom of the reader.
+ * the bottom of the reader. `showTurn` swaps in another turn with its own
+ * comments; the header shows the turn's position when one is given.
  */
 export class TurnReader implements Component {
   private offset = 0
@@ -159,7 +173,31 @@ export class TurnReader implements Component {
     private running = false,
     private speakable = false,
     private comments = new TurnComments(),
+    private position?: TurnPosition,
   ) {}
+
+  /**
+   * Show another turn with its own comments, keeping the last or all
+   * messages mode and whether focus is on. The view starts over at the top,
+   * on the first chunk. Ignored while composing.
+   */
+  showTurn(messages: readonly string[], comments: TurnComments, position: TurnPosition, running = false): boolean {
+    if (this.composer) return false
+    this.messages = messages
+    this.comments = comments
+    this.position = position
+    this.running = running
+    this.offset = 0
+    this.current = 0
+    this.flash = ""
+    this.cache = undefined
+    return true
+  }
+
+  /** Whether the displayed turn is the latest turn of the session branch. */
+  latest(): boolean {
+    return this.position?.latest ?? true
+  }
 
   invalidate(): void {
     this.cache = undefined
@@ -439,7 +477,7 @@ export class TurnReader implements Component {
     const chunk = this.focus && chunks.length > 0 ? ` · chunk ${this.current + 1}/${chunks.length}` : ""
     const count = this.comments.size
     const notes = count > 0 ? ` · ${count} comment${count === 1 ? "" : "s"}` : ""
-    const head = ` latest turn · ${mode}${chunk}${notes}${this.running ? " · snapshot" : ""} `
+    const head = ` ${this.turnLabel()} · ${mode}${chunk}${notes}${this.running ? " · snapshot" : ""} `
     const scrolls = body.length > height
     const foot = this.footer(width, scrolls ? `${this.offset + 1}-${this.offset + height}/${body.length}` : "")
 
@@ -464,8 +502,15 @@ export class TurnReader implements Component {
     return [top, ...blank, ...rows, ...composed, ...blank, bottom].map((l) => truncateToWidth(l, width))
   }
 
+  private turnLabel(): string {
+    const p = this.position
+    if (!p || p.total < 2) return "latest turn"
+    return `${p.latest ? "latest turn" : "turn"} ${p.index + 1}/${p.total}`
+  }
+
   private footer(width: number, position: string): string {
     const n = this.messages.length
+    const turns = (this.position?.total ?? 1) > 1
     const scrolls = position !== ""
     if (this.flash !== "" && !this.composer) return ` ${truncateToWidth(this.flash, Math.max(1, width - 6), "…")} `
     const chunk = this.focus && (this.cache?.chunks.length ?? 0) > 0
@@ -473,6 +518,7 @@ export class TurnReader implements Component {
       ? [["enter save", 9], ["alt+enter newline", 1], ["esc cancel", 9]]
       : [
           [position, 2],
+          [turns ? "←→ turn" : "", 7],
           [n > 1 ? `${MODE_KEY} ${this.all ? "last" : "all"}` : "", 4],
           [this.speakable ? (this.focus ? "s speak chunk" : "s speak") : "", 3],
           [`${FOCUS_KEY} ${this.focus ? "unfocus" : "focus"}`, 9],
