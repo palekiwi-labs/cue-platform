@@ -24,7 +24,7 @@ import { currentContext, slugOf } from "../lib/current-context"
 import { cueBestEffort } from "./common"
 import { injectArgs } from "./context-inject"
 import { linkContext } from "./context-pins"
-import { currentTask, taskContextOf } from "../lib/session-task"
+import { currentTask, normalizeTaskAddress, setSessionTask, taskContextOf } from "../lib/session-task"
 
 /** Open the contexts view. Replaces the old pins picker on this key. */
 export const CONTEXTS_SHORTCUT = "ctrl+t"
@@ -338,6 +338,15 @@ export async function openBrowser(
           return r.code === 0 ? undefined : r.stderr.trim() || `cue context ${cmd} failed`
         },
         link: (address) => linkContext(pi, ctx, address),
+        setTask: async (address) => {
+          const normalized = normalizeTaskAddress(address)
+          if (!normalized) return `not a task address: ${address}`
+          if (!existsSync(join(storeRoot(ctx.cwd), normalized))) return `no such task: ${normalized}`
+          const context = taskContextOf(normalized)!
+          if (sessionAddress() !== context) await linkContext(pi, ctx, context)
+          setSessionTask(pi, ctx, normalized)
+          return undefined
+        },
         linkBlocker: (address) => {
           const task = currentTask(ctx.sessionManager.getBranch())
           return task && taskContextOf(task) !== address ? `active task ${slugOf(task)}` : undefined
