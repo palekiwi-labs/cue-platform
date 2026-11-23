@@ -46,7 +46,7 @@ describe("summarizeInjection", () => {
     expect(s.kind).toBe("work")
     expect(s.mode).toBe("design")
     expect(s.sections.map((x) => x.label)).toEqual([
-      "session", "identity", "misc", "log (2 of 5)", "tasks (2)", "hand-off", "note",
+      "session", "identity", "log (2 of 5)", "tasks (2)", "hand-off", "note",
     ])
     expect(s.sections.every((x) => x.tokens > 0)).toBe(true)
     expect(s.total).toBeGreaterThan(0)

@@ -46,7 +46,8 @@ function sectionLabel(tag: string, attrs: string, body: string): string {
 /**
  * Split an injected cue-context message into its sections and count each
  * with the o200k tokenizer. Text before the explore block is the session
- * preamble, loose lines inside it are misc, and text after it is the note.
+ * preamble and text after it is the note; loose lines inside it count only
+ * toward the total.
  */
 export function summarizeInjection(content: string): InjectionSummary {
   const lines = content.replace(/\r\n/g, "\n").split("\n")
@@ -58,9 +59,8 @@ export function summarizeInjection(content: string): InjectionSummary {
   const flushLoose = () => {
     const text = loose.join("\n").trim()
     loose = []
-    if (text === "") return
-    const label = phase === "explore" ? "misc" : phase
-    sections.push({ label, tokens: countTokens(text) })
+    if (text === "" || phase === "explore") return
+    sections.push({ label: phase, tokens: countTokens(text) })
   }
 
   for (let i = 0; i < lines.length; i++) {
