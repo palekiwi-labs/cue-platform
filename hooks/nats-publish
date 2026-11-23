@@ -17,7 +17,7 @@ payload=$(cat) || fail "cannot read payload"
 fields=$(jq -er '
   (.address | split("/")) as $p
   | [.event, .address, ($p[0:3] | join("/")),
-     (if .event == "context_create" then "context"
+     (if .event == "context_create" or .event == "context_update" then "context"
       elif .event == "log_entry_add" then "log"
       else ($p[3] // "") end),
      ($p[4:] | join("/"))]
@@ -38,7 +38,7 @@ cue_read() {
 }
 
 case $event in
-  context_create)
+  context_create|context_update)
     extra=$(cue_read status --context "$context" --json \
       | jq -c '{title: (.title // null), kind: (.kind // null)}') ;;
   log_entry_add)
@@ -66,14 +66,13 @@ depth=${CUE_HOOK_DEPTH:-0}
 message=$(jq -c \
   --arg context "$context" \
   --arg type "$type" \
-  --arg session "${PI_SESSION_ID:-}" \
   --arg parent "${CUE_HOOK_PARENT_EVENT_ID:-}" \
   --arg root "${CUE_HOOK_ROOT_EVENT_ID:-}" \
   --argjson depth "$depth" \
   --argjson extra "$extra" '
   def nonempty: if . == "" then null else . end;
   (. + {context: $context, type: $type, title: null,
-        origin_session: ($session | nonempty),
+        origin_session: (.session_id // null),
         parent_event_id: ($parent | nonempty),
         root_event_id: (($root | nonempty) // .event_id),
         depth: $depth}

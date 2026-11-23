@@ -12,11 +12,16 @@ Publishes every hook event to NATS, core publish, fire and forget:
     cue.evt.v1.<base64url(context address)>.<event>
 
 The body is the hook payload plus `context`, `type`, `title`,
-`origin_session` (`$PI_SESSION_ID`, else null), `parent_event_id`,
+`origin_session` (the payload's `session_id`, else null), `parent_event_id`,
 `root_event_id` and `depth`; artifacts may add `status`, contexts `kind`,
 log entries `trace`. Lineage is also sent as the headers
 `Cue-Root-Event-Id`, `Cue-Parent-Event-Id` (omitted at the root) and
 `Cue-Depth`.
+
+`context_update` is enriched as a context, just like `context_create`.
+Mutation fields (`mutation_id`, `field`, `old`, `new`) pass through unchanged.
+Update subjects have no field suffix. The publisher does not infer session
+attribution from its own environment.
 
 Requires `bash`, `jq`, the `nats` CLI and `cue` on PATH (`nats` falls
 back to `/run/current-system/sw/bin/nats`; `$CUE_BIN` overrides `cue`).
