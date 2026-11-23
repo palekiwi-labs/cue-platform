@@ -500,6 +500,137 @@ describe("copying from the reader", () => {
   })
 })
 
+describe("turn navigation in the reader", () => {
+  const LEFT = "\x1b[D"
+  const RIGHT = "\x1b[C"
+  const ENTER = "\r"
+  let runs = 0
+  const say = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] })
+  const branch = () => {
+    const id = `walk-${++runs}`
+    return [
+      { type: "message", id: `${id}-1`, message: { role: "user", content: "q1" } },
+      { type: "message", message: say("first one\n\nfirst two") },
+      { type: "message", id: `${id}-2`, message: { role: "user", content: "q2" } },
+      { type: "message", message: { role: "assistant", content: [{ type: "toolCall" }] } },
+      { type: "message", id: `${id}-3`, message: { role: "user", content: "q3" } },
+      { type: "message", message: say("third a") },
+      { type: "message", message: say("third b") },
+    ]
+  }
+  const head = (f: string[] | undefined) => f?.[0] ?? ""
+  const foot = (f: string[] | undefined) => f?.at(-1) ?? ""
+  const hasLine = (f: string[] | undefined, s: string) => f?.some((l) => l.includes(s)) ?? false
+
+  test("opens on the latest turn; left and right step through turns with text, stopping at either end", async () => {
+    const { ctx, keys, frames, rendered, events } = fakeCtx(branch())
+    keys.push(LEFT, LEFT, RIGHT, RIGHT, "q")
+    await openTurnReader(ctx)
+    expect(head(rendered())).toContain(" latest turn 2/2 · last of 2 messages ")
+    expect(hasLine(rendered(), "third b")).toBe(true)
+    expect(foot(rendered())).toContain("←→ turn")
+    expect(head(frames[0])).toContain(" turn 1/2 · 1 message · chunk 1/2 ")
+    expect(hasLine(frames[0], "first one")).toBe(true)
+    expect(head(frames[1])).toContain(" turn 1/2 ")
+    expect(foot(frames[1])).toContain(" already at the first turn ")
+    expect(head(frames[2])).toContain(" latest turn 2/2 ")
+    expect(foot(frames[3])).toContain(" already at the latest turn ")
+    expect(events.filter((e) => e === "done")).toHaveLength(1)
+  })
+
+  test("the last or all messages mode is kept across turns", async () => {
+    const { ctx, keys, frames } = fakeCtx(branch())
+    keys.push("a", LEFT, RIGHT, "q")
+    await openTurnReader(ctx)
+    expect(head(frames[0])).toContain("all 2 messages")
+    expect(head(frames[1])).toContain("1 message")
+    expect(head(frames[2])).toContain("all 2 messages")
+  })
+
+  test("comments stay with their turn across navigation and reopening", async () => {
+    const b = branch()
+    const { ctx, keys, frames } = fakeCtx(b)
+    keys.push("c", "n", ENTER, LEFT, "c", "o", ENTER, RIGHT, "q")
+    await openTurnReader(ctx)
+    expect(head(frames[3])).toContain(" turn 1/2 ")
+    expect(head(frames[3])).not.toContain("comment")
+    expect(hasLine(frames[3], "┃ n")).toBe(false)
+    expect(hasLine(frames[6], "┃ o")).toBe(true)
+    expect(head(frames[7])).toContain(" latest turn 2/2 · last of 2 messages · chunk 1/1 · 1 c")
+    expect(hasLine(frames[7], "┃ n")).toBe(true)
+    expect(hasLine(frames[7], "┃ o")).toBe(false)
+
+    const again = fakeCtx(b)
+    again.keys.push(LEFT, "q")
+    await openTurnReader(again.ctx)
+    expect(hasLine(again.rendered(), "┃ n")).toBe(true)
+    expect(hasLine(again.frames[0], "┃ o")).toBe(true)
+  })
+
+  test("enter inserts only the displayed turn's comments, keeping the other turn's drafts", async () => {
+    const b = branch()
+    const first = fakeCtx(b, true, "draft")
+    first.keys.push("c", "n", ENTER, LEFT, "c", "o", ENTER, ENTER)
+    await openTurnReader(first.ctx)
+    expect(first.editor.text).toBe("draft\n\n> first one\n\no")
+    expect(first.events.at(-1)).toBe("done")
+
+    const again = fakeCtx(b, true, "")
+    again.keys.push(ENTER)
+    await openTurnReader(again.ctx)
+    expect(again.editor.text).toBe("> third b\n\nn")
+  })
+
+  test("left and right go to the comment editor while composing", async () => {
+    const { ctx, keys, frames } = fakeCtx(branch())
+    keys.push("c", "b", LEFT, "a", RIGHT, "c", ENTER, "q")
+    await openTurnReader(ctx)
+    const saved = frames.at(-2)!
+    expect(head(saved)).toContain(" latest turn 2/2 ")
+    expect(hasLine(saved, "┃ abc")).toBe(true)
+  })
+
+  test("while running only the latest turn is marked as a snapshot", async () => {
+    const { ctx, keys, frames, rendered } = fakeCtx(branch().slice(0, 6), false)
+    keys.push(LEFT, RIGHT, "q")
+    await openTurnReader(ctx)
+    expect(head(rendered())).toContain("snapshot")
+    expect(head(frames[0])).not.toContain("snapshot")
+    expect(head(frames[1])).toContain("snapshot")
+  })
+
+  test("the streaming message belongs to the latest turn, and earlier turns stay reachable", async () => {
+    const pi = { on: (name: string, h: Function) => (handlers[name] = h), registerCommand() {}, registerShortcut() {} }
+    const handlers: Record<string, Function> = {}
+    registerTurnReader(pi as unknown as ExtensionAPI)
+    const b = branch().slice(0, 5)
+    handlers.message_start!({ message: { ...say("streaming"), timestamp: 42 } })
+    const { ctx, keys, frames, rendered } = fakeCtx(b, false)
+    keys.push(LEFT, "q")
+    await openTurnReader(ctx)
+    handlers.agent_end!()
+    expect(head(rendered())).toContain(" latest turn 2/2 · 1 message · chunk 1/1 · snapshot ")
+    expect(hasLine(rendered(), "streaming")).toBe(true)
+    expect(hasLine(frames[0], "first one")).toBe(true)
+  })
+
+  test("without text in the latest turn the reader does not open, even with earlier turns", async () => {
+    const { ctx, notes, events } = fakeCtx(branch().slice(0, 5))
+    await openTurnReader(ctx)
+    expect(notes).toEqual(["No assistant text in the latest turn yet"])
+    expect(events).toEqual([])
+  })
+
+  test("s on an earlier turn speaks it with focus off", async () => {
+    const { ctx, keys, notes } = fakeCtx(branch())
+    const requests: (readonly string[])[] = []
+    keys.push(LEFT, "f", READER_SPEAK_KEY, "q")
+    await openTurnReader(ctx, { request: (t: readonly string[]) => (requests.push(t), "sent" as SpeakResult) })
+    expect(requests).toEqual([["first one\n\nfirst two"]])
+    expect(notes).toEqual(["Speaking the turn"])
+  })
+})
+
 describe("registerTurnReader", () => {
   test("registers the read command and the shortcut", () => {
     const commands: string[] = []

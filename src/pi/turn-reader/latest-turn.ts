@@ -16,15 +16,14 @@ interface BranchEntry {
   message?: ReaderMessage
 }
 
-/**
- * Identity of the latest turn: the entry id of its user message, else that
- * message's timestamp or position. Undefined when there is no user message.
- */
-export function latestTurnKey(branch: readonly BranchEntry[]): string | undefined {
-  const at = branch.findLastIndex((e) => e.type === "message" && e.message?.role === "user")
-  if (at < 0) return undefined
-  const entry = branch[at]!
-  return entry.id ?? (entry.message?.timestamp !== undefined ? `t${entry.message.timestamp}` : `#${at}`)
+/** One user turn of a session branch. */
+export interface BranchTurn {
+  /** The entry id of the user message, else its timestamp or branch position. */
+  key: string
+  /** Text of each assistant message of the turn, oldest first. */
+  texts: string[]
+  /** Whether this is the last turn of the branch. */
+  latest: boolean
 }
 
 function assistantText(message: ReaderMessage): string {
@@ -38,17 +37,36 @@ function assistantText(message: ReaderMessage): string {
 }
 
 /**
- * Text of each assistant message since the latest user message, oldest
- * first, one entry per message. Thinking, tool calls, tool results and
- * messages without text are left out. `live` is the assistant message still
- * streaming; it is added unless the branch already holds it.
+ * Every user turn of the branch, oldest first, each with the text of its
+ * assistant messages, one entry per message. Thinking, tool calls, tool
+ * results and messages without text are left out; turns may have no text.
+ * `live` is the assistant message still streaming; it is added to the last
+ * turn unless the branch already holds it.
  */
+export function branchTurns(branch: readonly BranchEntry[], live?: ReaderMessage): BranchTurn[] {
+  const turns: { key: string; messages: ReaderMessage[] }[] = []
+  branch.forEach((entry, at) => {
+    const message = entry.type === "message" ? entry.message : undefined
+    if (message?.role === "user") {
+      const key = entry.id ?? (message.timestamp !== undefined ? `t${message.timestamp}` : `#${at}`)
+      turns.push({ key, messages: [] })
+    } else if (message?.role === "assistant") turns.at(-1)?.messages.push(message)
+  })
+  const last = turns.at(-1)
+  if (last && live?.role === "assistant") {
+    const persisted = last.messages.some(
+      (m) => m === live || (m.timestamp !== undefined && m.timestamp === live.timestamp),
+    )
+    if (!persisted) last.messages.push(live)
+  }
+  return turns.map((turn, i) => ({
+    key: turn.key,
+    texts: turn.messages.map(assistantText).filter((t) => t !== ""),
+    latest: i === turns.length - 1,
+  }))
+}
+
+/** Text of each assistant message of the branch's latest turn; see `branchTurns`. */
 export function latestTurnTexts(branch: readonly BranchEntry[], live?: ReaderMessage): string[] {
-  const messages = branch.flatMap((e) => (e.type === "message" && e.message ? [e.message] : []))
-  const start = messages.findLastIndex((m) => m.role === "user")
-  if (start < 0) return []
-  const turn = messages.slice(start + 1).filter((m) => m.role === "assistant")
-  const persisted = live && turn.some((m) => m === live || (m.timestamp !== undefined && m.timestamp === live.timestamp))
-  if (live?.role === "assistant" && !persisted) turn.push(live)
-  return turn.map(assistantText).filter((t) => t !== "")
+  return branchTurns(branch, live).at(-1)?.texts ?? []
 }

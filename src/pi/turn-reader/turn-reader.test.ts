@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { MarkdownTheme } from "@earendil-works/pi-tui"
-import { latestTurnTexts } from "./latest-turn"
+import { branchTurns, latestTurnTexts } from "./latest-turn"
 import { Editor, setKittyProtocolActive, visibleWidth } from "@earendil-works/pi-tui"
 import { TurnComments } from "./comments"
 import { COPY_KEY, faint, FOCUS_KEY, MODE_KEY, readerHeight, readerWidth, TEXT_WIDTH, TurnReader } from "./reader"
@@ -38,6 +38,34 @@ describe("latestTurnTexts", () => {
     const live = { role: "assistant", content: [text("partial")], timestamp: 2 }
     expect(latestTurnTexts(branch, live)).toEqual(["done", "partial"])
     expect(latestTurnTexts(branch, { ...live, timestamp: 1 })).toEqual(["done"])
+  })
+})
+
+describe("branchTurns", () => {
+  test("splits the branch into user turns, oldest first, keyed by entry id, timestamp or position", () => {
+    const turns = branchTurns([
+      assistant(0, text("before any user")),
+      { ...user("a"), id: "u1" },
+      assistant(1, text("one")),
+      toolResult(),
+      assistant(2, text("two")),
+      { type: "message", message: { role: "user", content: "b", timestamp: 5 } },
+      assistant(3, { type: "toolCall" }),
+      user("c"),
+      assistant(4, text("three")),
+    ])
+    expect(turns).toEqual([
+      { key: "u1", texts: ["one", "two"], latest: false },
+      { key: "t5", texts: [], latest: false },
+      { key: "#7", texts: ["three"], latest: true },
+    ])
+  })
+
+  test("adds the streaming message to the last turn only", () => {
+    const live = { role: "assistant", content: [text("partial")], timestamp: 9 }
+    const turns = branchTurns([user("a"), assistant(1, text("old")), user("b")], live)
+    expect(turns.map((t) => t.texts)).toEqual([["old"], ["partial"]])
+    expect(branchTurns([assistant(1, text("x"))], live)).toEqual([])
   })
 })
 
@@ -865,5 +893,55 @@ describe("TurnReader comment navigation", () => {
     reader.comment(new Editor({ terminal: { rows: 40 }, requestRender: () => {} } as never, { borderColor: id, selectList: {} as never }))
     expect(reader.jumpComment(1)).toBe(false)
     expect(head(reader.render(60))).toBe("chunk 1/2")
+  })
+})
+
+describe("TurnReader turn navigation", () => {
+  const head = (lines: string[]) => lines[0]!
+  const editor = () =>
+    new Editor({ terminal: { rows: 40 }, requestRender: () => {} } as never, { borderColor: id, selectList: {} as never })
+
+  test("the header shows the turn position, latest or earlier, and a single turn reads as before", () => {
+    const latest = new TurnReader(plain, md, ["x"], () => 40, false, false, new TurnComments(), { index: 2, total: 3, latest: true })
+    expect(head(latest.render(60))).toStartWith("╭─ latest turn 3/3 · 1 message ")
+    expect(latest.render(86).at(-1)).toContain("←→ turn")
+    const only = new TurnReader(plain, md, ["x"], () => 40, false, false, new TurnComments(), { index: 0, total: 1, latest: true })
+    expect(head(only.render(60))).toStartWith("╭─ latest turn · 1 message ")
+    expect(only.render(86).at(-1)).not.toContain("←→")
+  })
+
+  test("showTurn swaps messages and comments, keeps the mode and focus, and starts at the top", () => {
+    const newer = new TurnComments()
+    newer.save("1:0", "b1", "on newer")
+    const older = new TurnComments()
+    const reader = new TurnReader(plain, md, ["a1", "b1\n\nb2"], () => 40, true, false, newer, { index: 1, total: 2, latest: true })
+    reader.toggle()
+    reader.render(60)
+    reader.move(1)
+    reader.move(1)
+    expect(head(reader.render(60))).toContain("chunk 3/3")
+    reader.showFlash("x")
+    expect(reader.showTurn(["c1\n\nc2", "d1"], older, { index: 0, total: 2, latest: false })).toBe(true)
+    const lines = reader.render(60)
+    expect(head(lines)).toStartWith("╭─ turn 1/2 · all 2 messages · chunk 1/3 ")
+    expect(head(lines)).not.toContain("snapshot")
+    expect(head(lines)).not.toContain("comment")
+    expect(lines.some((l) => l.includes("on newer"))).toBe(false)
+    expect(lines.at(-1)).not.toContain(" x ")
+    expect(reader.latest()).toBe(false)
+    reader.render(60)
+    reader.comment(editor())
+    reader.composeInput("o")
+    reader.composeInput("\r")
+    expect(older.entries()).toEqual([["0:0", { quote: "c1", text: "o" }]])
+    expect(newer.entries()).toEqual([["1:0", { quote: "b1", text: "on newer" }]])
+  })
+
+  test("showTurn is ignored while composing", () => {
+    const reader = new TurnReader(plain, md, ["a"], () => 40, false, false, new TurnComments(), { index: 1, total: 2, latest: true })
+    reader.render(60)
+    reader.comment(editor())
+    expect(reader.showTurn(["b"], new TurnComments(), { index: 0, total: 2, latest: false })).toBe(false)
+    expect(head(reader.render(60))).toContain("latest turn 2/2")
   })
 })
