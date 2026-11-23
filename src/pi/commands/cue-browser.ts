@@ -346,7 +346,7 @@ export async function openBrowser(
         create: (address, type, filename) =>
           createArtifact(pi, ctx.cwd, address, type, filename),
         newSession: (address, target) => newSession(pi, ctx, address, target),
-        loadSessions: (repoScope) => loadSessions(pi, ctx.cwd, repoScope),
+        loadSessions: (repoScope, onProgress) => loadSessions(pi, ctx.cwd, repoScope, onProgress),
         currentSession: () => ctx.sessionManager.getSessionFile(),
         currentCwd: () => {
           const cwd = ctx.sessionManager.getCwd()
