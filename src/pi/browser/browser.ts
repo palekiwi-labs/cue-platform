@@ -101,6 +101,8 @@ export interface BrowserDeps {
   link(address: string): Promise<void>
   /** Why linking needs confirmation (an active task elsewhere), or undefined. */
   linkBlocker(address: string): string | undefined
+  /** Set the session's active task; returns an error message on failure. */
+  setTask(address: string): Promise<string | undefined>
   /** Suspend pi and edit a file in $EDITOR; resolves when it exits. */
   editFile(path: string): Promise<void>
   /** Open a file in a new tmux window; returns an error message on failure. */
@@ -838,6 +840,7 @@ export class CueBrowser implements Component {
       add("ctrl+a", "activity", "navigate", pushContext((c) => this.pushActivity(c)), m("open"))
       add("ctrl+g", "log", "navigate", pushContext((c) => this.pushLog(c)), m("open"))
     } else if (v.kind === "artifacts") {
+      add("ctrl+l", "set active task", "act", () => this.onSetTask(), m("act"))
       add("alt+t", "tree/flat", "view", () => this.relayoutArtifacts(v, () => { v.tree = !v.tree }))
       if (v.tree) {
         add("alt+z", "fold", "view", () => this.onFoldArtifacts(v), m("view"))
@@ -1548,6 +1551,22 @@ export class CueBrowser implements Component {
       return
     }
     await this.deps.link(c.address)
+    this.done()
+  }
+
+  private async onSetTask(): Promise<void> {
+    const a = this.selectedArtifact()
+    if (!a || a.type !== "task") {
+      this.notify("the selected artifact is not a task")
+      return
+    }
+    const address = this.selectedAddress()
+    if (!address) return
+    const err = await this.deps.setTask(address)
+    if (err) {
+      this.notify(`set task failed: ${err}`)
+      return
+    }
     this.done()
   }
 

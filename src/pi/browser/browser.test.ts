@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test"
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS, type TUI } from "@earendil-works/pi-tui"
 import { CueBrowser, type BrowserDeps, type BrowserStart } from "./browser"
-import { parseContextTree } from "./model"
+import { type ArtifactRow, parseContextTree } from "./model"
 
 async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const saved: number[] = []
   const resumed: string[] = []
   const artifactsOf: string[] = []
+  const setTasks: string[] = []
+  const artifacts: ArtifactRow[] = []
   const contexts = parseContextTree(JSON.stringify({ roots: [
     { context: "fresh", scope: "o/r", last_logged_at: Math.floor(Date.now() / 1000), children: [] },
     { context: "old-context", scope: "o/r", children: [] },
@@ -26,7 +28,8 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
     currentSession: () => undefined,
     currentCwd: () => ({ cwd: "/w" }),
     resume: (s: { path: string }) => { resumed.push(s.path); return undefined },
-    loadArtifacts: async (address: string) => { artifactsOf.push(address); return [] },
+    loadArtifacts: async (address: string) => { artifactsOf.push(address); return artifacts },
+    setTask: async (address: string) => { setTasks.push(address); return undefined },
   } as unknown as BrowserDeps
   const tui = { requestRender() {}, terminal: { rows: 30, columns: 160 } } as unknown as TUI
   const theme = { fg: (_: string, s: string) => s, bg: (_: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
@@ -37,7 +40,7 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const browser = new CueBrowser(tui, theme, kb, deps, () => {}, start, "here")
   browser.handleInput("\x1bp")
   await new Promise(resolve => setTimeout(resolve, 0))
-  return { browser, saved, resumed, artifactsOf, text: () => browser.render(160).join("\n") }
+  return { browser, saved, resumed, artifactsOf, setTasks, artifacts, text: () => browser.render(160).join("\n") }
 }
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -77,6 +80,23 @@ describe("CueBrowser alt+a artifacts", () => {
     s.browser.handleInput("\r")
     await tick()
     expect(s.resumed).toEqual(["/missing"])
+  })
+  test("artifacts: ctrl+l sets the selected task as the active task", async () => {
+    const s = await setup("artifacts", 30)
+    const now = Math.floor(Date.now() / 1000)
+    s.artifacts.push(
+      { path: "/cue/o/r/fresh/plan/x.md", name: "x.md", type: "plan", title: "x", status: null, priority: null, createdAt: now },
+      { path: "/cue/o/r/fresh/task/t.md", name: "t.md", type: "task", title: "t", status: "open", priority: null, createdAt: now - 1 },
+    )
+    s.browser.handleInput("\x1br")
+    await tick()
+    await s.browser.handleInput("\x0c")
+    await tick()
+    expect(s.setTasks).toEqual([])
+    s.browser.handleInput("\x1b[B")
+    await s.browser.handleInput("\x0c")
+    await tick()
+    expect(s.setTasks).toEqual(["o/r/fresh/task/t.md"])
   })
 })
 
