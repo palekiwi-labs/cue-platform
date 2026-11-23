@@ -3,6 +3,7 @@ import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { currentContext } from "../pi/lib/current-context"
+import { currentTask } from "../pi/lib/session-task"
 import { createNatsClient, type NatsClient } from "./client"
 import {
   agentNameOf,
@@ -85,6 +86,14 @@ export function readContextTitle(address: string | undefined, env: NodeJS.Proces
   }
 }
 
+function activeTask(ctx: ExtensionContext): string | undefined {
+  try {
+    return currentTask(ctx.sessionManager.getBranch() as never)
+  } catch {
+    return undefined
+  }
+}
+
 function sessionDescription(ctx: ExtensionContext): string | undefined {
   try {
     const branch = ctx.sessionManager.getBranch()
@@ -113,6 +122,7 @@ function identity(ctx: ExtensionContext, host: string, env: NodeJS.ProcessEnv): 
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
     context,
     context_title: readContextTitle(context, env),
+    active_task: activeTask(ctx),
     run_id: runIdOf(sid),
     agent: agentNameOf(env),
     pid: process.pid,
@@ -208,7 +218,12 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
       delete tracker.row.context_title
       tracker.update({ context_title: readContextTitle(context, env) })
     }
-    tracker.update({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, context })
+    delete tracker.row.active_task
+    tracker.update({
+      model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+      context,
+      active_task: activeTask(ctx),
+    })
     if (event.messageType === "user") emitAndPut(tracker.input(event.prompt, "user"))
     else emitAndPut(tracker.input(event.message.customType ?? "custom", "custom"))
   })
@@ -246,7 +261,13 @@ export function registerNatsTelemetry(pi: ExtensionAPI, options: NatsTelemetryOp
     delete t.row.session_description
     delete t.row.tmux_window
     delete t.row.tmux_session
-    t.update({ session_description: sessionDescription(ctx), tmux_window: names.window, tmux_session: names.session })
+    delete t.row.active_task
+    t.update({
+      session_description: sessionDescription(ctx),
+      active_task: activeTask(ctx),
+      tmux_window: names.window,
+      tmux_session: names.session,
+    })
     emitAndPut(t.settled(event.aborted))
   })
 

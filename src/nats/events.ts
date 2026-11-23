@@ -40,6 +40,7 @@ export interface AgentIdentity {
   model?: string
   context?: string
   context_title?: string
+  active_task?: string
   run_id?: string
   agent?: string
   pid?: number
@@ -354,13 +355,14 @@ export class SessionTracker {
     const tools = this.toolsDone
     this.busySince = undefined
     this.toolsDone = 0
-    const { context, context_title, session_name, session_description, tmux_window, tmux_session, cwd, run_id, agent } =
+    const { context, context_title, active_task, session_name, session_description, tmux_window, tmux_session, cwd, run_id, agent } =
       this.row
     const fields: Record<string, unknown> = {
       aborted,
       errored,
       context,
       context_title,
+      active_task,
       session_name,
       session_description,
       tmux_window,
