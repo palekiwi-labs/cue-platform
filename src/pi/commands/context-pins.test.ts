@@ -162,6 +162,7 @@ function setup(opts: {
   let selectCalls = 0
   const pi = {
     registerShortcut: () => {},
+    registerMessageRenderer: () => {},
     registerCommand: (_n: string, o: { handler: typeof handler }) => {
       handler = o.handler
     },
