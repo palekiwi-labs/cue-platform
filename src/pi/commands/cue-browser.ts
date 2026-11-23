@@ -2,7 +2,7 @@ import { withViewSwitch } from "../lib/view-switch"
 import { defaultTarget } from "../lib/default-target"
 import { spawn, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
-import { readFile, unlink } from "node:fs/promises"
+import { readFile, stat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import {
@@ -17,7 +17,8 @@ import { type BrowserDeps, type BrowserStart, CueBrowser, type Target } from "..
 import { parseActivity, sortActivity } from "../browser/activity"
 import { parseLog, sortLog } from "../browser/log"
 import { parseArtifacts, parseContextTree } from "../browser/model"
-import { inScopes, type SessionRow, scopeOfRemote, sessionMeta } from "../browser/sessions"
+import { fallbackDescription, inScopes, parseSession, type SessionRow, scopeOfRemote } from "../browser/sessions"
+import { loadSessionRows, sessionFiles, type SessionRowsProgress } from "../lib/session-files"
 import { currentContext, slugOf } from "../lib/current-context"
 import { cueBestEffort } from "./common"
 import { linkContext } from "./context-pins"
@@ -167,32 +168,40 @@ export function saveRecencyDays(cwd: string, days: number): void {
   }
 }
 
-/** Every pi session in the scopes of this repository's context tree. */
+/**
+ * Every pi session in the scopes of this repository's context tree,
+ * newest first. Each session file is parsed once, in pi's order and
+ * concurrency; `onProgress` receives the in-scope rows loaded so far.
+ */
 export async function loadSessions(
   pi: ExtensionAPI,
   cwd: string,
   repoScope = false,
+  onProgress?: SessionRowsProgress,
 ): Promise<SessionRow[]> {
-  const [tree, infos] = await Promise.all([
+  const [tree, paths] = await Promise.all([
     cueBestEffort(pi, cwd, ["context", "tree", "--json", ...(repoScope ? ["--scope", "repo"] : [])]),
-    SessionManager.listAll(),
+    sessionFiles(join(getAgentDir(), "sessions")),
   ])
   const scopes = new Set(parseContextTree(tree).map((c) => c.scope))
-  const rows = await Promise.all(infos.map(async (info): Promise<SessionRow> => {
-    const meta = sessionMeta(await readFile(info.path, "utf8").catch(() => ""))
-    const fallback = (info.name?.trim() || info.firstMessage || "(empty)").replace(/\s+/g, " ").slice(0, 80)
-    return {
-      path: info.path,
-      cwd: info.cwd,
-      cwdScope: info.cwd ? cwdScope(info.cwd) : undefined,
-      address: meta.address,
-      description: meta.description ?? fallback,
-      label: meta.label,
-      tokens: meta.tokens,
-      modified: Math.floor(info.modified.getTime() / 1000),
-    }
-  }))
-  return inScopes(rows, scopes, cwdScope)
+  return loadSessionRows(paths, sessionRow, (rows) => inScopes(rows, scopes, cwdScope), onProgress)
+}
+
+async function sessionRow(path: string): Promise<SessionRow | null> {
+  const parsed = parseSession(await readFile(path, "utf8"))
+  if (!parsed) return null
+  const { cwd, meta } = parsed
+  const modified = parsed.modified ?? (await stat(path)).mtimeMs
+  return {
+    path,
+    cwd,
+    cwdScope: cwd ? cwdScope(cwd) : undefined,
+    address: meta.address,
+    description: meta.description ?? fallbackDescription(parsed.name, parsed.firstMessage),
+    label: meta.label,
+    tokens: meta.tokens,
+    modified: Math.floor(modified / 1000),
+  }
 }
 
 /** Root of the cue store, as cue itself resolves it; cached. */
