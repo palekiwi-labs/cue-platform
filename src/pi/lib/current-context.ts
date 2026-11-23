@@ -13,10 +13,13 @@
  * store and forks or tree navigation follow it naturally.
  */
 
+import type { InjectionSummary } from "../injection-render"
+
 export const CUE_CONTEXT_TYPE = "cue-context"
 
 export interface CueContextDetails {
   address: string
+  summary?: InjectionSummary
 }
 
 /** Minimal entry shape read from `sessionManager.getBranch()`. */

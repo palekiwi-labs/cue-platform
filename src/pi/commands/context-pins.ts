@@ -15,6 +15,7 @@ import {
   type SessionStateCtx,
   syncSessionState,
 } from "../lib/session-task"
+import { summarizeInjection } from "../injection-render"
 import { parseTree, treePrefix, type TreeEntry } from "../lib/context-tree"
 import { fuzzySelect, type PickItem } from "../lib/fuzzy-select"
 import { formatGitContext, gitContext } from "../lib/git-context"
@@ -57,12 +58,13 @@ export async function injectContext(
   note?: string,
   handoff?: { address: string; briefing: string },
 ): Promise<void> {
-  const details: CueContextDetails = { address }
   const orientation = await contextOrientation(pi, ctx.cwd, address)
   clearTaskOutside(pi, ctx, address)
+  const content = [orientation, handoff?.briefing, note].filter(Boolean).join("\n\n")
+  const details: CueContextDetails = { address, summary: summarizeInjection(content) }
   pi.sendMessage({
     customType: CUE_CONTEXT_TYPE,
-    content: [orientation, handoff?.briefing, note].filter(Boolean).join("\n\n"),
+    content,
     display: true,
     details,
   })
