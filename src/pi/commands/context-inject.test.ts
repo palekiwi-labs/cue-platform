@@ -17,10 +17,13 @@ import {
 const dir = mkdtempSync(join(tmpdir(), "cue-inject-"))
 const handoffFile = join(dir, "handoff-a.md")
 writeFileSync(handoffFile, "# Selected state\n")
+const taskFile = join(dir, "t.md")
+writeFileSync(taskFile, "---\nstatus: open\n---\n\n# The goal\n\nShip it.\n")
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const artifacts = [
   { path: handoffFile, name: "handoff-a.md", type: "trace", frontmatter: { created_at: 1 } },
   { path: join(dir, "missing.md"), name: "handoff-b.md", type: "trace", frontmatter: { created_at: 2 } },
+  { path: taskFile, name: "t.md", type: "task", frontmatter: { status: "open" } },
 ]
 
 describe("parseAddress", () => {
@@ -52,9 +55,19 @@ describe("parseInjectArgs", () => {
     expect(parseInjectArgs("a/b/c --handoff a/b/c/trace/h.md <pr>\nx\n</pr>")).toEqual({
       address: "a/b/c", handoff: "a/b/c/trace/h.md", note: "<pr>\nx\n</pr>",
     })
-    expect(parseInjectArgs("a/b/c --handoff")).toEqual({ address: "a/b/c", missingHandoff: true })
+    expect(parseInjectArgs("a/b/c --handoff")).toEqual({ address: "a/b/c", missingFlag: "handoff" })
+    expect(parseInjectArgs("a/b/c --task")).toEqual({ address: "a/b/c", missingFlag: "task" })
     expect(parseInjectArgs("a/b/c --handoffs later").note).toBe("--handoffs later")
     expect(parseInjectArgs("a/b/c note --handoff x").handoff).toBeUndefined()
+  })
+
+  test("--task names the task to start on, before or after --handoff", () => {
+    expect(parseInjectArgs("a/b/c --task a/b/c/task/t.md")).toEqual({
+      address: "a/b/c", task: "a/b/c/task/t.md", note: undefined,
+    })
+    expect(parseInjectArgs("a/b/c --handoff a/b/c/trace/h.md --task a/b/c/task/t.md n")).toEqual({
+      address: "a/b/c", task: "a/b/c/task/t.md", handoff: "a/b/c/trace/h.md", note: "n",
+    })
   })
 })
 
@@ -66,6 +79,10 @@ describe("injectArgs", () => {
     expect(parseInjectArgs(args)).toEqual({
       address: "a/b/c", handoff: "a/b/c/trace/handoff-x.md", note: "two\nlines",
     })
+    const taskArgs = injectArgs("a/b/c", { task: "a/b/c/task/t.md" })
+    expect(parseInjectArgs(taskArgs)).toEqual({
+      address: "a/b/c", task: "a/b/c/task/t.md", note: undefined,
+    })
   })
 })
 
@@ -74,6 +91,7 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
   const sent: { message: any; options: unknown }[] = []
   const notes: string[] = []
   const names: string[] = []
+  const entries: any[] = []
   const calls: string[][] = []
   const pi = {
     events: { emit() {} },
@@ -82,6 +100,9 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
     },
     sendMessage: (message: unknown, options?: unknown) => {
       sent.push({ message, options })
+    },
+    appendEntry: (type: string, data: unknown) => {
+      entries.push({ type, data })
     },
     setSessionName: (n: string) => names.push(n),
     exec: async (cmd: string, args: string[]) => {
@@ -101,7 +122,7 @@ function setup(opts: { exists?: boolean; idle?: boolean } = {}) {
     sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
   } as unknown as ExtensionCommandContext
   registerContextInjectCommand(pi)
-  return { run: (a: string) => handler(a, ctx), sent, notes, names, calls }
+  return { run: (a: string) => handler(a, ctx), sent, notes, names, entries, calls }
 }
 
 describe("/cue:context:inject", () => {
@@ -164,6 +185,42 @@ describe("/cue:context:inject", () => {
     expect(s.notes).toHaveLength(1)
     expect(s.notes[0]).toContain(message)
     expect(s.names).toEqual([])
+  })
+
+  test("--task injects the task body and sets the active task; no hand-off", async () => {
+    const s = setup()
+    await s.run("x/y/other --task x/y/other/task/t.md go")
+    expect(s.sent).toHaveLength(1)
+    const content: string = s.sent[0]!.message.content
+    expect(content).toContain(
+      '<task address="x/y/other/task/t.md" selected="true">\n# The goal\n\nShip it.\n</task>',
+    )
+    expect(content).not.toContain("<handoff")
+    expect(content).toEndWith("\n\ngo")
+    expect(s.entries).toEqual([
+      { type: "cue-session-task", data: { address: "x/y/other/task/t.md" } },
+    ])
+    const rec = s.calls.find((a) => a[0] === "activity" && a[1] === "add")
+    expect(rec).toContain('{"method":"inject","task":"x/y/other/task/t.md"}')
+  })
+
+  test("--task and --handoff together: usage notice, nothing sent", async () => {
+    const s = setup()
+    await s.run("x/y/other --task x/y/other/task/t.md --handoff x/y/other/trace/handoff-a.md")
+    expect(s.sent).toHaveLength(0)
+    expect(s.notes).toHaveLength(1)
+  })
+
+  test.each([
+    ["from another context", "x/y/else/task/t.md", "does not belong to context x/y/other"],
+    ["not a task", "x/y/other/plan/t.md", "is not a task artifact"],
+    ["missing", "x/y/other/task/z.md", "no task x/y/other/task/z.md"],
+  ])("task %s: error notice, nothing sent", async (_n, task, message) => {
+    const s = setup()
+    await s.run(`x/y/other --task ${task}`)
+    expect(s.sent).toHaveLength(0)
+    expect(s.notes).toHaveLength(1)
+    expect(s.notes[0]).toContain(message)
   })
 
   test("--handoff without an address: usage notice, nothing sent", async () => {

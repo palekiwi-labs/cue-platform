@@ -9,6 +9,7 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const resumed: string[] = []
   const artifactsOf: string[] = []
   const setTasks: string[] = []
+  const newSessions: { address: string; handoff?: string; task?: string }[] = []
   const artifacts: ArtifactRow[] = []
   const contexts = parseContextTree(JSON.stringify({ roots: [
     { context: "fresh", scope: "o/r", last_logged_at: Math.floor(Date.now() / 1000), children: [] },
@@ -30,6 +31,10 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
     resume: (s: { path: string }) => { resumed.push(s.path); return undefined },
     loadArtifacts: async (address: string) => { artifactsOf.push(address); return artifacts },
     setTask: async (address: string) => { setTasks.push(address); return undefined },
+    newSession: (address: string, _t: unknown, handoff?: string, task?: string) => {
+      newSessions.push({ address, handoff, task })
+      return undefined
+    },
   } as unknown as BrowserDeps
   const tui = { requestRender() {}, terminal: { rows: 30, columns: 160 } } as unknown as TUI
   const theme = { fg: (_: string, s: string) => s, bg: (_: string, s: string) => s, bold: (s: string) => s } as unknown as Theme
@@ -40,7 +45,7 @@ async function setup(view: BrowserStart["view"] = "contexts", days = 30) {
   const browser = new CueBrowser(tui, theme, kb, deps, () => {}, start, "here")
   browser.handleInput("\x1bp")
   await new Promise(resolve => setTimeout(resolve, 0))
-  return { browser, saved, resumed, artifactsOf, setTasks, artifacts, text: () => browser.render(160).join("\n") }
+  return { browser, saved, resumed, artifactsOf, setTasks, newSessions, artifacts, text: () => browser.render(160).join("\n") }
 }
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -97,6 +102,18 @@ describe("CueBrowser alt+a artifacts", () => {
     await s.browser.handleInput("\x0c")
     await tick()
     expect(s.setTasks).toEqual(["o/r/fresh/task/t.md"])
+  })
+  test("artifacts: ctrl+s on a task starts a session on it, no hand-off", async () => {
+    const s = await setup("artifacts", 30)
+    const now = Math.floor(Date.now() / 1000)
+    s.artifacts.push(
+      { path: "/cue/o/r/fresh/task/t.md", name: "t.md", type: "task", title: "t", status: "open", priority: null, createdAt: now },
+    )
+    s.browser.handleInput("\x1br")
+    await tick()
+    s.browser.handleInput("\x13")
+    await tick()
+    expect(s.newSessions).toEqual([{ address: "o/r/fresh", handoff: undefined, task: "o/r/fresh/task/t.md" }])
   })
 })
 

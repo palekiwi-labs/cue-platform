@@ -2,7 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { ExploreError, handoffBriefing } from "../lib/context-explore"
+import { ExploreError, handoffBriefing, taskBriefing } from "../lib/context-explore"
 import { injectContext } from "./context-pins"
 
 const USAGE =
@@ -22,32 +22,52 @@ export function parseAddress(args: string): string | undefined {
 
 export interface InjectArgs {
   address?: string
+  /** Task artifact to make the session's active task and orientation. */
+  task?: string
   /** Hand-off trace address to inject in full, when one was selected. */
   handoff?: string
   note?: string
-  /** Set when `--handoff` is given without an address. */
-  missingHandoff?: boolean
+  /** Set when `--task` or `--handoff` is given without an address. */
+  missingFlag?: string
 }
 
 /**
- * Split `<address> [--handoff <trace-address>] [note]`: the first word
- * is the address, an optional `--handoff` names one hand-off trace to
- * inject in full, and the rest (verbatim) is an optional note appended
- * to the injected orientation.
+ * Split `<address> [--task <task-address>] [--handoff <trace-address>]
+ * [note]`: the first word is the address, the flags (in any order, each
+ * once) name the task to start on and one hand-off trace to inject in
+ * full, and the rest (verbatim) is an optional note appended to the
+ * injected orientation.
  */
 export function parseInjectArgs(args: string): InjectArgs {
   // The note keeps its line breaks: PR sessions pass a multi-line block.
   const m = /^\s*(\S*)\s*([\s\S]*?)\s*$/.exec(args)!
   const address = parseAddress(m[1]!)
-  const flag = /^--handoff(?=\s|$)\s*(\S*)\s*([\s\S]*)$/.exec(m[2]!)
-  if (!flag) return { address, note: m[2] || undefined }
-  if (!flag[1]) return { address, missingHandoff: true }
-  return { address, handoff: flag[1], note: flag[2] || undefined }
+  const out: InjectArgs = { address }
+  let rest = m[2] || ""
+  const seen = new Set<string>()
+  for (;;) {
+    const flag = /^(--task|--handoff)(?=\s|$)\s*(\S*)\s*([\s\S]*)$/.exec(rest)
+    if (!flag || seen.has(flag[1]!)) break
+    seen.add(flag[1]!)
+    if (!flag[2]) return { ...out, missingFlag: flag[1]!.slice(2) }
+    out[flag[1] === "--task" ? "task" : "handoff"] = flag[2]
+    rest = flag[3]
+  }
+  out.note = rest || undefined
+  return out
 }
 
-/** The inject command arguments for a context, optional hand-off and note. */
-export function injectArgs(address: string, opts: { handoff?: string; note?: string } = {}): string {
-  return [address, opts.handoff ? `--handoff ${opts.handoff}` : "", opts.note ?? ""]
+/** The inject command arguments for a context, task, hand-off and note. */
+export function injectArgs(
+  address: string,
+  opts: { task?: string; handoff?: string; note?: string } = {},
+): string {
+  return [
+    address,
+    opts.task ? `--task ${opts.task}` : "",
+    opts.handoff ? `--handoff ${opts.handoff}` : "",
+    opts.note ?? "",
+  ]
     .filter((s) => s !== "")
     .join(" ")
 }
@@ -75,8 +95,8 @@ async function handler(
   args: string,
   ctx: ExtensionContext,
 ): Promise<void> {
-  const { address, note, handoff, missingHandoff } = parseInjectArgs(args)
-  if (!address || missingHandoff) {
+  const { address, note, task, handoff, missingFlag } = parseInjectArgs(args)
+  if (!address || missingFlag || (task && handoff)) {
     ctx.ui.notify(USAGE, "warning")
     return
   }
@@ -92,6 +112,17 @@ async function handler(
     return
   }
   let selected: { address: string; briefing: string } | undefined
+  if (task) {
+    try {
+      selected = await taskBriefing(pi, ctx.cwd, address, task)
+    } catch (e) {
+      if (!(e instanceof ExploreError)) throw e
+      ctx.ui.notify(`cue: task not injected: ${e.message}`, "error")
+      return
+    }
+    await injectContext(pi, ctx, address, note, undefined, selected)
+    return
+  }
   if (handoff) {
     try {
       selected = await handoffBriefing(pi, ctx.cwd, address, handoff)

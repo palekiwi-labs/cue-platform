@@ -319,6 +319,54 @@ export async function handoffBriefing(
   }
 }
 
+/**
+ * The canonical address and rendered briefing of one task artifact,
+ * selected as a session's orientation. Fails when the address is not a
+ * task of that context or the file cannot be read; never falls back.
+ */
+export async function taskBriefing(
+  pi: Exec,
+  cwd: string,
+  rawContext: string,
+  rawTask: string,
+): Promise<{ address: string; briefing: string }> {
+  const context = parseContextAddress(rawContext)
+  const target = parseArtifactAddress(rawTask)
+  const task = `${target.context}/${target.type}/${target.name}`
+  if (target.context !== context) {
+    throw new ExploreError(`task ${task} does not belong to context ${context}`)
+  }
+  if (target.type !== "task") {
+    throw new ExploreError(`${task} is not a task artifact`)
+  }
+  let artifacts: ArtifactRecord[]
+  try {
+    artifacts = JSON.parse(
+      (await cue(pi, cwd, ["list", "--context", context, "--frontmatter"])) || "[]",
+    ) ?? []
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e)
+    throw new ExploreError(`cannot list artifacts of ${context}: ${why}`)
+  }
+  const record = artifacts.find((a) => a.type === "task" && `${a.type}/${a.name}` === `${target.type}/${target.name}`)
+  if (!record) throw new ExploreError(`no task ${task} in context ${context}`)
+  const text = await readText(record.path)
+  if (text === undefined) throw new ExploreError(`cannot read task ${task}`)
+  const body = stripFrontmatter(text)
+  const lines = body.split("\n")
+  const attrs = `address="${task}" selected="true"`
+  if (lines.length <= DOC_MAX_LINES) {
+    return { address: task, briefing: `<task ${attrs}>\n${lines.join("\n")}\n</task>` }
+  }
+  const shown = lines.slice(0, DOC_MAX_LINES).join("\n")
+  return {
+    address: task,
+    briefing:
+      `<task ${attrs} truncated="true">\n${shown}\n` +
+      `[truncated: ${lines.length - DOC_MAX_LINES} more lines; read ${task}]\n</task>`,
+  }
+}
+
 function footer(store: string): string {
   return (
     `Read an artifact at ${store}/<address>. Linked contexts are not ` +
