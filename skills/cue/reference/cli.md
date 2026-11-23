@@ -201,6 +201,28 @@ cue update palekiwi/palekiwi/auth/plan/impl.md \
 cue update palekiwi/palekiwi/auth --parent palekiwi/palekiwi/platform
 ```
 
+### `cue delete`
+Deletes one artifact (any type except log entries; contexts use
+`cue context archive`). Refused while any context or artifact in the store
+names it as `parent:` or lists it in `refs:`; the error lists each link as
+`<address> (parent|refs)`. Log entries whose `trace` names it are reported
+as warnings and left as they are. tmp: one file per call; an emptied
+commit directory is removed.
+
+```bash
+cue delete <ADDRESS> [--dry-run] [--json]
+```
+
+**Output:** `<address> deleted` (`would be deleted` with `--dry-run`);
+`--json` prints `{mutation_id, address, warnings: [<log address>...]}`.
+
+```bash
+# Unlink, then delete a duplicate note
+cue update palekiwi/palekiwi/auth/task/login.md \
+  --remove-ref palekiwi/palekiwi/auth/note/dup.md
+cue delete palekiwi/palekiwi/auth/note/dup.md
+```
+
 ### `cue render`
 Renders artifacts as framed blocks for injection into an agent session.
 

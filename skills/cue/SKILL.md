@@ -354,6 +354,12 @@ Tracks step-by-step progress using GFM checkboxes (`- [ ]` / `- [x]`).
   or `--clear-refs` only to replace the whole list on purpose. `--dry-run`
   previews, `--json` prints old and new values. Archiving stays with
   `cue context archive`.
+- **Deletion**: Remove a mistaken or duplicate artifact with
+  `cue delete <address>`, never `rm`. Abandoned work is not deleted; set
+  it to `closed`. Delete is refused while anything names the artifact as
+  `parent:` or in `refs:` (it lists them; fix them with `cue update`
+  first). Log entries whose `trace` names it only warn. Contexts and log
+  entries cannot be deleted. `--dry-run` previews.
 - **Body changes**: Update the body in-place using standard text editing
   tools (`edit`), leaving the frontmatter block untouched. Never use file
   overwrite tools that strip or corrupt YAML frontmatter.
@@ -460,6 +466,7 @@ acting.
 - **DO** set `status` to `complete` with `cue update` when all plan/task criteria are met.
 - **DO** change `title`, `status`, `priority`, `parent`, `refs` (and context `description`, `kind`, `mode`) only through `cue update`.
 - **DON'T** edit frontmatter by hand (`edit`, `sed`); hand edits skip validation and emit no events.
+- **DO** delete artifacts with `cue delete`, never `rm` in the store; close abandoned work instead of deleting it.
 - **DO** prefer harness-specific integration tools (`cue-*`) over shell CLI commands when creating artifacts.
 - **DO** use the `edit` tool to update an existing artifact's body in-place.
 - **DON'T** prepend markdown headers like `# Status: complete` above or below frontmatter.
