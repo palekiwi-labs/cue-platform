@@ -176,6 +176,7 @@ describe("/thresholds end to end", () => {
       registerTool: (t: ToolDefinition<any>) => tools.push(t),
       registerShortcut: () => {},
       registerFlag: () => {},
+      registerMessageRenderer: () => {},
       getFlag: () => undefined,
       registerCommand: (name: string, o: any) => { commands[name] = o },
       sendUserMessage: () => {},

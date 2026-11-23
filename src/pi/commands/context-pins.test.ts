@@ -199,6 +199,7 @@ function setup(opts: {
   const pi = {
     events: { emit() {} },
     registerShortcut: () => {},
+    registerMessageRenderer: () => {},
     registerCommand: (_n: string, o: { handler: typeof handler }) => {
       handler = o.handler
     },

@@ -28,6 +28,7 @@ import { registerSessionLabel } from "./session-label"
 import { registerSessionEnv } from "./session-env"
 import { registerStoreCommit } from "./store-commit"
 import { registerCueSkillInjection } from "./skill-injection"
+import { registerInjectionRenderer } from "./injection-render"
 import { registerResponseStyle } from "./response-style"
 import { registerSpeech } from "./speech"
 import { cueAddTool } from "./tools/cue-add"
@@ -97,6 +98,7 @@ export default function cuePlatform(pi: ExtensionAPI): void {
   registerWelcomeHeader(pi)
   registerMcpCastAdapter(pi)
   registerCueSkillInjection(pi)
+  registerInjectionRenderer(pi)
   registerResponseStyle(pi)
   registerSessionNaming(pi)
   registerInjectFlag(pi)
