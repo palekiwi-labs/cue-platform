@@ -145,6 +145,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       ctx,
     )
     branch.push({ type: "custom", customType: "session-description", data: { text: " Updated description " } })
+    branch.push({ type: "custom", customType: "cue-session-task", data: { address: "o/r/second/task/notify.md" } })
     await fire("agent_settled", { aborted: false }, ctx)
 
     const jsm = await jetstreamManager(nc)
@@ -171,6 +172,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       agent: "builder",
       context: "o/r/second",
       context_title: "Second",
+      active_task: "o/r/second/task/notify.md",
     })
     expect(row!.cost).toBeCloseTo(0.5)
     expect(row!.last_tool).toBe("bash ls")
@@ -196,6 +198,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
     expect(events[0]).toMatchObject({
       agent: "builder", context: "o/r/first", context_title: "First", session_description: "Initial description",
     })
+    expect(events[0]).not.toHaveProperty("active_task")
     expect(events[7]).toMatchObject({
       aborted: false,
       errored: false,
@@ -203,6 +206,7 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       context_title: "Second",
       session_name: "named",
       session_description: "Updated description",
+      active_task: "o/r/second/task/notify.md",
       tmux_window: "second",
       tmux_session: "palekiwi",
       cwd: "/work",
@@ -210,6 +214,13 @@ describe.skipIf(!natsServerBin)("registerNatsTelemetry", () => {
       agent: "builder",
       turn_ms: 3000,
       tools: 1,
+    })
+
+    branch.push({ type: "custom", customType: "cue-session-task", data: { address: null } })
+    await fire("agent_settled", { aborted: false }, ctx)
+    await waitFor(async () => {
+      const e = await kv.get(sid)
+      return e?.operation === "PUT" && !("active_task" in (e.json() as RegistryRow))
     })
 
     await fire("session_shutdown", { reason: "quit" }, ctx)
