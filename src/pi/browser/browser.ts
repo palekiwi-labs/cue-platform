@@ -67,9 +67,11 @@ import {
 import {
   fmtTokens,
   cwdMark,
+  contextGroups,
   groupSessions,
   NO_CONTEXT,
   sessionHeadline,
+  taskText,
   type SessionListRow,
   type SessionRow,
   syntheticContext,
@@ -594,7 +596,7 @@ export class CueBrowser implements Component {
       return flat(v.subset === "recent" ? pool.filter((s) => s.modified >= since) : pool)
     }
     if (v.query.trim() === "") {
-      return groupSessions(this.sessionContexts(v), v.sessions, this.sessionFolds ?? new Set(), orphans)
+      return contextGroups(groupSessions(this.sessionContexts(v), v.sessions, this.sessionFolds ?? new Set(), orphans))
     }
     // A query searches every session of the grouping, folded or not, and lists them flat.
     const pool = groupSessions(v.contexts, v.sessions, new Set(), !v.context)
@@ -604,7 +606,7 @@ export class CueBrowser implements Component {
 
   private matchSessions(v: SessionsView, list: SessionRow[]): SessionRow[] {
     return fuzzyFilter(list, v.query, (s) =>
-      `${this.contextOf(v, s).slug} ${s.description} ${s.label ?? ""}`)
+      `${this.contextOf(v, s).slug} ${s.task ? taskText(s.task) : ""} ${s.description} ${s.label ?? ""}`)
   }
 
   private contextOf(v: SessionsView, s: SessionRow): ContextRow {
@@ -1851,10 +1853,11 @@ export class CueBrowser implements Component {
         tail = r.sessions[0]
       } else {
         const s = r.session
-        const indent = flat ? "  " : `  ${"  ".repeat(r.context.depth + 1)}`
-        const desc = s.path === current ? t.fg("accent", s.description) : s.description
-        // Flat rows lead with the context, as the tmux window picker does.
-        name = indent + (flat ? sessionHeadline(t, r.context.slug, s.description, s.label, s.path === current) : desc + label(s)) + cwdTag(s)
+        const task = taskText(s.task)
+        const lead = s.path === current ? t.fg("accent", task) : s.task ? task : t.fg("dim", task)
+        name = flat
+          ? "  " + sessionHeadline(t, r.context.slug, s.description, s.label, s.path === current, s.task) + cwdTag(s)
+          : "    " + lead + t.fg("dim", ` | ${s.description}`) + label(s) + cwdTag(s)
         tail = s
       }
       const line = pad(`${pad(name, nameWidth)} ${right(tail)}`, width)

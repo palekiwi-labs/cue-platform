@@ -209,6 +209,7 @@ async function sessionRow(path: string): Promise<SessionRow | null> {
     address: meta.address,
     description: meta.description ?? fallbackDescription(parsed.name, parsed.firstMessage),
     label: meta.label,
+    task: meta.task,
     tokens: meta.tokens,
     level: meta.tokens === null ? undefined : buildReport(meta.tokens, storedThresholds(meta.thresholds, meta.address)).level,
     modified: Math.floor(modified / 1000),
