@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { parseContextTree } from "./model"
 import {
-  cwdMark, groupSessions, inScopes, recentSessions, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
+  contextGroups, cwdMark, groupSessions, inScopes, recentSessions, type SessionRow, scopeOf, scopeOfRemote, sessionMeta, transcript,
 } from "./sessions"
 
 let n = 0
@@ -117,6 +117,39 @@ describe("groupSessions", () => {
     expect(shape(rows)).toEqual(["a", "b"])
     const b = rows[1]!
     expect(b.kind === "context" && b.sessions.length).toBe(2)
+  })
+})
+
+describe("sessionMeta active task", () => {
+  const task = (address: string | null) => ({ type: "custom", customType: "cue-session-task", data: { address } })
+  test("newest task of the current context", () => {
+    expect(sessionMeta(file(ctx("o/r/a"), task("o/r/a/task/x.md"))).task).toBe("o/r/a/task/x.md")
+  })
+  test("cleared or stale tasks are dropped", () => {
+    expect(sessionMeta(file(ctx("o/r/a"), task("o/r/a/task/x.md"), task(null))).task).toBeUndefined()
+    expect(sessionMeta(file(ctx("o/r/a"), task("o/r/a/task/x.md"), ctx("o/r/b"))).task).toBeUndefined()
+  })
+})
+
+describe("contextGroups", () => {
+  const node = (context: string, children: unknown[] = []) => ({
+    context, scope: "o/r", title: context, path: "", children,
+  })
+  const tree = parseContextTree(JSON.stringify({ roots: [node("a", [node("b")]), node("c")] }))
+  const s = (path: string, address: string | undefined, modified: number): SessionRow => ({
+    path, cwd: "/w", address, description: path, tokens: null, modified,
+  })
+  const sessions = [s("b1", "o/r/b", 1), s("c1", "o/r/c", 5), s("b2", "o/r/b", 3), s("n", undefined, 9)]
+  const shape = (rows: ReturnType<typeof groupSessions>) =>
+    rows.map((r) => (r.kind === "context" ? `${r.context.slug}:${r.context.depth}` : `  ${r.session.path}`))
+
+  test("one level, contexts with sessions only, newest group first, none last", () => {
+    expect(shape(contextGroups(groupSessions(tree, sessions, new Set(), true))))
+      .toEqual(["c:0", "  c1", "b:0", "  b2", "  b1", "(no context):0", "  n"])
+  })
+  test("folded groups keep their heading only", () => {
+    expect(shape(contextGroups(groupSessions(tree, sessions, new Set(["o/r/b"]), false))))
+      .toEqual(["c:0", "  c1", "b:0"])
   })
 })
 

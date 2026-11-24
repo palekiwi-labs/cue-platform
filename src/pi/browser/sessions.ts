@@ -7,6 +7,7 @@
 import { calculateContextTokens, type Theme } from "@earendil-works/pi-coding-agent"
 import { truncateToWidth } from "@earendil-works/pi-tui"
 import type { SaturationLevel, Thresholds } from "../lib/context-usage"
+import { SESSION_TASK_TYPE, taskContextOf, taskSlug } from "../lib/session-task"
 import { ownThresholds } from "../lib/session-thresholds"
 import { ALL_TIME_DAYS, type ContextRow } from "./model"
 
@@ -24,6 +25,8 @@ export interface SessionRow {
   description: string
   /** Newest active native label on the mainline. */
   label?: string
+  /** Active task address, valid only while its context is `address`. */
+  task?: string
   /** Context size from the last valid assistant usage. */
   tokens: number | null
   /** Saturation level of `tokens` against the session's own thresholds. */
@@ -36,6 +39,7 @@ export interface SessionMeta {
   address?: string
   description?: string
   label?: string
+  task?: string
   tokens: number | null
   /** Thresholds set in the session with /thresholds, if any. */
   thresholds?: Thresholds
@@ -79,6 +83,7 @@ export function mainline(content: string | Entry[]): Entry[] {
 export function sessionMeta(content: string | Entry[]): SessionMeta {
   const meta: SessionMeta = { tokens: null }
   const labeled = new Set<string>()
+  let task: string | null | undefined
   const branch = mainline(content)
   const own = ownThresholds(branch as never)
   if (own) meta.thresholds = own
@@ -94,6 +99,10 @@ export function sessionMeta(content: string | Entry[]): SessionMeta {
     ) {
       meta.description = e.data.text.trim()
     }
+    if (task === undefined && e.type === "custom" && e.customType === SESSION_TASK_TYPE) {
+      const address = e.data?.address
+      task = typeof address === "string" && address !== "" ? address : null
+    }
     // For each target the newest label entry wins; one without a label clears it.
     if (e.type === "label" && !labeled.has(e.targetId)) {
       labeled.add(e.targetId)
@@ -108,6 +117,7 @@ export function sessionMeta(content: string | Entry[]): SessionMeta {
       if (tokens > 0) meta.tokens = tokens
     }
   }
+  if (task && meta.address !== undefined && taskContextOf(task) === meta.address) meta.task = task
   return meta
 }
 
@@ -280,6 +290,30 @@ export function groupSessions(
 }
 
 /**
+ * Grouped rows flattened to one level: a heading per context that has
+ * sessions, its sessions beneath it. Groups are ordered by their newest
+ * session; sessions without a context come last.
+ */
+export function contextGroups(rows: SessionListRow[]): SessionListRow[] {
+  const groups = rows
+    .flatMap((r) => (r.kind === "context" && r.sessions.length > 0 ? [r] : []))
+    .map((r) => ({ ...r, context: { ...r.context, depth: 0, connectors: [] } }))
+    .sort((a, b) =>
+      Number(a.context.address === NO_CONTEXT) - Number(b.context.address === NO_CONTEXT) ||
+      b.sessions[0]!.modified - a.sessions[0]!.modified)
+  const shown = new Set(rows.flatMap((r) => (r.kind === "session" ? [r.session.path] : [])))
+  return groups.flatMap((g) => [
+    g as SessionListRow,
+    ...g.sessions.filter((s) => shown.has(s.path)).map((session) => ({ kind: "session" as const, session, context: g.context })),
+  ])
+}
+
+/** A session's task column: the active task slug, or `(no active task)`. */
+export function taskText(task: string | undefined): string {
+  return task ? taskSlug(task) : "(no active task)"
+}
+
+/**
  * The `(org/repo)` marker of a session in another project than the
  * current session (`here`: its cwd and that cwd's repo). Repos compare by
  * scope, so worktrees of one repo count as the same project; cwds without
@@ -340,8 +374,9 @@ export function recentSessions(
 }
 
 /**
- * A flat session row's text: `context | description [label]`; the
- * description is dropped when it repeats the context.
+ * A flat session row's text: `context / task | description [label]`;
+ * the task is left out when none is active, and the description is
+ * dropped when it repeats the context.
  */
 export function sessionHeadline(
   t: Theme,
@@ -349,9 +384,11 @@ export function sessionHeadline(
   description: string,
   label?: string,
   current = false,
+  task?: string,
 ): string {
   const tag = label ? " " + t.fg("error", `[${truncateToWidth(label, 12, "…")}]`) : ""
   const style = (s: string) => (current ? t.fg("accent", s) : s)
+  if (task) where = `${where} / ${taskSlug(task)}`
   if (description === where) return style(where) + tag
   return style(where) + t.fg("dim", ` | ${description}`) + tag
 }

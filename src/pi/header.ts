@@ -69,7 +69,7 @@ export function headerLines(
   for (const { session: s, context } of recent ?? []) {
     const age = t.fg("muted", relativeAge(s.modified, now).padStart(4))
     const where = context.address === NO_CONTEXT ? "-" : context.slug
-    out.push(fit(`  ${age}  ${sessionHeadline(t, where, s.description, s.label)}`))
+    out.push(fit(`  ${age}  ${sessionHeadline(t, where, s.description, s.label, false, s.task)}`))
   }
   out.push("")
   return out
