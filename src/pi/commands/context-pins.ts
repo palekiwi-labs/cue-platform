@@ -73,7 +73,7 @@ export async function injectContext(
     details,
   })
   pi.events.emit("cue:context-linked", { address })
-  if (task) setSessionTask(pi, ctx, task.address)
+  if (task) setSessionTask(pi, ctx, task.address, "session_birth")
   syncSessionState(ctx)
   const naming = applyContextName(pi, address)
   await recordActivity(pi, ctx, address, "session_associated", {

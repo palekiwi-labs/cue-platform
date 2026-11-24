@@ -9,6 +9,7 @@ import {
   normalizeTaskAddress,
   sessionStatusText,
   syncSessionState,
+  setSessionTask,
   taskContextOf,
 } from "./session-task"
 
@@ -120,5 +121,40 @@ describe("publishTmuxTask", () => {
 
   test("does nothing outside tmux", () => {
     expect(run("o/r/c/task/a.md", {})).toEqual([])
+  })
+})
+
+describe("setSessionTask", () => {
+  const setup = () => {
+    const branch: { type: string; customType: string; data: unknown }[] = [
+      { type: "custom", customType: CUE_CONTEXT_TYPE, data: { address: "o/r/c" } },
+    ]
+    const emitted: [string, unknown][] = []
+    const pi = {
+      appendEntry: (customType: string, data: unknown) =>
+        branch.push({ type: "custom", customType, data }),
+      events: { emit: (name: string, data: unknown) => emitted.push([name, data]) },
+    } as never
+    const ctx = {
+      sessionManager: { getBranch: () => branch as never, getSessionId: () => "s1" },
+    }
+    return { pi, ctx, emitted, branch }
+  }
+
+  test("a genuine set emits cue:task-set with the session id", () => {
+    const s = setup()
+    setSessionTask(s.pi as never, s.ctx as never, "o/r/c/task/a.md")
+    expect(s.emitted).toEqual([
+      ["cue:task-set", { address: "o/r/c/task/a.md", sessionId: "s1", reason: "selection" }],
+    ])
+  })
+
+  test("the reason travels for session birth; same-task sets and clears emit nothing", () => {
+    const s = setup()
+    setSessionTask(s.pi as never, s.ctx as never, "o/r/c/task/a.md", "session_birth")
+    expect(s.emitted[0]![1]).toMatchObject({ reason: "session_birth" })
+    setSessionTask(s.pi as never, s.ctx as never, "o/r/c/task/a.md")
+    setSessionTask(s.pi as never, s.ctx as never, null)
+    expect(s.emitted).toHaveLength(1)
   })
 })
