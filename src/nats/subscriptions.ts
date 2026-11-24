@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { NatsConnection, Subscription } from "@nats-io/transport-node"
 import { currentContext } from "../pi/lib/current-context"
 import { createNatsClient, type NatsClient, type NatsClientOptions } from "./client"
+import { parseTaskSetEvent } from "./task-events"
 import { isContextAddress, parseStoreEvent, PendingEvents, storeEventLine, storeSubject } from "./store-events"
 
 export const SUBSCRIPTIONS_STATUS_KEY = "session-subscriptions"
@@ -50,6 +51,7 @@ export function registerSessionSubscriptions(
   let connection: NatsConnection | undefined
   let client: NatsClient | undefined
   let ui: ExtensionContext["ui"] | undefined
+  let sessionId: string | undefined
   let subs: Active[] = []
   const pending = new PendingEvents()
 
@@ -76,7 +78,7 @@ export function registerSessionSubscriptions(
           try {
             const event = parseStoreEvent(message.json(), linked)
             if (!event || message.subject !== storeSubject(linked, event.event)) return
-            if (!pending.add(event.event_id, storeEventLine(event))) return
+            if (!pending.add(event.event_id, storeEventLine(event, sessionId))) return
             sub.events++
             sub.lastEventAt = new Date()
           } catch {}
@@ -101,6 +103,18 @@ export function registerSessionSubscriptions(
     link((data as { address?: unknown } | undefined)?.address)
   })
 
+  const offQueued = pi.events.on("cue:task-set-queued", (data: unknown) => {
+    const event = parseTaskSetEvent(data)
+    if (!event || !context || event.context !== context) return
+    if (pending.add(event.event_id, storeEventLine(event, sessionId))) {
+      const sub = subs.find(s => s.subject === storeSubject(context!, "task_set"))
+      if (sub) {
+        sub.events++
+        sub.lastEventAt = new Date()
+      }
+    }
+  })
+
   pi.registerCommand("subscriptions", {
     description: "List this session's event subscriptions",
     handler: async (_args, ctx) => {
@@ -113,6 +127,7 @@ export function registerSessionSubscriptions(
   pi.on("session_start", (_event, ctx) => {
     active = true
     ui = ctx.hasUI ? ctx.ui : undefined
+    sessionId = ctx.sessionManager.getSessionId?.()
     context = undefined
     unsubscribe()
     pending.clear()
@@ -140,6 +155,7 @@ export function registerSessionSubscriptions(
   pi.on("session_shutdown", async () => {
     active = false
     off()
+    offQueued()
     unsubscribe()
     connection = undefined
     context = undefined

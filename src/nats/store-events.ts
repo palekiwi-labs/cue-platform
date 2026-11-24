@@ -1,4 +1,4 @@
-export const STORE_EVENTS = ["artifact_create", "artifact_update", "context_create", "log_entry_add"] as const
+export const STORE_EVENTS = ["artifact_create", "artifact_update", "context_create", "log_entry_add", "task_set"] as const
 export type StoreEventName = typeof STORE_EVENTS[number]
 
 export interface StoreEvent {
@@ -16,7 +16,15 @@ export interface StoreEvent {
   depth: number
   actor?: string
   summary?: string
+  /** task_set only: the session whose active task was set. */
+  session_id?: string
+  /** task_set only: always "session"; the event names a session's focus. */
+  scope?: "session"
+  /** task_set only: why the task was set. */
+  reason?: "selection" | "session_birth"
 }
+
+export const TASK_SET_REASONS = ["selection", "session_birth"] as const
 
 const ID = /^[\w.:-]{1,128}$/
 const ACTOR = /^[a-z][a-z0-9-]{0,31}$/
@@ -63,6 +71,12 @@ export function parseStoreEvent(value: unknown, context: string): StoreEvent | u
   if (typeof e.depth !== "number" || !Number.isInteger(e.depth) || e.depth < 0 || e.depth > 64) return
   if (e.actor !== undefined && (typeof e.actor !== "string" || !ACTOR.test(e.actor))) return
   if (e.summary !== undefined && (typeof e.summary !== "string" || e.summary.length > TITLE_MAX)) return
+  if (e.event === "task_set") {
+    if (e.scope !== "session") return
+    if (!TASK_SET_REASONS.includes(e.reason as (typeof TASK_SET_REASONS)[number])) return
+    if (typeof e.session_id !== "string" || !ID.test(e.session_id)) return
+    if (e.address.split("/")[3] !== "task") return
+  }
   return e as unknown as StoreEvent
 }
 
@@ -78,9 +92,14 @@ const VERBS: Record<StoreEventName, string> = {
   artifact_update: "updated",
   context_create: "created",
   log_entry_add: "logged",
+  task_set: "set active task",
 }
 
-export function storeEventLine(event: StoreEvent): string {
+export function storeEventLine(event: StoreEvent, currentSessionId?: string): string {
+  if (event.event === "task_set") {
+    const who = event.session_id && event.session_id !== currentSessionId ? ` (${event.session_id})` : ""
+    return `[cue] set active task: ${event.address}${who}`
+  }
   const summary = event.event === "artifact_update" ? clean(event.summary) : undefined
   return `[${event.actor ?? "cue"}] ${VERBS[event.event]}: ${event.address}${summary ? ` (${summary})` : ""}`
 }

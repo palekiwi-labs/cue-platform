@@ -69,7 +69,7 @@ export interface SessionStateCtx {
     setStatus(key: string, text: string | undefined): void
     theme?: { fg(color: "error", text: string): string }
   }
-  sessionManager: { getBranch(): readonly BranchEntry[] }
+  sessionManager: { getBranch(): readonly BranchEntry[]; getSessionId?(): string }
 }
 
 /**
@@ -93,15 +93,31 @@ export function syncSessionState(
   ctx.ui.setStatus(SESSION_STATUS_KEY, text)
 }
 
-/** Record the active task (null clears it) and resync env and footer. */
+/** Why the active task was set: picked interactively, or at session birth. */
+export type TaskSetReason = "selection" | "session_birth"
+
+/**
+ * Record the active task (null clears it) and resync env and footer.
+ * A genuine set also emits `cue:task-set` for the NATS publisher; the
+ * event carries the session id so other sessions can attribute it.
+ */
 export function setSessionTask(
   pi: ExtensionAPI,
   ctx: SessionStateCtx,
   address: string | null,
+  reason: TaskSetReason = "selection",
 ): void {
+  const previous = currentTask(ctx.sessionManager.getBranch())
   const data: SessionTaskData = { address }
   pi.appendEntry(SESSION_TASK_TYPE, data)
   syncSessionState(ctx)
+  if (address !== null && previous !== address) {
+    pi.events.emit("cue:task-set", {
+      address,
+      sessionId: ctx.sessionManager.getSessionId?.(),
+      reason,
+    })
+  }
 }
 
 /**

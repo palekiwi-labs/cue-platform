@@ -9,6 +9,35 @@ const event: StoreEvent = {
   parent_event_id: null, root_event_id: "0b6f3c1e-1111-4222-8333-444455556666", depth: 1,
 }
 
+describe("task_set", () => {
+  const task = {
+    ...event, event: "task_set" as const, type: "task", address: `${context}/task/t.md`, title: null,
+    depth: 0, scope: "session" as const, session_id: "session-a", reason: "selection" as const,
+  }
+
+  test("parses the session-focus shape", () => {
+    expect(parseStoreEvent(task, context)).toEqual(task)
+  })
+
+  test("rejects claim-like or malformed shapes", () => {
+    for (const patch of [
+      { scope: "global" }, { reason: "claim" }, { reason: undefined }, { session_id: undefined },
+      { session_id: "bad id!" }, { address: `${context}/plan/p.md`, type: "plan" },
+    ]) {
+      expect(parseStoreEvent({ ...task, ...patch } as StoreEvent, context)).toBeUndefined()
+    }
+  })
+
+  test("names the setting session unless it is the current one", () => {
+    expect(storeEventLine(task, "other-session")).toBe(
+      `[cue] set active task: ${context}/task/t.md (session-a)`,
+    )
+    expect(storeEventLine(task, "session-a")).toBe(
+      `[cue] set active task: ${context}/task/t.md`,
+    )
+  })
+})
+
 describe("store events", () => {
   test("subjects encode the context and event", () => {
     const subject = storeSubject(context, "log_entry_add")
