@@ -385,9 +385,29 @@ Tracks step-by-step progress using GFM checkboxes (`- [ ]` / `- [x]`).
   integration tools (`cue-*`) over raw shell CLI commands when creating artifacts.
   Passing text containing code snippets, symbols, quotes, or backticks directly as
   bash arguments frequently leads to shell escaping failures and corrupted files.
-- **Modification**: Update existing artifacts in-place using standard text
-  editing tools (`edit`). Never use file overwrite tools that strip or corrupt
-  YAML frontmatter.
+- **Metadata changes**: Change frontmatter fields with `cue update`, never by
+  editing the file. It covers `title`, `status`, `priority`, `parent` and
+  `refs` on tasks, plans and notes, and `title`, `description`, `kind`,
+  `mode`, `parent` and `refs` on contexts (3-segment address). Several flags
+  in one call are applied as one atomic write:
+
+      cue update <scope>/<context>/task/<name>.md --status complete
+      cue update <address> --add-ref <address> --remove-ref <address>
+      cue update <scope>/<context> --parent <scope>/<parent-context>
+
+  Edit refs with `--add-ref` / `--remove-ref`; use `--set-refs` (repeatable)
+  or `--clear-refs` only to replace the whole list on purpose. `--dry-run`
+  previews, `--json` prints old and new values. Archiving stays with
+  `cue context archive`.
+- **Deletion**: Remove a mistaken or duplicate artifact with
+  `cue delete <address>`, never `rm`. Abandoned work is not deleted; set
+  it to `closed`. Delete is refused while anything names the artifact as
+  `parent:` or in `refs:` (it lists them; fix them with `cue update`
+  first). Log entries whose `trace` names it only warn. Contexts and log
+  entries cannot be deleted. `--dry-run` previews.
+- **Body changes**: Update the body in-place using standard text editing
+  tools (`edit`), leaving the frontmatter block untouched. Never use file
+  overwrite tools that strip or corrupt YAML frontmatter.
 - **Querying & Discovery**: Discover artifacts exclusively using `cue list` (or
   harness query tools).
 
@@ -527,9 +547,12 @@ them (e.g. from the artifact browser).
 ### Frontmatter & Artifact Hygiene
 
 - **DO** use YAML frontmatter as the single source of truth for metadata (`status`, `priority`, `kind`, `parent`, `refs`).
-- **DO** update frontmatter `status` to `complete` when all plan/task criteria are met.
+- **DO** set `status` to `complete` with `cue update` when all plan/task criteria are met.
+- **DO** change `title`, `status`, `priority`, `parent`, `refs` (and context `description`, `kind`, `mode`) only through `cue update`.
+- **DON'T** edit frontmatter by hand (`edit`, `sed`); hand edits skip validation and emit no events.
+- **DO** delete artifacts with `cue delete`, never `rm` in the store; close abandoned work instead of deleting it.
 - **DO** prefer harness-specific integration tools (`cue-*`) over shell CLI commands when creating artifacts.
-- **DO** use the `edit` tool to update existing artifacts in-place.
+- **DO** use the `edit` tool to update an existing artifact's body in-place.
 - **DON'T** prepend markdown headers like `# Status: complete` above or below frontmatter.
 - **DON'T** overwrite existing cue artifacts using destructive write tools that strip frontmatter.
 
